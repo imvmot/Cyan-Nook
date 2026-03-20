@@ -31335,6 +31335,7 @@ MonoBehaviour:
   characterController: {fileID: 1752575851}
   animationController: {fileID: 1752575840}
   updateInterval: 0.5
+  errorDisplayDuration: 10
 --- !u!1 &1021439531
 GameObject:
   m_ObjectHideFlags: 0
@@ -48995,6 +48996,7 @@ MonoBehaviour:
   codeFont: {fileID: 11400000, guid: 00fd06fabdab9af4ebc96979689e4f22, type: 2}
   chatFontSize: 32
   codeFontSize: 18
+  statusOverlay: {fileID: 1019936561}
   messageDisplayDuration: 30
   errorMessageColor: {r: 1, g: 0.4, b: 0.4, a: 1}
   initialMode: 1

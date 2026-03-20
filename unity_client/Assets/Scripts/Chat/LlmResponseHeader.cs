@@ -34,7 +34,7 @@ namespace CyanNook.Chat
         /// </summary>
         public LLMResponseData ToResponseData(string streamingMessage = null)
         {
-            return new LLMResponseData
+            var data = new LLMResponseData
             {
                 character = LLMResponseData.DefaultCharacterId,
                 reaction = this.reaction ?? "",
@@ -47,6 +47,8 @@ namespace CyanNook.Chat
                 },
                 emotion = this.emotion ?? new EmotionData()
             };
+            data.FillDefaults();
+            return data;
         }
 
         /// <summary>

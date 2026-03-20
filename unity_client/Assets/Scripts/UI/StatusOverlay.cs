@@ -28,6 +28,9 @@ namespace CyanNook.UI
         private int _frameCount;
         private float _fpsTimer;
 
+        private string _errorMessage;
+        private float _errorTimer;
+
         // WebGL JS heap memory
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -40,12 +43,25 @@ namespace CyanNook.UI
         private static float GetJSHeapTotalMB() => 0f;
 #endif
 
+        [Header("Error Display")]
+        [Tooltip("エラー表示の持続時間（秒）")]
+        [SerializeField] private float errorDisplayDuration = 10f;
+
         public bool IsVisible => statusPanel != null && statusPanel.activeSelf;
 
         public void SetVisible(bool visible)
         {
             if (statusPanel != null)
                 statusPanel.SetActive(visible);
+        }
+
+        /// <summary>
+        /// エラーメッセージを表示（一定時間後に自動消去）
+        /// </summary>
+        public void ShowError(string message)
+        {
+            _errorMessage = message;
+            _errorTimer = errorDisplayDuration;
         }
 
         private void Update()
@@ -60,6 +76,14 @@ namespace CyanNook.UI
                 _fps = _frameCount / _fpsTimer;
                 _frameCount = 0;
                 _fpsTimer = 0f;
+            }
+
+            // エラータイマー
+            if (_errorTimer > 0f)
+            {
+                _errorTimer -= Time.unscaledDeltaTime;
+                if (_errorTimer <= 0f)
+                    _errorMessage = null;
             }
 
             // 表示更新（updateInterval間隔）
@@ -108,7 +132,14 @@ namespace CyanNook.UI
             memStr = $"{totalMem / (1024 * 1024)} MB";
 #endif
 
-            statusText.text = $"{fpsStr}  |  {charState}  |  {animState}: {timelineName}  |  Heap: {memStr}";
+            string line = $"{fpsStr}  |  {charState}  |  {animState}: {timelineName}  |  Heap: {memStr}";
+
+            if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                line += $"\n<color=#FF6666>{_errorMessage}</color>";
+            }
+
+            statusText.text = line;
         }
     }
 }

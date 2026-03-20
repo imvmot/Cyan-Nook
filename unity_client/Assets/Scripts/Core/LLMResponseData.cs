@@ -100,13 +100,30 @@ namespace CyanNook.Core
         {
             try
             {
-                return JsonUtility.FromJson<LLMResponseData>(json);
+                var data = JsonUtility.FromJson<LLMResponseData>(json);
+                if (data != null)
+                    data.FillDefaults();
+                return data;
             }
             catch (Exception e)
             {
                 Debug.LogError($"[LLMResponseData] Failed to parse JSON: {e.Message}");
                 return GetFallback();
             }
+        }
+
+        /// <summary>
+        /// null/空のフィールドにデフォルト値を補填
+        /// WebLLM等で構文は正しいが中身が空のレスポンスが来た場合の安全策
+        /// </summary>
+        public void FillDefaults()
+        {
+            if (string.IsNullOrEmpty(character)) character = DefaultCharacterId;
+            if (string.IsNullOrEmpty(action)) action = DefaultAction;
+            if (string.IsNullOrEmpty(emote)) emote = DefaultEmote;
+            if (target == null) target = new TargetData { type = DefaultTargetType };
+            else if (string.IsNullOrEmpty(target.type)) target.type = DefaultTargetType;
+            if (emotion == null) emotion = new EmotionData();
         }
 
         /// <summary>

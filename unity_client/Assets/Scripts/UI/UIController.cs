@@ -92,6 +92,10 @@ namespace CyanNook.UI
         [Tooltip("JSON用フォントサイズ")]
         public float codeFontSize = 14f;
 
+        [Header("Status Overlay")]
+        [Tooltip("StatusOverlay参照（エラー表示用）")]
+        public StatusOverlay statusOverlay;
+
         [Header("Settings")]
         [Tooltip("テキスト表示完了後、メッセージが消えるまでの時間（秒）。0で無限")]
         public float messageDisplayDuration = 5f;
@@ -595,22 +599,33 @@ namespace CyanNook.UI
         private void OnChatError(string error)
         {
             Debug.LogWarning($"[UIController] Chat error: {error}");
-            ShowMessage($"<color=#{ColorUtility.ToHtmlStringRGB(errorMessageColor)}>Error: {error}</color>");
+            ShowErrorToOverlay(error);
         }
 
         /// <summary>
         /// JSONパースエラー時のハンドラ
-        /// エラーメッセージを色付きで表示し、生テキストを続けて表示する
+        /// StatusOverlayにエラーを表示し、生テキストがあればメッセージ欄に表示する
         /// </summary>
         private void OnChatParseError(string error, string rawText)
         {
-            string hex = ColorUtility.ToHtmlStringRGB(errorMessageColor);
-            string display = $"<color=#{hex}>{error}</color>";
+            ShowErrorToOverlay(error);
             if (!string.IsNullOrEmpty(rawText))
             {
-                display += "\n" + rawText;
+                ShowMessage(rawText);
             }
-            ShowMessage(display);
+        }
+
+        private void ShowErrorToOverlay(string error)
+        {
+            if (statusOverlay != null)
+            {
+                statusOverlay.ShowError(error);
+            }
+            else
+            {
+                // StatusOverlay未設定時はメッセージ欄にフォールバック
+                ShowMessage($"<color=#{ColorUtility.ToHtmlStringRGB(errorMessageColor)}>Error: {error}</color>");
+            }
         }
 
         private void OnThinkingStarted()
@@ -815,7 +830,7 @@ namespace CyanNook.UI
             LLMResponseData response;
             try
             {
-                response = JsonUtility.FromJson<LLMResponseData>(json);
+                response = LLMResponseData.FromJson(json);
             }
             catch (System.Exception e)
             {
