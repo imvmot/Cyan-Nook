@@ -1,0 +1,7 @@
+{
+    "files": [
+        "cron/example_hourly_comment.json",
+        "cron/example_morning_greeting.json",
+        "VRM/chr001_w001_model.vrm"
+    ]
+}

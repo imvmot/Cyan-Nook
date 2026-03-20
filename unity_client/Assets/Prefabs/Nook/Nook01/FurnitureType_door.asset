@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 320ce6467f163834eba7ce4fb6b03fda, type: 3}
+  m_Name: FurnitureType_door
+  m_EditorClassIdentifier: CyanNook::CyanNook.Core.FurnitureTypeData
+  typeId: door
+  displayName: door
+  description: 
+  availableActions:
+  - exit
+  - entry
+  defaultAction: entry
+  interactionPointPrefix: Interact_
+  lookAtPointPrefix: Interact_lookattarget
+  approachRadius: 0.1
+  lookAtMaxDistance: 1
+  disableColliderDuringInteract: 1
+  compatibleAnimations: []
+  facingAngleOffset: 0
+  positionOffset: {x: 0, y: 0, z: 0}

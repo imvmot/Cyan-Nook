@@ -1,0 +1,37 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a5febd7d772dd474bb896edabae36be5, type: 3}
+  m_Name: chr001_TimelineFacialBindings
+  m_EditorClassIdentifier: CyanNook::CyanNook.Character.FacialTimelineData
+  emotionBindings:
+  - emotionType: 0
+    timeline: {fileID: 11400000, guid: 91988d8568edc50489ee5ce4f81707f8, type: 2}
+  - emotionType: 1
+    timeline: {fileID: 11400000, guid: d8bcd7e6fd2c2fa4194d71e63c2a0b01, type: 2}
+  - emotionType: 2
+    timeline: {fileID: 11400000, guid: b91c2112308c7984186e2f66b2ef5412, type: 2}
+  - emotionType: 3
+    timeline: {fileID: 11400000, guid: 8eee2234899b16d4f820b3caff5bf58a, type: 2}
+  - emotionType: 4
+    timeline: {fileID: 11400000, guid: abc5d790524defe488f938215d5a8c26, type: 2}
+  - emotionType: 5
+    timeline: {fileID: 11400000, guid: d32b1a38eb6367b4bb361d5f441e9bb8, type: 2}
+  blendBindings:
+  - emotionA: 1
+    emotionB: 2
+    timeline: {fileID: 11400000, guid: 04725bf6eefd46346ba9e54db24e38d6, type: 2}
+  - emotionA: 2
+    emotionB: 4
+    timeline: {fileID: 11400000, guid: f70090c5572fbf5408b387937c445a30, type: 2}
+  - emotionA: 4
+    emotionB: 3
+    timeline: {fileID: 11400000, guid: 092506fd591effa4c9db6440c878c7a1, type: 2}

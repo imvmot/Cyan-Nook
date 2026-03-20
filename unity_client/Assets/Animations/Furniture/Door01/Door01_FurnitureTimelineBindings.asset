@@ -1,0 +1,20 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 53e038891a55d9a4d8673de6868b6ae8, type: 3}
+  m_Name: Door01_FurnitureTimelineBindings
+  m_EditorClassIdentifier: CyanNook::CyanNook.Furniture.FurnitureTimelineBindingData
+  furnitureId: Door01
+  bindings:
+  - animationId: common_entry01
+    timeline: {fileID: 11400000, guid: e76d735d74af3a343958349bf853c450, type: 2}
+  - animationId: interact_exit01
+    timeline: {fileID: 11400000, guid: 7c4e5de8c6808d340965ccd0368bb773, type: 2}

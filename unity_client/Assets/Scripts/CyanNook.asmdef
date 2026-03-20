@@ -1,0 +1,21 @@
+{
+    "name": "CyanNook",
+    "rootNamespace": "CyanNook",
+    "references": [
+        "VRM10",
+        "UniGLTF",
+        "UniHumanoid",
+        "Unity.Timeline",
+        "Unity.TextMeshPro",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
