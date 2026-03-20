@@ -25,7 +25,7 @@ namespace CyanNook.Core
     {
         // フォールバック用デフォルト値
         public const string DefaultCharacterId = "chr001";
-        public const string DefaultAction = "ignore";
+        public const string DefaultAction = "move";
         public const string DefaultTargetType = "talk";
         public const string DefaultEmote = "Neutral";
         public const string FallbackMessage = "...";
