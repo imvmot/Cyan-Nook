@@ -950,13 +950,20 @@ namespace CyanNook.Chat
                 }
             }
 
-            // 自律リクエストで "ignore" → 履歴に追加せず、メッセージ表示もなし
+            // 自律リクエストで "ignore" → 履歴に追加せず
             if (_isAutoRequest && response.IsIgnore)
             {
                 Debug.Log("[ChatManager] Auto-request ignored by LLM");
                 _isAutoRequest = false;
+                _incrementalFieldsApplied = false;
+                _isStreamingRequest = false;
                 SetState(ChatState.Idle);
                 OnChatResponseReceived?.Invoke(response);
+                // ストリーミング表示のリセットのためOnMessageReceivedを発火
+                if (response.HasMessage)
+                {
+                    OnMessageReceived?.Invoke(response.FullMessage);
+                }
                 return;
             }
 

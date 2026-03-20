@@ -2569,7 +2569,7 @@ SendAutoRequest ── ChatManager.SendAutoRequest()
     ↓
 WaitingForResponse ── LLM処理中（タイマー停止）
     ↓
-├─ action="ignore" → Cooldown に戻る（履歴に残さない）
+├─ action="ignore" → Cooldown に戻る（履歴に残さない、メッセージ有りなら表示）
 ├─ テキスト有り → メッセージ表示 → Cooldown
 └─ ユーザー入力割り込み → 自律リクエスト中断 → ユーザー入力を処理
 ```
