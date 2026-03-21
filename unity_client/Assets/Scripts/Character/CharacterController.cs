@@ -358,10 +358,22 @@ namespace CyanNook.Character
             // インタラクション中に別のアクションが来た場合: ed再生 → 完了後に実行
             if (interactionController != null && interactionController.IsInteracting())
             {
+                // 同種インタラクションの場合: 現在の家具を除外してランダム選択するため参照を保持
+                FurnitureInstance excludeFurniture = null;
+                if (response.IsInteract)
+                {
+                    var newAction = response.GetInteractAction();
+                    if (newAction == interactionController.CurrentAction)
+                    {
+                        excludeFurniture = interactionController.CurrentFurniture;
+                        Debug.Log($"[CharacterController] Same interaction type ({newAction}), will exclude current furniture (incremental): {excludeFurniture?.instanceId}");
+                    }
+                }
+
                 Debug.Log("[CharacterController] Exiting interaction before processing new action (incremental)");
                 interactionController.ExitLoopWithCallback(() =>
                 {
-                    ExecuteAction(response);
+                    ExecuteAction(response, excludeFurniture);
                 });
                 return;
             }
