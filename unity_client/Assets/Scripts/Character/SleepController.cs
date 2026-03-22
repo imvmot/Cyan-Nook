@@ -34,8 +34,6 @@ namespace CyanNook.Character
         public IdleChatController idleChatController;
         public BoredomController boredomController;
         public VrmLoader vrmLoader;
-        public RoomLightController roomLightController;
-
         [Header("Sleep Timer")]
         [Tooltip("sleep_duration 未指定時のデフォルト値（分）")]
         public int defaultSleepDuration = 30;
@@ -172,9 +170,6 @@ namespace CyanNook.Character
             {
                 boredomController.SetPaused(true);
             }
-
-            // ライト消灯
-            roomLightController?.SetLightsOff();
 
             // 永続化
             SaveSleepState();
@@ -406,9 +401,6 @@ namespace CyanNook.Character
             {
                 boredomController.SetPaused(false);
             }
-
-            // ライト点灯
-            roomLightController?.SetLightsOn();
 
             // 永続化クリア
             ClearSleepState();

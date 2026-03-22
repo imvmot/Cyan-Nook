@@ -159,6 +159,12 @@ namespace CyanNook.Character
                 Debug.Log($"[CharacterSetup] Culling Layer set to {vrmCullingLayer} on VRM hierarchy");
             }
 
+            // AnimationControllerにRoomLightController参照設定
+            if (animationController != null && roomLightController != null)
+            {
+                animationController.roomLightController = roomLightController;
+            }
+
             // SleepController参照設定
             if (sleepController != null)
             {

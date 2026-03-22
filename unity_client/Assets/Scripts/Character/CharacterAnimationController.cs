@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.Timeline;
 using CyanNook.Core;
+using CyanNook.Furniture;
 using CyanNook.Timeline;
 using System.Collections.Generic;
 using System.Linq;
@@ -39,6 +40,10 @@ namespace CyanNook.Character
         [Header("Navigation")]
         [Tooltip("NavigationControllerの参照（MoveSpeedTrackバインディング用）")]
         public CharacterNavigationController navigationController;
+
+        [Header("Light")]
+        [Tooltip("RoomLightControllerの参照（LightControlTrackバインディング用）")]
+        public RoomLightController roomLightController;
 
         [Header("Timeline Assets")]
         [Tooltip("ステートごとのTimelineアセット")]
@@ -629,6 +634,14 @@ namespace CyanNook.Character
                     {
                         director.SetGenericBinding(moveSpeedTrack, navigationController);
                         Debug.Log($"[CharacterAnimationController] Bound NavigationController to MoveSpeedTrack: {moveSpeedTrack.name}");
+                    }
+                }
+                else if (track is LightControlTrack lightControlTrack)
+                {
+                    if (roomLightController != null)
+                    {
+                        director.SetGenericBinding(lightControlTrack, roomLightController);
+                        Debug.Log($"[CharacterAnimationController] Bound RoomLightController to LightControlTrack: {lightControlTrack.name}");
                     }
                 }
             }

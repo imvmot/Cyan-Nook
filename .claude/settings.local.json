@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(grep -r \"OutingController\\\\|exit\" /d/works/Cyan-Nook/unity_client/Assets/Scripts/Character/*.cs)"
     ]
   }
 }
