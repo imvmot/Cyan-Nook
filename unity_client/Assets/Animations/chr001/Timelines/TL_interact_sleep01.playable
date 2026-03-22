@@ -345,19 +345,6 @@ MonoBehaviour:
     volume: 1
     stereoPan: 0
     spatialBlend: 0
---- !u!114 &-7205418781129379067
-MonoBehaviour:
-  m_ObjectHideFlags: 1
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 0}
-  m_Name: LightControlClip
-  m_EditorClassIdentifier: CyanNook:CyanNook.Timeline:LightControlClip
-  lightsOn: 0
 --- !u!114 &-7061723645246924384
 MonoBehaviour:
   m_ObjectHideFlags: 1
@@ -554,6 +541,19 @@ MonoBehaviour:
   chestAngleLimitX: 10
   chestAngleLimitY: 10
   blendFrames: 90
+--- !u!114 &-5566644865331055101
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ecf27042e9bf3542a18c7a4a00e31af, type: 3}
+  m_Name: LightControlClip
+  m_EditorClassIdentifier: CyanNook::CyanNook.Timeline.LightControlClip
+  lightsOn: 1
 --- !u!114 &-5498732972041912437
 MonoBehaviour:
   m_ObjectHideFlags: 1
@@ -1150,19 +1150,6 @@ MonoBehaviour:
     m_ScenePreview: 1
   m_DurationMode: 0
   m_MarkerTrack: {fileID: 0}
---- !u!114 &40597672209332
-MonoBehaviour:
-  m_ObjectHideFlags: 1
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 0}
-  m_Name: LightControlClip(Clone)(Clone)
-  m_EditorClassIdentifier: CyanNook:CyanNook.Timeline:LightControlClip
-  lightsOn: 1
 --- !u!114 &960649158010160670
 MonoBehaviour:
   m_ObjectHideFlags: 1
@@ -2314,7 +2301,7 @@ MonoBehaviour:
   - m_Version: 1
     m_Start: 2
     m_ClipIn: 0
-    m_Asset: {fileID: -7205418781129379067}
+    m_Asset: {fileID: 6708815705179319076}
     m_Duration: 0.25
     m_TimeScale: 1
     m_ParentTrack: {fileID: 6241090352794935607}
@@ -2383,7 +2370,7 @@ MonoBehaviour:
   - m_Version: 1
     m_Start: 9.333333333333334
     m_ClipIn: 0
-    m_Asset: {fileID: 40597672209332}
+    m_Asset: {fileID: -5566644865331055101}
     m_Duration: 0.25
     m_TimeScale: 1
     m_ParentTrack: {fileID: 6241090352794935607}
@@ -2464,6 +2451,19 @@ MonoBehaviour:
   m_Name: LoopRegionClip
   m_EditorClassIdentifier: CyanNook::CyanNook.Timeline.LoopRegionClip
   loopEndOffsetFrames: -1
+--- !u!114 &6708815705179319076
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ecf27042e9bf3542a18c7a4a00e31af, type: 3}
+  m_Name: LightControlClip
+  m_EditorClassIdentifier: CyanNook::CyanNook.Timeline.LightControlClip
+  lightsOn: 1
 --- !u!114 &6898669142883325769
 MonoBehaviour:
   m_ObjectHideFlags: 1
