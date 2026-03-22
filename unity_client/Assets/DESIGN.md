@@ -4291,14 +4291,14 @@ RoomLightController.Awake()
 
 CharacterSetup.OnVrmLoaded()
 ├── HasSavedConfig() == true（設定済み）
-│   └── PlayEntryOrIdle() → RoomLightController.SetLightsOn() → キャラクターEntry
+│   └── PlayEntryOrIdle() → キャラクターEntry（ライト制御はLightControlTrackで実行）
 └── HasSavedConfig() == false（初回起動）
     ├── キャラクターEntry抑制
     └── FirstRunController: ポップアップ表示
         ├── [Yes: ブラウザAIを使う]
         │   ├── WebLLMモデルダウンロード開始（進捗バー表示）
         │   ├── ダウンロード完了 → LLMConfig保存
-        │   ├── FirstRunController.Complete() → RoomLightController.SetLightsOn()
+        │   ├── FirstRunController.Complete()
         │   └── PlayEntryOrIdle() → キャラクターEntry再生
         └── [No: 手動設定]
             ├── ポップアップ閉じる（消灯維持）
@@ -4306,7 +4306,7 @@ CharacterSetup.OnVrmLoaded()
             └── Save実行時:
                 ├── LLMSettingsPanel.OnLLMConfigured イベント発火
                 │   └── CharacterSetup.OnLLMConfiguredFromSettings()
-                │       ├── FirstRunController.Complete() → RoomLightController.SetLightsOn()
+                │       ├── FirstRunController.Complete()
                 │       └── PlayEntryOrIdle() → キャラクターEntry再生
                 └── WebLLM選択時: ShowDownloadOnlyモードでダウンロードUI表示
 ```
@@ -4315,9 +4315,9 @@ CharacterSetup.OnVrmLoaded()
 
 | クラス | 役割 |
 |--------|------|
-| `RoomLightController` | ライトON/OFF + マテリアルEmission + ベイク済みLightmap連動。`startOff`で起動時消灯。初回起動・Sleep等から共通利用 |
-| `FirstRunController` | ポップアップUI表示、Yes/Noボタン処理、WebLLMダウンロード進捗表示。RoomLightController経由でライト制御 |
-| `CharacterSetup` | `firstRunController`/`llmSettingsPanel`/`roomLightController`参照保持、初回判定によるEntry抑制、`PlayEntryOrIdle()`でライトON+Entry開始 |
+| `RoomLightController` | ライトON/OFF + マテリアルEmission + ベイク済みLightmap連動。`startOff`で起動時消灯。LightControlTrack経由で制御 |
+| `FirstRunController` | ポップアップUI表示、Yes/Noボタン処理、WebLLMダウンロード進捗表示 |
+| `CharacterSetup` | `firstRunController`/`llmSettingsPanel`参照保持、初回判定によるEntry抑制、`PlayEntryOrIdle()`でEntry開始 |
 | `LLMSettingsPanel` | `OnLLMConfigured`イベント、WebLLM選択時のUI制御、`firstRunController`参照によるダウンロードフロー連携 |
 
 ---

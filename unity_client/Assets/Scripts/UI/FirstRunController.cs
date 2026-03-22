@@ -2,7 +2,6 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using CyanNook.Chat;
-using CyanNook.Furniture;
 using System;
 
 namespace CyanNook.UI
@@ -51,10 +50,6 @@ namespace CyanNook.UI
 
         [Tooltip("繰り返しペナルティ (1.0=無効)")]
         public float defaultRepeatPenalty = 1.1f;
-
-        [Header("Room Light")]
-        [Tooltip("部屋のライト制御（ライトON/OFF + Emission連動）")]
-        public RoomLightController roomLightController;
 
         // --- コールバック ---
         private Action _onComplete;
@@ -113,8 +108,6 @@ namespace CyanNook.UI
             _webLLMSelected = false;
             _downloadOnlyMode = false;
 
-            roomLightController?.SetLightsOff();
-
             if (popupPanel != null)
                 popupPanel.SetActive(true);
             if (buttonContainer != null)
@@ -152,14 +145,12 @@ namespace CyanNook.UI
 
         /// <summary>
         /// 外部から完了を通知（WebLLM DL完了 or 設定パネルから保存完了）
-        /// ライトON + ポップアップ消去 + Entry開始コールバック
+        /// ポップアップ消去 + Entry開始コールバック（ライト制御はLightControlTrackで行う）
         /// </summary>
         public void Complete()
         {
             if (!_isShowing) return;
             _isShowing = false;
-
-            roomLightController?.SetLightsOn();
 
             if (popupPanel != null)
                 popupPanel.SetActive(false);

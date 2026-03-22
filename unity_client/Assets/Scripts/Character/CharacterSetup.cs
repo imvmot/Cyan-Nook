@@ -290,8 +290,7 @@ namespace CyanNook.Character
         /// </summary>
         private void PlayEntryOrIdle()
         {
-            // startOffで消灯開始した場合も含め、Entry開始時に点灯
-            roomLightController?.SetLightsOn();
+            // ライト制御はLightControlTrack（Timeline）で行う
 
             if (outingController != null)
             {
