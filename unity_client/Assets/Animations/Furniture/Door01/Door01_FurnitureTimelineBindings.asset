@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: CyanNook::CyanNook.Furniture.FurnitureTimelineBindingData
   furnitureId: Door01
   bindings:
-  - animationId: common_entry01
+  - animationId: interact_entry01
     timeline: {fileID: 11400000, guid: e76d735d74af3a343958349bf853c450, type: 2}
   - animationId: interact_exit01
     timeline: {fileID: 11400000, guid: 7c4e5de8c6808d340965ccd0368bb773, type: 2}

@@ -10,8 +10,8 @@ namespace CyanNook.Character
     /// 外出状態の管理コントローラー
     /// - interact_exit完了後に外出状態に遷移
     /// - 外出中は定期メッセージをLLMに送信（Dream方式）
-    /// - LLMがcommon_entry01を選定した場合のみ帰還
-    /// - ゲーム開始時にcommon_entry01を再生（入室演出）
+    /// - LLMがinteract_entry01を選定した場合のみ帰還
+    /// - ゲーム開始時にinteract_entry01を再生（入室演出）
     /// - 外出状態は非永続化（再起動で必ず解除）
     /// </summary>
     public class OutingController : MonoBehaviour
@@ -50,7 +50,7 @@ namespace CyanNook.Character
 
         [Header("Animation")]
         [Tooltip("入室アニメーションのID")]
-        public string entryAnimationId = "common_entry01";
+        public string entryAnimationId = "interact_entry01";
 
         [Header("Door Furniture")]
         [Tooltip("入退室に使用するドア家具のinstanceId")]

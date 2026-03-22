@@ -49272,7 +49272,6 @@ MonoBehaviour:
   idleChatController: {fileID: 1637253017}
   boredomController: {fileID: 1752575854}
   vrmLoader: {fileID: 1752575843}
-  roomLightController: {fileID: 1288638227}
   defaultSleepDuration: 30
   minSleepDuration: 5
   maxSleepDuration: 480
@@ -49317,7 +49316,7 @@ MonoBehaviour:
   outingPromptMessage: "[system]\u30AD\u30E3\u30E9\u30AF\u30BF\u30FC\u306F\u5916\u51FA\u4E2D\u3067\u3059\u3002\u5916\u3067\u306E\u6D3B\u52D5\u3092\u8003\u3048\u3066\u304F\u3060\u3055\u3044\u3002"
   entryPromptMessage: "[system]\u3042\u306A\u305F\u306F\u90E8\u5C4B\u306B\u623B\u3063\u3066\u304D\u307E\u3057\u305F\u3002"
   outingDisplayText: "\u304A\u51FA\u304B\u3051\u4E2D\u2026"
-  entryAnimationId: common_entry01
+  entryAnimationId: interact_entry01
   doorFurnitureId: room01_door_01
   _isOutside: 0
 --- !u!114 &1637253024
@@ -52858,6 +52857,7 @@ MonoBehaviour:
   lookAtController: {fileID: 1752575842}
   expressionController: {fileID: 1752575839}
   navigationController: {fileID: 0}
+  roomLightController: {fileID: 0}
   timelineBindings: {fileID: 11400000, guid: d3bad345f1bf36d4181e0a1d2ee8217f, type: 2}
   defaultBlendTime: 0.25
   emoteHoldDuration: 20

@@ -53,7 +53,7 @@ MonoBehaviour:
     timeline: {fileID: 11400000, guid: a965dfc658a4a0847972334f6e55deb3, type: 2}
   - animationId: interact_exit01
     timeline: {fileID: 11400000, guid: 3e5d1cf7f39249148857d0c0ca84aea7, type: 2}
-  - animationId: common_entry01
+  - animationId: interact_entry01
     timeline: {fileID: 11400000, guid: 0ae7b13078daddb409fd051793110092, type: 2}
   clipVariants:
   - variantName: chr001_anim_common_idle01_lp
