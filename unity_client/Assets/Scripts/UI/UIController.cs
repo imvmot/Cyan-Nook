@@ -42,6 +42,10 @@ namespace CyanNook.UI
         [Tooltip("UI非表示中アイコン")]
         public Image uiHideIcon;
 
+        [Header("UI Elements - Recall")]
+        [Tooltip("外出中にキャラクターを呼び戻すボタン（Come Home）")]
+        public Button recallButton;
+
         [Header("UI Elements - Mic Button")]
         [Tooltip("マイクミュートボタン")]
         public Button micButton;
@@ -192,6 +196,13 @@ namespace CyanNook.UI
             }
             UpdateUIHideToggleVisual(true);
 
+            // 呼び戻しボタン（初期非表示）
+            if (recallButton != null)
+            {
+                recallButton.onClick.AddListener(OnRecallButtonClicked);
+                recallButton.gameObject.SetActive(false);
+            }
+
             // マイクボタン
             if (micButton != null)
             {
@@ -259,6 +270,10 @@ namespace CyanNook.UI
             if (uiHideToggleButton != null)
             {
                 uiHideToggleButton.onClick.RemoveListener(OnUIHideToggleClicked);
+            }
+            if (recallButton != null)
+            {
+                recallButton.onClick.RemoveListener(OnRecallButtonClicked);
             }
             if (micButton != null)
             {
@@ -780,6 +795,7 @@ namespace CyanNook.UI
                 messageText.text = displayText;
                 _messageTimer = float.MaxValue; // 消えない
             }
+            recallButton?.gameObject.SetActive(true);
         }
 
         /// <summary>
@@ -792,6 +808,7 @@ namespace CyanNook.UI
                 messageText.text = "";
                 _messageTimer = 0;
             }
+            recallButton?.gameObject.SetActive(false);
         }
 
         private void OnOutingMessageBlocked()
@@ -907,6 +924,19 @@ namespace CyanNook.UI
   ""emote"": ""Neutral"",
   ""message"": ""こんにちは！""
 }";
+        }
+
+        // ─────────────────────────────────────
+        // 呼び戻しボタン (Come Home)
+        // ─────────────────────────────────────
+
+        private void OnRecallButtonClicked()
+        {
+            recallButton?.gameObject.SetActive(false);
+
+            var recallResponse = LLMResponseData.GetFallback();
+            recallResponse.action = "interact_entry";
+            characterController?.ProcessResponse(recallResponse);
         }
 
         // ─────────────────────────────────────
