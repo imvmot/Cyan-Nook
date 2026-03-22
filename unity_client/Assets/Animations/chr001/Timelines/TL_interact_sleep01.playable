@@ -2463,7 +2463,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8ecf27042e9bf3542a18c7a4a00e31af, type: 3}
   m_Name: LightControlClip
   m_EditorClassIdentifier: CyanNook::CyanNook.Timeline.LightControlClip
-  lightsOn: 1
+  lightsOn: 0
 --- !u!114 &6898669142883325769
 MonoBehaviour:
   m_ObjectHideFlags: 1
