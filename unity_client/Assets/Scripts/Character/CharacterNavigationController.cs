@@ -326,8 +326,18 @@ namespace CyanNook.Character
             }
             else
             {
-                // すでに目標位置にいる場合は回転のみ
-                StartFinalTurning();
+                // すでに目標位置にいる場合
+                if (_currentInteraction != null)
+                {
+                    // インタラクション: 歩行を経由せず直接準備完了
+                    Debug.Log("[CharacterNavigationController] Already at target, skipping walk for interaction");
+                    OnInteractionReady();
+                }
+                else
+                {
+                    // 通常移動: 回転のみ
+                    StartFinalTurning();
+                }
             }
         }
 
