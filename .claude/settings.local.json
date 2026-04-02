@@ -4,7 +4,9 @@
       "WebFetch(domain:github.com)",
       "Bash(grep -r \"OutingController\\\\|exit\" /d/works/Cyan-Nook/unity_client/Assets/Scripts/Character/*.cs)",
       "Bash(grep -r \"public Button\\\\|public.*Button\" /d/works/Cyan-Nook/unity_client/Assets/Scripts/UI/*.cs)",
-      "Bash(grep -n \"outingController\\\\|IsOutside\" /d/works/Cyan-Nook/unity_client/Assets/Scripts/UI/*.cs)"
+      "Bash(grep -n \"outingController\\\\|IsOutside\" /d/works/Cyan-Nook/unity_client/Assets/Scripts/UI/*.cs)",
+      "Bash(grep -E \"\\\\.cs$\")",
+      "Bash(xargs grep:*)"
     ]
   }
 }

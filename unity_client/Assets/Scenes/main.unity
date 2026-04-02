@@ -53253,7 +53253,7 @@ MonoBehaviour:
   animator: {fileID: 0}
   characterTransform: {fileID: 0}
   agent: {fileID: 1752575847}
-  walkSpeed: 1
+  walkSpeed: 0.9
   runSpeed: 4
   rotationSpeed: 360
   runThreshold: 5

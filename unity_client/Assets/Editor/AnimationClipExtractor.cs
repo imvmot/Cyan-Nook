@@ -229,20 +229,23 @@ namespace CyanNook.Editor
                 {
                     string outputPath = $"{outputFolder}/{clip.name}.anim";
 
-                    // 既存のクリップがあれば削除（上書き）
                     var existingClip = AssetDatabase.LoadAssetAtPath<AnimationClip>(outputPath);
                     if (existingClip != null)
                     {
-                        AssetDatabase.DeleteAsset(outputPath);
-                        Debug.Log($"[AnimationClipExtractor] Overwriting: {clip.name}");
+                        // 既存アセットの中身を上書き（GUIDを維持、Timeline参照が壊れない）
+                        EditorUtility.CopySerialized(clip, existingClip);
+                        existingClip.name = clip.name;
+                        EditorUtility.SetDirty(existingClip);
+                        Debug.Log($"[AnimationClipExtractor] Updated in-place: {clip.name}");
                     }
-
-                    // クリップを複製して保存
-                    var newClip = Object.Instantiate(clip);
-                    newClip.name = clip.name;
-
-                    AssetDatabase.CreateAsset(newClip, outputPath);
-                    Debug.Log($"[AnimationClipExtractor] Extracted: {clip.name} -> {outputPath}");
+                    else
+                    {
+                        // 新規作成
+                        var newClip = Object.Instantiate(clip);
+                        newClip.name = clip.name;
+                        AssetDatabase.CreateAsset(newClip, outputPath);
+                        Debug.Log($"[AnimationClipExtractor] Extracted (new): {clip.name} -> {outputPath}");
+                    }
                     extractedCount++;
                 }
             }
