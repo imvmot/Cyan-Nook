@@ -490,7 +490,7 @@ namespace CyanNook.Character
             {
                 if (agent != null && agent.isOnNavMesh)
                 {
-                    Vector3 move = transform.forward * walkSpeed * Time.deltaTime;
+                    Vector3 move = transform.forward * walkSpeed * _moveSpeedMultiplier * Time.deltaTime;
                     agent.Move(move);
                 }
                 return;

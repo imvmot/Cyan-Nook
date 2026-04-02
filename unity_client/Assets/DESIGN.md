@@ -840,7 +840,7 @@ agent.updateRotation = false;  // 回転は手動制御（UpdateMovementRotation
 | MoveTo（目的地指定） | `agent.SetDestination()` | NavMeshAgent経路追従、速度調整あり |
 | Interact接近 | `agent.SetDestination()` | MoveTo同様、approachRadius到達で終了 |
 | 最終接近フェーズ | `agent.Move()` | `remainingDistance <= finalApproachDistance` で自動ステアリング停止→ターゲットへ直接移動（到着付近の軌跡揺れ防止） |
-| 前方歩行（Wキー） | `agent.Move()` | 毎フレーム `forward * walkSpeed * dt` で直接移動。A/Dキーで CharacterRoot を旋回し進行方向を変更可能 |
+| 前方歩行（Wキー） | `agent.Move()` | 毎フレーム `forward * walkSpeed * _moveSpeedMultiplier * dt` で直接移動。MoveSpeedTrackの速度カーブが反映される。A/Dキーで CharacterRoot を旋回し進行方向を変更可能 |
 
 #### 移動中の回転制御（UpdateMovementRotation）
 
@@ -927,7 +927,8 @@ MoveTo/Interact接近時（通常パス追従）:
 
 前方歩行時:
   PlayableGraph速度 = 1.0（固定）
-  → デバッグ用途のため速度調整なし
+  移動速度 = walkSpeed * _moveSpeedMultiplier
+  → MoveSpeedTrackの速度カーブが移動速度に反映される
 ```
 
 #### MoveSpeedTrack（移動速度カーブ制御）
@@ -6152,6 +6153,10 @@ Assets/
 | Extract Clips for Selected Character | 選択キャラクターのClipを抽出 |
 | Create Timelines for Character | Timeline + TimelineBindingDataを生成 |
 | Rebake All VRM Expression Curves | 全TimelineのVrmExpressionClipカーブを一括再Bake |
+
+#### Clip抽出のGUID維持
+
+FBXからAnimationClipを抽出する際、既存の.animファイルがある場合は `EditorUtility.CopySerialized()` で中身だけを上書きし、アセットのGUIDを維持する。これによりTimeline上のAnimationPlayableAssetのクリップ参照が壊れない。既存ファイルがない場合（初回抽出）は `AssetDatabase.CreateAsset()` で新規作成する。
 
 ### Scene Tools (CyanNook)
 
