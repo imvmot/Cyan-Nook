@@ -53258,7 +53258,7 @@ MonoBehaviour:
   rotationSpeed: 360
   runThreshold: 5
   arrivalThreshold: 0.05
-  turnAnimationThreshold: 90
+  turnAnimationThreshold: 45
   finalApproachDistance: 1.5
   walkAnimationSpeed: 1
   runAnimationSpeed: 4

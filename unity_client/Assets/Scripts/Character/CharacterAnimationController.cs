@@ -157,6 +157,16 @@ namespace CyanNook.Character
         private bool _emoteTextDisplayComplete = true;
         private float _emoteHoldTimer;
 
+        // Walk-Turn制御（歩行開始時の旋回アニメーション選択）
+        public enum TurnMode { Normal, TurnLeft, TurnRight }
+        private TurnMode _turnMode = TurnMode.Normal;
+
+        /// <summary>
+        /// 次のPlayState呼び出し時のWalk-Turn方向を設定
+        /// BindAnimatorToTimeline内で消費され、自動的にNormalにリセットされる
+        /// </summary>
+        public void SetTurnMode(TurnMode mode) { _turnMode = mode; }
+
         /// <summary>
         /// ループジャンプフラグを消費して返す。
         /// Root Motion適用時に呼び出し、ループジャンプ直後の大きな負のdeltaを無視するために使用。
@@ -601,8 +611,17 @@ namespace CyanNook.Character
             {
                 if (track is AnimationTrack animTrack)
                 {
-                    director.SetGenericBinding(animTrack, animator);
-                    Debug.Log($"[CharacterAnimationController] Bound Animator '{animator.name}' to track: {animTrack.name}");
+                    // Walk-Turn トラック切替: トラック名でバインド/アンバインドを決定
+                    bool shouldBind = true;
+                    if (animTrack.name.Contains("TurnL"))
+                        shouldBind = (_turnMode == TurnMode.TurnLeft);
+                    else if (animTrack.name.Contains("TurnR"))
+                        shouldBind = (_turnMode == TurnMode.TurnRight);
+                    else if (animTrack.name.EndsWith("_ST"))
+                        shouldBind = (_turnMode == TurnMode.Normal);
+
+                    director.SetGenericBinding(animTrack, shouldBind ? animator : null);
+                    Debug.Log($"[CharacterAnimationController] Bound Animator '{animator.name}' to track: {animTrack.name}{(shouldBind ? "" : " (unbound)")}");
                     trackCount++;
                 }
                 else if (track is InertialBlendTrack inertialTrack)
@@ -648,6 +667,9 @@ namespace CyanNook.Character
 
             // Body TimelineにVrmExpressionTrackがある場合、Facial Directorを一時停止
             expressionController?.SetBodyExpressionOverride(hasExpressionTrack);
+
+            // TurnModeをリセット（次回のPlayStateではNormalに戻る）
+            _turnMode = TurnMode.Normal;
 
             if (trackCount == 0)
             {

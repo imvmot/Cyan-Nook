@@ -577,8 +577,8 @@ chr001_anim_interact_bookshelf01_ed_toolL
 | common_walk02_lp | Loop | 歩き後 |
 | common_walk03_lp | Loop | 歩き左 |
 | common_walk04_lp | Loop | 歩き右 |
-| common_walkturn01_st | Start | 左90度ターン→歩き |
-| common_walkturn02_st | Start | 右90度ターン→歩き |
+| common_walkturnL01_st | Start | 左旋回歩き出し（Walk-Turnシステム、TurnL_STトラック） |
+| common_walkturnR01_st | Start | 右旋回歩き出し（Walk-Turnシステム、TurnR_STトラック） |
 | common_run01_st/lp/ed | Start/Loop/End | 走り |
 | common_runturn01_st | Start | 左90度ターン→走り |
 | common_runturn02_st | Start | 右90度ターン→走り |
@@ -896,6 +896,7 @@ UpdateFinalApproach():
 - `agent.ResetPath()` + `agent.velocity = Vector3.zero` で前回の経路状態をクリア
 - `agent.isStopped = true` → `SetDestination()` → 方向判定後に移動開始
 - 方向ベクトルはY座標を0にしてから正規化（水平面での角度計算の精度確保）
+- **Walk-Turn判定:** `|angle| > turnAnimationThreshold` の場合、`StartMovingWithTurn(angle)` で旋回歩き出しアニメーションを使用（後述）
 - **近距離インタラクション最適化:** 目標との距離がほぼゼロの場合（`direction.sqrMagnitude <= 0.01f`）、インタラクションリクエストであれば歩行タイムラインを経由せず直接 `OnInteractionReady()` を呼ぶ。例: interact_sit中のベッドからinteract_sleepへ遷移する場合、同じ家具位置にWarpされるため歩行が不要。歩行タイムラインを空で開始すると `StopWalkWithEndPhase()` が空振りしてアニメーションが停止する問題を回避する
 
 **パス有効性チェック:**
@@ -930,6 +931,55 @@ MoveTo/Interact接近時（通常パス追従）:
   移動速度 = walkSpeed * _moveSpeedMultiplier
   → MoveSpeedTrackの速度カーブが移動速度に反映される
 ```
+
+#### Walk-Turn（旋回歩き出しアニメーション）
+
+目標方向との角度差が `turnAnimationThreshold`（デフォルト45°）以上の場合、通常のwalk01_stの代わりに旋回しながら歩き始める専用クリップを再生する。
+
+##### Timeline構造（複数AnimationTrackによるバインド切替方式）
+
+1つのタイムライン `TL_common_walk01` 内に4つのAnimationTrackを配置し、コード側で必要なトラックだけAnimatorをバインドする：
+
+```
+TurnL_ST        [walkturnL01_st]              ← 左旋回歩き出し
+TurnR_ST        [walkturnR01_st]              ← 右旋回歩き出し
+Walk_ST         [walk01_st]                   ← 通常歩き出し
+Walk_LPED       [walk01_lp] [walk01_ed]       ← 常時バインド（LP/ED）
+LoopRegionTrack [--- LP region ---]
+MoveSpeedTrack  [speed curves...]
+```
+
+- 3つのSTクリップは同じ開始時間・同じ長さ
+- Walk_LPEDは**トラックリストの一番下**に配置（最高優先度、LP/EDが確実にSTを上書き）
+- TurnL_ST / TurnR_ST / Walk_ST のクリップは**Post-Extrapolation: None**に設定
+- エディタ上でのmuteは**使用しない**（`SetGenericBinding(track, null)` でバインド解除する方式）
+
+##### トラック名によるバインド制御
+
+`BindAnimatorToTimeline()` 内でトラック名を判定し、`TurnMode` に応じてバインド/アンバインドを決定：
+
+| トラック名に含む文字列 | バインド条件 |
+|----------------------|-------------|
+| `"TurnL"` | `TurnMode.TurnLeft` 時のみ |
+| `"TurnR"` | `TurnMode.TurnRight` 時のみ |
+| `"_ST"`（TurnL/TurnRを含まない） | `TurnMode.Normal` 時のみ |
+| 上記いずれにも該当しない | 常にバインド（Walk_LPED等） |
+
+`TurnMode` は `BindAnimatorToTimeline()` 実行後に自動的に `Normal` にリセットされる。
+
+##### ナビゲーションフロー
+
+```
+StartNavigation()
+├─ |angle| <= threshold → StartMoving()（通常walk01_st）
+├─ |angle| > threshold  → StartMovingWithTurn(angle)
+│   ├─ angle < 0 → SetTurnMode(TurnLeft)
+│   └─ angle >= 0 → SetTurnMode(TurnRight)
+│   └─ PlayAnimation("common_walk01") → BindAnimatorToTimeline で TurnL/R_ST をバインド
+└─ distance ≈ 0（インタラクション） → OnInteractionReady()（歩行スキップ）
+```
+
+この方式はRun用タイムラインにも同じ構造で適用可能。
 
 #### MoveSpeedTrack（移動速度カーブ制御）
 
