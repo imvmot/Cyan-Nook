@@ -53255,7 +53255,7 @@ MonoBehaviour:
   agent: {fileID: 1752575847}
   walkSpeed: 0.9
   runSpeed: 4
-  rotationSpeed: 360
+  rotationSpeed: 180
   runThreshold: 5
   arrivalThreshold: 0.05
   turnAnimationThreshold: 45
