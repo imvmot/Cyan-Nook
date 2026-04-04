@@ -33538,7 +33538,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cc33a39070010f94fb1c2dd721c1286d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: WebGLInput::WebGLSupport.WebGLInput
-  showHtmlElement: 0
+  showHtmlElement: 1
 --- !u!1 &1085268322
 GameObject:
   m_ObjectHideFlags: 0
@@ -37458,7 +37458,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cc33a39070010f94fb1c2dd721c1286d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: WebGLInput::WebGLSupport.WebGLInput
-  showHtmlElement: 0
+  showHtmlElement: 1
 --- !u!114 &1238433936
 MonoBehaviour:
   m_ObjectHideFlags: 0
