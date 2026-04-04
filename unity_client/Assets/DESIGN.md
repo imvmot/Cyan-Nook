@@ -3620,6 +3620,7 @@ public enum InputMode
 - **Chatモード**: Enter送信時、挿入された改行を除去して送信（送信後テキストクリア）
 - **JSONモード**: Enter送信時、`_previousText`（Enter押下前のテキスト）をそのまま送信（JSON構造を維持、改行による変化なし）
 - IME変換確定のEnterは送信しない（空テキスト判定でガード）
+- **ペースト時のEnter誤検出防止**: エディターのTMP_InputFieldはペースト時に`Append(char)`で1文字ずつ`onValueChanged`を発火する。改行文字`\n`が来ると`delta=1`でEnter押下と誤検出されるため、Ctrl/Cmd押下中はEnter検出をスキップする
 - **Sendボタンは廃止**（Enter送信のみ）
 - ※ 設定パネルのInputFieldでは`MultiLineInputFieldFix`コンポーネントでEnter=改行を実現（送信機能なし）
 

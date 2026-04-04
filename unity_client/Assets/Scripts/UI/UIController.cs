@@ -345,7 +345,6 @@ namespace CyanNook.UI
             {
                 if (rect != null)
                 {
-                    // 高さを直接設定（アンカーはエディター設定を維持）
                     rect.sizeDelta = new Vector2(rect.sizeDelta.x, jsonModeInputHeight);
                 }
                 if (codeFont != null && textComponent != null)
@@ -361,7 +360,6 @@ namespace CyanNook.UI
             {
                 if (rect != null)
                 {
-                    // 高さを直接設定（アンカーはエディター設定を維持）
                     rect.sizeDelta = new Vector2(rect.sizeDelta.x, chatModeInputHeight);
                 }
                 if (chatFont != null && textComponent != null)
@@ -373,6 +371,7 @@ namespace CyanNook.UI
                     textComponent.fontSize = chatFontSize;
                 }
             }
+
         }
 
         // ─────────────────────────────────────
@@ -395,6 +394,21 @@ namespace CyanNook.UI
             }
 
             int currentLength = text.Length;
+
+            // ペースト操作中（Ctrl/Cmd押下中）はEnter検出をスキップ
+            // エディターのTMP_InputFieldはペースト時に1文字ずつonValueChangedを発火するため、
+            // 改行文字が来るとEnterキー押下と誤検出される
+            var kb = Keyboard.current;
+            if (kb != null && (kb.leftCtrlKey.isPressed || kb.rightCtrlKey.isPressed ||
+                               kb.leftCommandKey.isPressed || kb.rightCommandKey.isPressed))
+            {
+                _previousTextLength = currentLength;
+                _previousNewlineCount = 0;
+                for (int i = 0; i < text.Length; i++)
+                    if (text[i] == '\n') _previousNewlineCount++;
+                _previousText = text;
+                return;
+            }
 
             // テキストが1文字だけ増え、その増分が\nである = Enterキー押下
             bool enterDetected = false;
