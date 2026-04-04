@@ -8121,6 +8121,80 @@ Vrm10.LoadBytesAsync(awaitCaller: ...)
 5. ビルド実行（マニフェストは自動生成される）
 6. HTTPS またはlocalhost でホスティング（Web Speech API / WebGPU等のセキュアコンテキストが必要）
 
+### iOS Safari対応
+
+iOS SafariでWebGLビルドを使用する際の対応。HTTPS環境が必要。
+
+#### クリップボード（コピー＆ペースト）
+
+Unity WebGLではCanvasがすべてのタッチイベントを消費するため、ネイティブiOSの長押しコンテキストメニュー（コピー/ペースト）は使用不可。ブラウザの`navigator.clipboard` APIをjslib経由で呼び出す方式で対応。
+
+| ファイル | 役割 |
+|---------|------|
+| `Plugins/WebGL/Clipboard.jslib` | `navigator.clipboard.writeText()`/`readText()`のブリッジ |
+| `Scripts/UI/ClipboardBridge.cs` | C#側ラッパー。SendMessageコールバックでペースト内容を受け取り、InputFieldのキャレット位置に挿入 |
+
+- **コピー**: `ClipboardBridge.CopyToClipboard(text)` → jslib → `navigator.clipboard.writeText()`
+- **ペースト**: UIにペーストボタンを配置 → タップ（ユーザージェスチャー必須）→ jslib → `navigator.clipboard.readText()` → SendMessage → InputFieldに挿入
+- iOS Safariではペースト時にシステム許可ダイアログが表示される場合がある（ブラウザ仕様）
+- エディター/スタンドアロンでは`GUIUtility.systemCopyBuffer`にフォールバック
+- ペーストボタンはWebGLビルドでのみ表示（`#if UNITY_WEBGL && !UNITY_EDITOR`）
+
+#### ソフトウェアキーボード表示時の入力欄移動
+
+iOS Safariでソフトウェアキーボードが表示されるとビューポートが縮小し、画面下部のチャット入力欄がキーボードに隠れる。`window.visualViewport` APIでキーボード高さを検出し、入力欄の位置を動的に調整する。
+
+| ファイル | 役割 |
+|---------|------|
+| `Plugins/WebGL/MobileKeyboard.jslib` | `visualViewport.resize`イベントを監視し、キーボード高さをSendMessageで通知 |
+| `Scripts/UI/MobileKeyboardAdjuster.cs` | 通知を受け取り、`chatInputContainer`のanchoredPosition.yを調整 |
+
+- キーボード高さの計算: `window.innerHeight - visualViewport.height`（10px以下はノイズとして無視）
+- Canvas座標への変換: `keyboardHeight / rootCanvas.scaleFactor + keyboardPadding`
+- `keyboardPadding`（デフォルト20）: Inspectorで調整可能なキーボード上部の追加余白
+- キーボード非表示時（height=0）: 元の位置に復帰
+- デスクトップブラウザ: `visualViewport.height == window.innerHeight` → keyboardHeight=0 → 影響なし
+- エディター: jslib呼び出しがスタブのため影響なし
+
+#### パフォーマンスログ＆エクスポート
+
+iOS SafariでのFPS低下等の問題を調査するためのログ基盤。
+
+| ファイル | 役割 |
+|---------|------|
+| `Scripts/DebugTools/PerformanceLogger.cs` | `Application.logMessageReceived`で全ログをリングバッファ（2000件）に蓄積。シングルトン |
+| `Plugins/WebGL/FileIO.jslib` | `FileIO_DownloadText()`でテキストファイルダウンロード |
+
+- ログ形式: `[frameCount] HH:mm:ss.fff [LOG/WRN/ERR/EXC] message`
+- エラー/例外はスタックトレース先頭1行も記録
+- `PerformanceLogger.Instance.DownloadLog()` → `cyannook_log_{timestamp}.txt`としてダウンロード
+- DebugSettingsPanelの「Export Log」ボタンからダウンロード可能
+- エディターでは`Application.persistentDataPath`にファイル保存
+
+**パフォーマンスマーカー**: 主要処理にはフレーム番号付きの`[PERF]`プレフィックスログを配置:
+
+| マーカー | ファイル | タイミング |
+|---------|---------|-----------|
+| `[PERF] LLM request start` | LLMClient.cs | ストリーミングリクエスト開始 |
+| `[PERF] LLM request complete` | LLMClient.cs | ストリーミング完了 |
+| `[PERF] VOICEVOX synth start` | VoicevoxClient.cs | 音声合成開始 |
+| `[PERF] VOICEVOX synth complete` | VoicevoxClient.cs | 音声合成完了 |
+| `[PERF] TTS sentence queued` | VoiceSynthesisController.cs | 文区切り検出→合成キューイング |
+
+#### セーフエリア対応（CSS）
+
+WebGLテンプレートのCSS（`TemplateData/style.css`）でiOSのセーフエリア（ステータスバー/ノッチ）を考慮:
+
+```css
+#unity-container { position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0; bottom: 0; }
+#unity-canvas { touch-action: none; }
+body { overflow: hidden; }
+```
+
+- `env(safe-area-inset-top)`: ステータスバー分のオフセット（デスクトップでは0pxにフォールバック）
+- `touch-action: none`: ブラウザのデフォルトタッチ動作（スクロール等）を抑制
+- `overflow: hidden`: iOS Safariのバウンススクロール防止
+
 ### WebGL 日本語入力（IME）対応
 
 **問題**: Unity WebGLではIMEが公式未サポートのため、日本語入力ができない。
