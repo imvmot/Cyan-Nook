@@ -44628,6 +44628,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: CyanNook::CyanNook.UI.MobileKeyboardAdjuster
   chatInputContainer: {fileID: 1082915414}
   rootCanvas: {fileID: 792668898}
+  keyboardPadding: 100
 --- !u!1 &1467745973
 GameObject:
   m_ObjectHideFlags: 0

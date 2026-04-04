@@ -16,6 +16,9 @@ namespace CyanNook.UI
         [Tooltip("ルートCanvas（座標変換用）")]
         public Canvas rootCanvas;
 
+        [Tooltip("キーボード上部からの追加パディング（Canvas単位）")]
+        public float keyboardPadding = 20f;
+
         private float _originalAnchoredY;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -73,7 +76,7 @@ namespace CyanNook.UI
             {
                 // キーボード表示: 入力欄を上に移動
                 float scaleFactor = rootCanvas != null ? rootCanvas.scaleFactor : 1f;
-                float adjustedHeight = keyboardHeight / scaleFactor;
+                float adjustedHeight = keyboardHeight / scaleFactor + keyboardPadding;
 
                 chatInputContainer.anchoredPosition = new Vector2(
                     chatInputContainer.anchoredPosition.x,
