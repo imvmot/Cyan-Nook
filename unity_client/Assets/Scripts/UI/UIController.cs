@@ -29,6 +29,12 @@ namespace CyanNook.UI
         [Tooltip("入力フィールド（Chat/JSON共用）")]
         public TMP_InputField chatInputField;
 
+        [Tooltip("ペーストボタン（WebGLのみ表示）")]
+        public Button pasteButton;
+
+        [Tooltip("クリップボードブリッジ")]
+        public ClipboardBridge clipboardBridge;
+
         [Header("UI Elements - Hide Toggle")]
         [Tooltip("UI全体を格納するコンテナ（トグルで非表示にする対象）")]
         public GameObject uiContainer;
@@ -151,6 +157,16 @@ namespace CyanNook.UI
                 chatInputField.ActivateInputField();
             }
 
+            // ペーストボタン（WebGLのみ表示）
+            if (pasteButton != null)
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                pasteButton.onClick.AddListener(OnPasteButtonClicked);
+#else
+                pasteButton.gameObject.SetActive(false);
+#endif
+            }
+
             // メッセージ初期化
             if (messageText != null)
             {
@@ -232,6 +248,11 @@ namespace CyanNook.UI
             {
                 chatInputField.onEndEdit.RemoveListener(OnInputEndEdit);
                 chatInputField.onValueChanged.RemoveListener(OnInputValueChanged);
+            }
+
+            if (pasteButton != null)
+            {
+                pasteButton.onClick.RemoveListener(OnPasteButtonClicked);
             }
 
             if (chatManager != null)
@@ -540,6 +561,14 @@ namespace CyanNook.UI
             if (chatInputField != null)
             {
                 chatInputField.caretPosition = position;
+            }
+        }
+
+        private void OnPasteButtonClicked()
+        {
+            if (clipboardBridge != null)
+            {
+                clipboardBridge.RequestPaste();
             }
         }
 

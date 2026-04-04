@@ -297,6 +297,7 @@ namespace CyanNook.Chat
             OnRequestStarted?.Invoke();
 
             Debug.Log($"[LLMClient] Streaming request via {_currentConfig.apiType}, hasImage={imageBase64 != null}");
+            Debug.Log("[PERF] LLM request start");
 
             LlmResponseHeader receivedHeader = null;
             var messageBuilder = new System.Text.StringBuilder();
@@ -319,6 +320,7 @@ namespace CyanNook.Chat
                     // ストリーム完了 → 最終的なLLMResponseDataを構築
                     string fullMessage = messageBuilder.ToString();
                     Debug.Log($"[LLMClient] Stream completed, message length={fullMessage.Length}");
+                    Debug.Log("[PERF] LLM request complete");
 
                     var header = receivedHeader ?? LlmResponseHeader.GetFallback();
                     var responseData = header.ToResponseData(fullMessage);

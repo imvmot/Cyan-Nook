@@ -172,6 +172,7 @@ namespace CyanNook.Voice
             }
 
             Debug.Log($"[VoicevoxClient] SynthesizeAsync called - Text: {text.Substring(0, Math.Min(20, text.Length))}..., SpeakerId: {speakerId}");
+            Debug.Log("[PERF] VOICEVOX synth start");
 
             try
             {
@@ -202,6 +203,7 @@ namespace CyanNook.Voice
                     Debug.Log($"[VoicevoxClient] Synthesis success: {text.Substring(0, Math.Min(20, text.Length))}... ({wavData.Length} bytes, {moraTimeline?.Count ?? 0} moras)");
                 }
 
+                Debug.Log("[PERF] VOICEVOX synth complete");
                 return (clip, moraTimeline);
             }
             catch (Exception e)
