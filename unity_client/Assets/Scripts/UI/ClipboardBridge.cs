@@ -46,6 +46,9 @@ namespace CyanNook.UI
         // メニュー表示時のポインター位置（フォールバック用）
         private Vector2 _lastPointerPosition;
 
+        // メニュー表示時刻（表示直後のタップで誤って閉じるのを防止）
+        private float _menuShownTime;
+
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
         private static extern void Clipboard_CopyText(string text);
@@ -101,8 +104,14 @@ namespace CyanNook.UI
             if (leftDown)
             {
                 // メニュー表示中にメニュー外をクリック → 閉じる
+                // 表示直後（0.5秒以内）はボタンタップを優先するため閉じない
                 if (contextMenuPanel != null && contextMenuPanel.gameObject.activeSelf)
                 {
+                    if (Time.unscaledTime - _menuShownTime < 0.5f)
+                    {
+                        // 表示直後: 閉じずにボタンのonClickに委ねる
+                        return;
+                    }
                     if (!IsPointerOverContextMenu(pointerPos))
                     {
                         HideContextMenu();
@@ -202,6 +211,7 @@ namespace CyanNook.UI
             Vector2 menuPosition = GetCaretScreenPosition(_activeInputField);
             PositionContextMenu(menuPosition);
             contextMenuPanel.gameObject.SetActive(true);
+            _menuShownTime = Time.unscaledTime;
         }
 
         public void HideContextMenu()
