@@ -23,12 +23,9 @@ ModelImporter:
       animation that will be discarded.\n\t'J_Bip_L_Little1' has translation animation
       that will be discarded.\n\t'J_Bip_L_Middle1' has translation animation that
       will be discarded.\n\t'J_Bip_L_Ring1' has translation animation that will be
-      discarded.\n\t'J_Bip_R_Hand' has translation animation that will be discarded.\n\t'J_Bip_R_Little1'
-      has translation animation that will be discarded.\n\t'J_Bip_R_Middle1' has
-      translation animation that will be discarded.\n\t'J_Bip_R_Ring1' has translation
-      animation that will be discarded.\n\t'J_Bip_L_UpperLeg' has scale animation
-      that will be discarded.\n\t'J_Bip_R_UpperLeg' has scale animation that will
-      be discarded.\n"
+      discarded.\n\t'J_Bip_R_Little1' has translation animation that will be discarded.\n\t'J_Bip_R_Middle1'
+      has translation animation that will be discarded.\n\t'J_Bip_R_Ring1' has translation
+      animation that will be discarded.\n"
     animationRetargetingWarnings: 
     animationDoRetargetingWarnings: 0
     importAnimatedCustomProperties: 0

@@ -2191,13 +2191,14 @@ namespace: `CyanNook.CameraControl`
 
 MainCameraの動的制御を担当するコンポーネント。キャラクターとの距離に応じたFOV（視野角）の自動調整と、Y軸のみのルックアット（水平方向のみ回転）機能を提供します。
 
+`targetCharacter` は `CharacterSetup.OnVrmLoaded()` でVRM Instanceのtransformに自動設定される（`[NonSerialized]`、Inspectorには表示されない）。VRM Instanceを追跡するため、インタラクション中もBlendPivot + Root Motionによる実際のキャラクター位置にカメラが追従する。
+
 #### 機能1: FOV距離連動制御（enableFovControl）
 
 キャラクターとカメラの距離（XZ平面のみ、Y軸無視）に応じて、FOVを動的に変更します。
 
 | フィールド | 型 | デフォルト | 説明 |
 |-----------|-----|---------|------|
-| `targetCharacter` | `Transform` | - | 追従対象のキャラクターTransform |
 | `enableFovControl` | `bool` | `true` | FOV制御を有効化 |
 | `minDistance` | `float` | `1.5` | この距離でFOV最小値（望遠） |
 | `maxDistance` | `float` | `5.0` | この距離でFOV最大値（広角） |

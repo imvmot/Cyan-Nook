@@ -11,7 +11,7 @@ namespace CyanNook.CameraControl
     public class DynamicCameraController : MonoBehaviour
     {
         [Header("Target")]
-        [Tooltip("追従対象のキャラクターTransform")]
+        [System.NonSerialized]
         public Transform targetCharacter;
 
         [Header("FOV Control")]

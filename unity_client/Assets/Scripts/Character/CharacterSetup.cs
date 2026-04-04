@@ -6,6 +6,7 @@ using CyanNook.Furniture;
 using CyanNook.Chat;
 using CyanNook.DebugTools;
 using CyanNook.UI;
+using CyanNook.CameraControl;
 
 namespace CyanNook.Character
 {
@@ -35,6 +36,7 @@ namespace CyanNook.Character
 
         [Header("Camera")]
         public CharacterCameraController cameraController;
+        public DynamicCameraController dynamicCameraController;
 
         [Header("Face Light")]
         public CharacterFaceLightController faceLightController;
@@ -229,6 +231,13 @@ namespace CyanNook.Character
             {
                 // Sleep復元時: 従来通りの表示処理
                 StartCoroutine(ShowModelAfterAnimation());
+            }
+
+            // DynamicCameraControllerのターゲットをVRM Instanceに設定
+            if (dynamicCameraController != null)
+            {
+                dynamicCameraController.targetCharacter = vrmInstance.transform;
+                Debug.Log("[CharacterSetup] DynamicCameraController target set to VRM instance");
             }
 
             // カメラを見る設定
