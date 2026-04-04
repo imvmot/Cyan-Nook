@@ -8132,13 +8132,22 @@ Unity WebGLではCanvasがすべてのタッチイベントを消費するため
 | ファイル | 役割 |
 |---------|------|
 | `Plugins/WebGL/Clipboard.jslib` | `navigator.clipboard.writeText()`/`readText()`のブリッジ |
-| `Scripts/UI/ClipboardBridge.cs` | C#側ラッパー。SendMessageコールバックでペースト内容を受け取り、InputFieldのキャレット位置に挿入 |
+| `Scripts/UI/ClipboardBridge.cs` | コンテキストメニュー表示 + クリップボード操作。全TMP_InputFieldに対して自動動作（フォーカス中のInputFieldを`EventSystem.RaycastAll`で自動検出） |
 
-- **コピー**: `ClipboardBridge.CopyToClipboard(text)` → jslib → `navigator.clipboard.writeText()`
-- **ペースト**: UIにペーストボタンを配置 → タップ（ユーザージェスチャー必須）→ jslib → `navigator.clipboard.readText()` → SendMessage → InputFieldに挿入
+**コンテキストメニュー方式:**
+- **右クリック（PC）**: `Pointer.current`の右ボタン検出 → InputField上ならメニュー表示
+- **長押し（モバイル）**: ポインター押下から`longPressDuration`（デフォルト0.5秒）経過＆移動量が`longPressMoveThreshold`（デフォルト30px）以内 → メニュー表示
+- メニューはキャレット位置の上部に表示（テキスト空の場合はタップ位置に表示）
+- メニュー表示後0.5秒以内のタップはボタンのonClickに委ねる（iOSでのタップ処理互換性確保）
+- メニュー外タップで自動非表示
+
+**コピー**: 選択範囲があればその部分、なければ全テキストをコピー → jslib → `navigator.clipboard.writeText()`
+**ペースト**: メニューのPasteボタンタップ（ユーザージェスチャー必須）→ jslib → `navigator.clipboard.readText()` → SendMessage → 選択範囲があれば置換、なければキャレット位置に挿入
+
 - iOS Safariではペースト時にシステム許可ダイアログが表示される場合がある（ブラウザ仕様）
-- エディター/スタンドアロンでは`GUIUtility.systemCopyBuffer`にフォールバック
-- ペーストボタンはWebGLビルドでのみ表示（`#if UNITY_WEBGL && !UNITY_EDITOR`）
+- **HTTPS必須**: `navigator.clipboard.readText()`はセキュアコンテキストでのみ動作
+- エディター/スタンドアロンでは`GUIUtility.systemCopyBuffer`にフォールバック（右クリックで動作確認可能）
+- 個別のInputFieldへの参照設定は不要（1つのClipboardBridgeコンポーネントで全InputFieldに対応）
 
 #### ソフトウェアキーボード表示時の入力欄移動
 
@@ -8194,6 +8203,19 @@ body { overflow: hidden; }
 - `env(safe-area-inset-top)`: ステータスバー分のオフセット（デスクトップでは0pxにフォールバック）
 - `touch-action: none`: ブラウザのデフォルトタッチ動作（スクロール等）を抑制
 - `overflow: hidden`: iOS Safariのバウンススクロール防止
+
+#### iOS Safari 未解決の課題
+
+以下はWebGLInputパッケージおよびUnity WebGLプラットフォームに起因する問題で、パッケージ内部のデバッグ・修正が必要。
+
+| 問題 | 状態 | 原因 |
+|------|------|------|
+| カーソル（キャレット）が非表示 | 機能は正常、描画のみ欠落 | TMP_InputFieldのキャレットメッシュがiOS Safari WebGLで描画されない |
+| テキスト選択ハイライトが非表示 | 機能は正常（選択・コピー可能）、描画のみ欠落 | 同上。WebGLInputのHTML overlay inputが表示されれば解決するが、iOSでは`Show Html Element`をONにしても表示されない |
+| 複数行テキスト付きInputFieldの初回フォーカスでテキスト消失 | 2行目以降が削除される | WebGLInputがTMP_InputFieldテキストをHTML inputに同期する際の複数行テキスト処理の問題。`On Focus - Select All`をOFFにすると`ArgumentOutOfRangeException`は回避されるが、テキスト消失は残る |
+| WebGLInputのHTML overlay inputがiOS Safariで表示されない | 未解決 | `Application.isMobilePlatform`の返り値やjslib側のiOS対応に問題がある可能性。Safari Web Inspector（Mac接続）でDOMの状態を確認する必要がある |
+
+**調査に必要なツール**: Mac + Safari Web Inspector（iOS端末をUSB接続してDOMデバッグ）
 
 ### WebGL 日本語入力（IME）対応
 

@@ -34,6 +34,12 @@ namespace CyanNook.UI
         [Tooltip("長押し判定の移動許容量（ピクセル）。モバイルタッチでは指のブレがあるため大きめに設定")]
         public float longPressMoveThreshold = 30f;
 
+        [Tooltip("メニュー表示直後のタップ保護時間（秒）。iOSでボタンが押せなくなる問題の対策")]
+        public float menuDismissProtectionDuration = 0.5f;
+
+        [Tooltip("コンテキストメニューのカーソル上部オフセット（Canvas単位）")]
+        public float contextMenuOffsetY = 10f;
+
         // 現在操作中のInputField（フォーカスから自動検出）
         private TMP_InputField _activeInputField;
 
@@ -107,7 +113,7 @@ namespace CyanNook.UI
                 // 表示直後（0.5秒以内）はボタンタップを優先するため閉じない
                 if (contextMenuPanel != null && contextMenuPanel.gameObject.activeSelf)
                 {
-                    if (Time.unscaledTime - _menuShownTime < 0.5f)
+                    if (Time.unscaledTime - _menuShownTime < menuDismissProtectionDuration)
                     {
                         // 表示直後: 閉じずにボタンのonClickに委ねる
                         return;
@@ -273,7 +279,7 @@ namespace CyanNook.UI
 
             // メニューをカーソルの上に配置
             float menuHeight = contextMenuPanel.rect.height;
-            localPoint.y += menuHeight * 0.5f + 10f;
+            localPoint.y += menuHeight * 0.5f + contextMenuOffsetY;
 
             contextMenuPanel.anchoredPosition = localPoint;
         }
