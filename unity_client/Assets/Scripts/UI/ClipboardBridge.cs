@@ -31,8 +31,8 @@ namespace CyanNook.UI
         [Tooltip("長押し判定時間（秒）")]
         public float longPressDuration = 0.5f;
 
-        [Tooltip("長押し判定の移動許容量（ピクセル）")]
-        public float longPressMoveThreshold = 10f;
+        [Tooltip("長押し判定の移動許容量（ピクセル）。モバイルタッチでは指のブレがあるため大きめに設定")]
+        public float longPressMoveThreshold = 30f;
 
         // 現在操作中のInputField（フォーカスから自動検出）
         private TMP_InputField _activeInputField;
@@ -72,33 +72,17 @@ namespace CyanNook.UI
                 pasteButton.onClick.RemoveListener(OnPasteClicked);
         }
 
-        /// <summary>
-        /// 現在のポインター位置を取得（Mouse or Touchscreen）
-        /// </summary>
-        private Vector2 GetPointerPosition()
-        {
-            var mouse = Mouse.current;
-            if (mouse != null) return mouse.position.ReadValue();
-
-            var touch = Touchscreen.current;
-            if (touch != null && touch.primaryTouch.press.isPressed)
-                return touch.primaryTouch.position.ReadValue();
-
-            return Vector2.zero;
-        }
-
         private void Update()
         {
-            var mouse = Mouse.current;
-            var touch = Touchscreen.current;
+            // Pointer: Mouse/Touch/Pen を統一的に扱う（WebGLモバイルでの互換性確保）
+            var pointer = Pointer.current;
+            if (pointer == null) return;
 
-            bool leftDown = (mouse != null && mouse.leftButton.wasPressedThisFrame) ||
-                            (touch != null && touch.primaryTouch.press.wasPressedThisFrame);
-            bool leftUp = (mouse != null && mouse.leftButton.wasReleasedThisFrame) ||
-                          (touch != null && touch.primaryTouch.press.wasReleasedThisFrame);
-            bool rightDown = mouse != null && mouse.rightButton.wasPressedThisFrame;
+            bool leftDown = pointer.press.wasPressedThisFrame;
+            bool leftUp = pointer.press.wasReleasedThisFrame;
+            bool rightDown = Mouse.current != null && Mouse.current.rightButton.wasPressedThisFrame;
 
-            Vector2 pointerPos = GetPointerPosition();
+            Vector2 pointerPos = pointer.position.ReadValue();
 
             // --- 右クリック検出（PC） ---
             if (rightDown)
@@ -135,6 +119,7 @@ namespace CyanNook.UI
                     _pointerDownPosition = pointerPos;
                     _longPressTriggered = false;
                     _activeInputField = inputField;
+                    Debug.Log($"[ClipboardBridge] Pointer down on InputField: {inputField.name} at {pointerPos}");
                 }
             }
 
@@ -159,6 +144,7 @@ namespace CyanNook.UI
                     _longPressTriggered = true;
                     _isPointerDown = false;
                     _lastPointerPosition = pointerPos;
+                    Debug.Log($"[ClipboardBridge] Long press detected on {_activeInputField?.name}");
                     ShowContextMenuAtCaret();
                 }
             }
