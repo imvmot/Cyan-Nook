@@ -304,8 +304,8 @@ namespace CyanNook.UI
 
         private void OnPasteClicked()
         {
+            HideContextMenu();
             RequestPaste();
-            // HideはOnClipboardPasteReceived後に行う
         }
 
         // --- Clipboard Operations ---
@@ -337,7 +337,12 @@ namespace CyanNook.UI
         /// </summary>
         public void OnClipboardPasteReceived(string text)
         {
-            if (string.IsNullOrEmpty(text) || _activeInputField == null) return;
+            if (string.IsNullOrEmpty(text))
+            {
+                Debug.LogWarning("[ClipboardBridge] Paste failed: empty clipboard or HTTPS required");
+                return;
+            }
+            if (_activeInputField == null) return;
 
             int anchor = _activeInputField.selectionAnchorPosition;
             int focus = _activeInputField.selectionFocusPosition;
