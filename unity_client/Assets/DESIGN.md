@@ -5057,11 +5057,15 @@ private int _boneCount;
 x(t) = x₀ · (1 + ω·t) · e^(-ω·t)
 ```
 
-ブレンド時間終了時に99%収束させるためのω：
+ブレンド時間終了時に99.9%収束させるためのω：
 
 ```csharp
-float omega = 4.605f / blendDuration;  // ln(100) ≈ 4.605
+float omega = 6.908f / blendDuration;  // ln(1000) ≈ 6.908
 ```
+
+**定数選定の経緯**: 当初`ln(100)=4.605`（99%収束）を使用していたが、ブレンド終了時にdecay≈5.6%のオフセットが残り、大きな初期差（例: interact_sit→walk遷移で30度）では約1.7度のポーズジャンプが視認されたため、`ln(1000)=6.908`（99.9%収束、残余≈0.8%）に引き上げ。
+
+**ブレンド終了処理**: ブレンド完了時に`CompleteBlend()`でclean positionへの即座スナップは行わず、最終フレームの減衰オフセットを維持したまま状態をIdleに遷移する。次フレームのUpdate()でAnimator評価前にclean positionが復元され、LateUpdate()ではIdleのためオフセット適用なし → 自然に収束する。これにより終了フレームでの1Fポップを回避。
 
 #### 処理フロー
 
@@ -5070,7 +5074,7 @@ StartInertialBlend(duration, targetBones) 呼び出し（Timeline再生前）
     ├── _boneTransformCacheから対象ボーンのTransformを取得
     ├── BoneBlendData[] を構築
     ├── 全対象ボーンの localPosition/localRotation をキャッシュ
-    ├── omega計算（ln(100) / blendDuration）
+    ├── omega計算（ln(1000) / blendDuration）
     └── State → WaitingFirstFrame
 
 [Frame N] LateUpdate - WaitingFirstFrame

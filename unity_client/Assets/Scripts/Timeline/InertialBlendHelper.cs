@@ -39,8 +39,9 @@ namespace CyanNook.Timeline
         private float _blendDuration;
 
         // Critical Dampingの定数
-        // ln(100) ≈ 4.605 : ブレンド時間終了時に99%収束
-        private const float LN_100 = 4.605f;
+        // ln(1000) ≈ 6.908 : ブレンド時間終了時に99.9%収束（残余オフセット≈0.8%）
+        // ln(100)=4.605では終了時に5.6%残り、大きな初期オフセットで視認可能なポップが発生するため引き上げ
+        private const float LN_100 = 6.908f;
         private const float DEFAULT_BLEND_DURATION = 0.3f;
 
         // 状態管理
@@ -441,7 +442,11 @@ namespace CyanNook.Timeline
                     // 完了チェックのみ行う。
                     if (_elapsedTime >= _blendDuration)
                     {
-                        CompleteBlend();
+                        // オフセット適用済みの状態を維持したまま終了
+                        // （CompleteBlend()のスナップによる1Fポップを回避）
+                        _state = State.Idle;
+                        _isActive = false;
+                        Debug.Log("[InertialBlendHelper] Blend completed");
                     }
                 }
                 return;
@@ -492,7 +497,13 @@ namespace CyanNook.Timeline
                     // ブレンド完了チェック
                     if (_elapsedTime >= _blendDuration)
                     {
-                        CompleteBlend();
+                        // オフセット適用済みの状態を維持したまま終了
+                        // 次フレームのUpdate()でclean positionに復元され、
+                        // LateUpdate()ではIdle状態のため追加オフセットなし → 自然に収束
+                        // （CompleteBlend()のスナップによる1Fポップを回避）
+                        _state = State.Idle;
+                        _isActive = false;
+                        Debug.Log("[InertialBlendHelper] Blend completed");
                     }
                     break;
             }
