@@ -38,10 +38,6 @@ namespace CyanNook.Timeline
         [SerializeField]
         private float _blendDuration;
 
-        // Critical Dampingの定数
-        // ln(1000) ≈ 6.908 : ブレンド時間終了時に99.9%収束（残余オフセット≈0.8%）
-        // ln(100)=4.605では終了時に5.6%残り、大きな初期オフセットで視認可能なポップが発生するため引き上げ
-        private const float LN_100 = 6.908f;
         private const float DEFAULT_BLEND_DURATION = 0.3f;
 
         // 状態管理
@@ -49,19 +45,28 @@ namespace CyanNook.Timeline
         {
             Idle,                // 待機中
             WaitingFirstFrame,   // 初回フレーム待機（Animator評価後にオフセット計算・ブレンド開始）
-            WaitingSecondFrame,  // [未使用] 旧2F待機の名残。互換性のため残す
             Blending,            // 慣性補間中
         }
         private State _state = State.Idle;
 
-        // ボーンごとの慣性補間データ（ローカル座標）
+        // ボーンごとの慣性補間データ（ローカル座標、5次多項式方式）
         private struct BoneBlendData
         {
             public Transform transform;
-            public Vector3 previousLocalPosition;
+            public Vector3 previousLocalPosition;      // 遷移前ポーズ（_lastCleanPose由来、frame N-1）
             public Quaternion previousLocalRotation;
-            public Vector3 initialPositionOffset;
-            public Quaternion initialRotationOffset;
+            public Vector3 prevPrevLocalPosition;      // 2フレーム前ポーズ（_prevCleanPose由来、frame N-2）
+            public Quaternion prevPrevLocalRotation;
+            public bool hasPrevPrev;                   // prevPrevデータが有効か
+            // 位置用（1Dスカラー + 方向ベクトル）
+            public float posX0;
+            public Vector3 posBaseVec;
+            public float posV0, posT1, posA0, posA, posB, posC;
+            // 回転用（軸角度表現で1Dスカラー + 回転軸）
+            public float rotX0;
+            public Vector3 rotAxis;
+            public float rotV0, rotT1, rotA0, rotA, rotB, rotC;
+            // クリーンポーズ
             public Vector3 cleanLocalPosition;
             public Quaternion cleanLocalRotation;
         }
@@ -70,16 +75,18 @@ namespace CyanNook.Timeline
         private Dictionary<HumanBodyBones, Transform> _boneTransformCache;
 
         // LateUpdateで保存したクリーンポーズのキャッシュ（Transform → ローカル座標）
-        // StartInertialBlend時に「前のポーズ」として使用する。
-        // ボーンの現在値はLookAtやInertialBlendのオフセットで汚染されている可能性があるため、
-        // Animator出力直後に保存したクリーン値を使うことでオフセットの二重適用を防止する。
         private Dictionary<Transform, (Vector3 localPos, Quaternion localRot)> _lastCleanPose
             = new Dictionary<Transform, (Vector3, Quaternion)>();
 
+        // 1フレーム前のクリーンポーズキャッシュ（速度計算用）
+        private Dictionary<Transform, (Vector3 localPos, Quaternion localRot)> _prevCleanPose
+            = new Dictionary<Transform, (Vector3, Quaternion)>();
+
+        // UpdateCleanPoseCacheの二重スワップ防止用フレーム番号
+        private int _lastCacheUpdateFrame = -1;
 
         private BoneBlendData[] _bones;
         private int _boneCount;
-        private float _omega;
         private bool _isOffsetApplied; // オフセットが適用済みかどうか
         private bool _prePassApplied;  // PrePassがWaitingFirstFrameを処理済みか
 
@@ -159,9 +166,21 @@ namespace CyanNook.Timeline
                     }
                     else
                     {
-                        // キャッシュがない場合（初回起動時など）は現在値をフォールバック
                         _bones[_boneCount].previousLocalPosition = t.localPosition;
                         _bones[_boneCount].previousLocalRotation = t.localRotation;
+                    }
+
+                    // 速度計算用: _prevCleanPose（2フレーム前）をUpdate時点で保存
+                    // LateUpdateのUpdateCleanPoseCacheでスワップされる前に取得する
+                    if (_prevCleanPose.TryGetValue(t, out var prevPrev))
+                    {
+                        _bones[_boneCount].prevPrevLocalPosition = prevPrev.localPos;
+                        _bones[_boneCount].prevPrevLocalRotation = prevPrev.localRot;
+                        _bones[_boneCount].hasPrevPrev = true;
+                    }
+                    else
+                    {
+                        _bones[_boneCount].hasPrevPrev = false;
                     }
                     _boneCount++;
                 }
@@ -227,6 +246,18 @@ namespace CyanNook.Timeline
                 {
                     _bones[_boneCount].previousLocalPosition = t.localPosition;
                     _bones[_boneCount].previousLocalRotation = t.localRotation;
+                }
+
+                // 速度計算用: _prevCleanPose（2フレーム前）をUpdate時点で保存
+                if (_prevCleanPose.TryGetValue(t, out var prevPrev))
+                {
+                    _bones[_boneCount].prevPrevLocalPosition = prevPrev.localPos;
+                    _bones[_boneCount].prevPrevLocalRotation = prevPrev.localRot;
+                    _bones[_boneCount].hasPrevPrev = true;
+                }
+                else
+                {
+                    _bones[_boneCount].hasPrevPrev = false;
                 }
                 _boneCount++;
             }
@@ -350,6 +381,25 @@ namespace CyanNook.Timeline
         private void UpdateCleanPoseCache()
         {
             if (_boneTransformCache == null) return;
+
+            // 同一フレームでの二重スワップ防止（PrePass + LateUpdateで複数回呼ばれる場合）
+            int currentFrame = Time.frameCount;
+            if (_lastCacheUpdateFrame == currentFrame)
+            {
+                // 同一フレーム: スワップせず、現在値の更新のみ
+                foreach (var kvp in _boneTransformCache)
+                {
+                    var t = kvp.Value;
+                    if (t != null)
+                        _lastCleanPose[t] = (t.localPosition, t.localRotation);
+                }
+                return;
+            }
+            _lastCacheUpdateFrame = currentFrame;
+
+            // 現在値を1フレーム前にシフト（辞書オブジェクトのスワップでGCアロケーション回避）
+            (_prevCleanPose, _lastCleanPose) = (_lastCleanPose, _prevCleanPose);
+
             foreach (var kvp in _boneTransformCache)
             {
                 var t = kvp.Value;
@@ -383,7 +433,6 @@ namespace CyanNook.Timeline
         private void BeginBlend(float duration)
         {
             _blendDuration = duration > 0f ? duration : DEFAULT_BLEND_DURATION;
-            _omega = LN_100 / _blendDuration;
             _elapsedTime = 0f;
             _isOffsetApplied = false;
 
@@ -437,10 +486,9 @@ namespace CyanNook.Timeline
                 {
                     // PrePassがクリーン保存・_elapsedTime更新・オフセット適用済み。
                     // 完了チェックのみ行う。
+                    // 5次多項式はt≥t₁で正確にx(t)=0に到達するため、ポップは発生しない
                     if (_elapsedTime >= _blendDuration)
                     {
-                        // オフセット適用済みの状態を維持したまま終了
-                        // （CompleteBlend()のスナップによる1Fポップを回避）
                         _state = State.Idle;
                         _isActive = false;
                         Debug.Log("[InertialBlendHelper] Blend completed");
@@ -481,12 +529,9 @@ namespace CyanNook.Timeline
                     CalculateAndApplyOffset();
 
                     // ブレンド完了チェック
+                    // 5次多項式はt≥t₁で正確にx(t)=0に到達するため、ポップは発生しない
                     if (_elapsedTime >= _blendDuration)
                     {
-                        // オフセット適用済みの状態を維持したまま終了
-                        // 次フレームのUpdate()でclean positionに復元され、
-                        // LateUpdate()ではIdle状態のため追加オフセットなし → 自然に収束
-                        // （CompleteBlend()のスナップによる1Fポップを回避）
                         _state = State.Idle;
                         _isActive = false;
                         Debug.Log("[InertialBlendHelper] Blend completed");
@@ -615,43 +660,160 @@ namespace CyanNook.Timeline
         /// 慣性補間の初期化（ローカル座標）
         /// 全ボーンのオフセットを計算
         /// </summary>
+        /// <summary>
+        /// 角度を-π～+πに正規化
+        /// </summary>
+        private static float NormalizeAngle(float angle)
+        {
+            angle = angle % (Mathf.PI * 2f);
+            if (angle > Mathf.PI) angle -= Mathf.PI * 2f;
+            if (angle < -Mathf.PI) angle += Mathf.PI * 2f;
+            return angle;
+        }
+
+        /// <summary>
+        /// 5次多項式の係数を計算
+        /// x(t) = A·t⁵ + B·t⁴ + C·t³ + (a₀/2)·t² + v₀·t + x₀
+        /// t=0でx=x₀, t=t₁でx=0 を満たし、速度項v₀で開始時の勢いを引き継ぐ
+        /// </summary>
+        private static void CalculatePolynomial(float x0, float v0, float blendTime,
+            out float t1, out float a0, out float a, out float b, out float c)
+        {
+            // オーバーシュート防止: v₀とx₀が逆符号の場合、ブレンド時間を短縮
+            float timeMax = (v0 == 0f || x0 / v0 > 0f) ? blendTime : -5f * x0 / v0;
+            t1 = Mathf.Min(blendTime, timeMax);
+
+            if (t1 <= 0f)
+            {
+                a0 = a = b = c = 0f;
+                return;
+            }
+
+            float t1_2 = t1 * t1;
+            float t1_3 = t1_2 * t1;
+            float t1_4 = t1_3 * t1;
+
+            a0 = (-8f * v0 * t1 - 20f * x0) / t1_2;
+            a = -(a0 * t1_2 + 6f * v0 * t1 + 12f * x0) / (2f * t1_4 * t1);
+            b = (3f * a0 * t1_2 + 16f * v0 * t1 + 30f * x0) / (2f * t1_4);
+            c = -(3f * a0 * t1_2 + 12f * v0 * t1 + 20f * x0) / (2f * t1_3);
+        }
+
+        /// <summary>
+        /// 5次多項式を評価（t時点でのオフセット値を返す）
+        /// </summary>
+        private static float EvaluatePolynomial(float t, float t1,
+            float x0, float v0, float a0, float a, float b, float c)
+        {
+            float tc = Mathf.Min(t, t1);
+            float t2 = tc * tc;
+            float t3 = t2 * tc;
+            float t4 = t3 * tc;
+            float t5 = t4 * tc;
+            return a * t5 + b * t4 + c * t3 + a0 * t2 * 0.5f + v0 * tc + x0;
+        }
+
         private void InitializeBlend()
         {
+            float dt = Time.deltaTime;
+            if (dt <= 0f) dt = 1f / 60f; // フォールバック
+
             for (int i = 0; i < _boneCount; i++)
             {
-                // オフセット = 前のポーズ - 新しいアニメーションのポーズ（ローカル座標）
-                _bones[i].initialPositionOffset = _bones[i].previousLocalPosition - _bones[i].cleanLocalPosition;
-                _bones[i].initialRotationOffset = Quaternion.Inverse(_bones[i].cleanLocalRotation) * _bones[i].previousLocalRotation;
+                var bone = _bones[i].transform;
+
+                // --- 位置 ---
+                Vector3 vec = _bones[i].previousLocalPosition - _bones[i].cleanLocalPosition;
+                float posX0 = vec.magnitude;
+
+                if (posX0 > Mathf.Epsilon)
+                {
+                    _bones[i].posBaseVec = vec / posX0; // normalized
+                    // 2フレーム前のポーズから速度を計算（StartInertialBlend時に保存済み）
+                    float xn1 = 0f;
+                    if (_bones[i].hasPrevPrev)
+                    {
+                        xn1 = Vector3.Dot(_bones[i].prevPrevLocalPosition - _bones[i].cleanLocalPosition, _bones[i].posBaseVec);
+                    }
+                    float posV0 = (posX0 - xn1) / dt;
+                    CalculatePolynomial(posX0, posV0, _blendDuration,
+                        out _bones[i].posT1, out _bones[i].posA0,
+                        out _bones[i].posA, out _bones[i].posB, out _bones[i].posC);
+                    _bones[i].posX0 = posX0;
+                    _bones[i].posV0 = posV0;
+                }
+                else
+                {
+                    _bones[i].posX0 = 0f;
+                    _bones[i].posBaseVec = Vector3.zero;
+                    _bones[i].posV0 = _bones[i].posT1 = _bones[i].posA0 = 0f;
+                    _bones[i].posA = _bones[i].posB = _bones[i].posC = 0f;
+                }
+
+                // --- 回転 ---
+                Quaternion invRot = Quaternion.Inverse(_bones[i].cleanLocalRotation);
+                Quaternion q0 = invRot * _bones[i].previousLocalRotation;
+                q0.ToAngleAxis(out float angleDeg, out Vector3 axis);
+                float rotX0 = NormalizeAngle(angleDeg * Mathf.Deg2Rad);
+
+                if (Mathf.Abs(rotX0) > Mathf.Epsilon)
+                {
+                    _bones[i].rotAxis = axis;
+                    // 2フレーム前のポーズから角速度を計算（StartInertialBlend時に保存済み）
+                    float xn1 = 0f;
+                    if (_bones[i].hasPrevPrev)
+                    {
+                        Quaternion qn1 = invRot * _bones[i].prevPrevLocalRotation;
+                        if (Mathf.Abs(qn1.w) > Mathf.Epsilon)
+                        {
+                            Vector3 qVec = new Vector3(qn1.x, qn1.y, qn1.z);
+                            xn1 = 2f * Mathf.Atan(Vector3.Dot(qVec, axis) / qn1.w);
+                            xn1 = NormalizeAngle(xn1);
+                        }
+                    }
+                    float deltaAngle = NormalizeAngle(rotX0 - xn1);
+                    float rotV0 = deltaAngle / dt;
+                    CalculatePolynomial(rotX0, rotV0, _blendDuration,
+                        out _bones[i].rotT1, out _bones[i].rotA0,
+                        out _bones[i].rotA, out _bones[i].rotB, out _bones[i].rotC);
+                    _bones[i].rotX0 = rotX0;
+                    _bones[i].rotV0 = rotV0;
+                }
+                else
+                {
+                    _bones[i].rotX0 = 0f;
+                    _bones[i].rotAxis = Vector3.up;
+                    _bones[i].rotV0 = _bones[i].rotT1 = _bones[i].rotA0 = 0f;
+                    _bones[i].rotA = _bones[i].rotB = _bones[i].rotC = 0f;
+                }
             }
 
             Debug.Log($"[InertialBlendHelper] InitializeBlend - " +
-                $"posOffset={_bones[0].initialPositionOffset}, rotOffset={_bones[0].initialRotationOffset.eulerAngles}, " +
+                $"posX0={_bones[0].posX0:F4}, rotX0={_bones[0].rotX0 * Mathf.Rad2Deg:F2}°, " +
+                $"posV0={_bones[0].posV0:F2}, rotV0={_bones[0].rotV0 * Mathf.Rad2Deg:F1}°/s, " +
                 $"frame={Time.frameCount}");
         }
 
         /// <summary>
-        /// 慣性補間のオフセットを計算して適用
+        /// 5次多項式によるオフセットを計算して適用
         /// </summary>
         private void CalculateAndApplyOffset()
         {
-            // Critical Damping減衰を計算
-            // x(t) = x₀ · (1 + ω·t) · e^(-ω·t)
             float t = _elapsedTime;
-            float expDecay = Mathf.Exp(-_omega * t);
-            float decay = (1f + _omega * t) * expDecay;
 
-            // 全ボーンに適用
             for (int i = 0; i < _boneCount; i++)
             {
                 // 位置オフセット
-                Vector3 posOffset = _bones[i].initialPositionOffset * decay;
+                float posVal = EvaluatePolynomial(t, _bones[i].posT1,
+                    _bones[i].posX0, _bones[i].posV0, _bones[i].posA0,
+                    _bones[i].posA, _bones[i].posB, _bones[i].posC);
+                Vector3 posOffset = posVal * _bones[i].posBaseVec;
 
-                // 回転オフセット（Slerpで減衰）
-                Quaternion rotOffset = Quaternion.Slerp(
-                    Quaternion.identity,
-                    _bones[i].initialRotationOffset,
-                    decay
-                );
+                // 回転オフセット（軸角度表現）
+                float rotVal = EvaluatePolynomial(t, _bones[i].rotT1,
+                    _bones[i].rotX0, _bones[i].rotV0, _bones[i].rotA0,
+                    _bones[i].rotA, _bones[i].rotB, _bones[i].rotC);
+                Quaternion rotOffset = Quaternion.AngleAxis(rotVal * Mathf.Rad2Deg, _bones[i].rotAxis);
 
                 // オフセットを適用（ローカル座標）
                 _bones[i].transform.localPosition = _bones[i].cleanLocalPosition + posOffset;

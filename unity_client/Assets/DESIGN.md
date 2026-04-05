@@ -5049,60 +5049,64 @@ private BoneBlendData[] _bones;
 private int _boneCount;
 ```
 
-#### Critical Damping計算式
+#### 5次多項式による慣性補間
 
-臨界減衰（ζ = 1.0）の簡略化応答（速度項なし）：
+位置・回転それぞれを1Dスカラー + 方向ベクトル/回転軸に分解し、5次多項式で減衰する方式。
+速度項を含むため開始時から遷移前アニメーションの勢いを引き継ぎ、`t=t₁`で正確に0到達する。
+
+**参考**: [hexadrive慣性補間記事](https://hexadrive.jp/hexablog/program/111655/) / [hogetatu実装](https://hogetatu.hatenablog.com/entry/2018/06/10/232856)
 
 ```
-x(t) = x₀ · (1 + ω·t) · e^(-ω·t)
+x(t) = A·t⁵ + B·t⁴ + C·t³ + (a₀/2)·t² + v₀·t + x₀
+
+a₀ = (-8·v₀·t₁ - 20·x₀) / t₁²
+A = -(a₀·t₁² + 6·v₀·t₁ + 12·x₀) / (2·t₁⁵)
+B = (3·a₀·t₁² + 16·v₀·t₁ + 30·x₀) / (2·t₁⁴)
+C = -(3·a₀·t₁² + 12·v₀·t₁ + 20·x₀) / (2·t₁³)
+
+t₁ = v₀≠0 かつ x₀/v₀<0 → min(blendTime, -5·x₀/v₀)  ← オーバーシュート防止
+     それ以外 → blendTime
 ```
 
-ブレンド時間終了時に99.9%収束させるためのω：
+**位置の処理**: オフセットベクトルを正規化方向`baseVec`に射影してスカラー`x₀`に変換。速度`v₀`は2フレーム前のクリーンポーズとの差分から計算。適用時: `offset = EvaluatePolynomial(t) * baseVec`
 
-```csharp
-float omega = 6.908f / blendDuration;  // ln(1000) ≈ 6.908
-```
+**回転の処理**: `Quaternion.ToAngleAxis()`で軸角度表現に変換してスカラー`x₀`（ラジアン）に変換。角速度`v₀`は2フレーム前の回転を同じ軸に射影して差分計算。適用時: `Quaternion.AngleAxis(EvaluatePolynomial(t) * Rad2Deg, axis)`
 
-**定数選定の経緯**: 当初`ln(100)=4.605`（99%収束）を使用していたが、ブレンド終了時にdecay≈5.6%のオフセットが残り、大きな初期差（例: interact_sit→walk遷移で30度）では約1.7度のポーズジャンプが視認されたため、`ln(1000)=6.908`（99.9%収束、残余≈0.8%）に引き上げ。
-
-**ブレンド終了処理**: ブレンド完了時に`CompleteBlend()`でclean positionへの即座スナップは行わず、最終フレームの減衰オフセットを維持したまま状態をIdleに遷移する。次フレームのUpdate()でAnimator評価前にclean positionが復元され、LateUpdate()ではIdleのためオフセット適用なし → 自然に収束する。これにより終了フレームでの1Fポップを回避。
+**速度の取得**: `_prevCleanPose`辞書（2フレーム前のAnimator出力）を`StartInertialBlend()`時点（Update中、スワップ前）で`BoneBlendData.prevPrevLocal*`に保存。`InitializeBlend()`（LateUpdate中）で速度計算に使用。
 
 #### 処理フロー
 
 ```
-StartInertialBlend(duration, targetBones) 呼び出し（Timeline再生前）
+StartInertialBlend(duration, targetBones) 呼び出し（Update中、Timeline再生前）
     ├── _boneTransformCacheから対象ボーンのTransformを取得
     ├── BoneBlendData[] を構築
-    ├── 全対象ボーンの localPosition/localRotation をキャッシュ
-    ├── omega計算（ln(1000) / blendDuration）
+    ├── previousLocal* ← _lastCleanPose（遷移前ポーズ）
+    ├── prevPrevLocal* ← _prevCleanPose（2フレーム前ポーズ、速度計算用）
     └── State → WaitingFirstFrame
 
-[Frame N] LateUpdate - WaitingFirstFrame
-    ├── 全対象ボーンのクリーン位置を保存
-    ├── 【ちらつき防止】全対象ボーンに前のポーズを強制適用
-    └── State → WaitingSecondFrame
+[Frame N] Animation評価 → 新アニメーションのポーズがボーンに適用
 
-[Frame N+1] Update
-    └── 全対象ボーンのクリーン位置に復元（Animator計算前）
-[Frame N+1] LateUpdate - WaitingSecondFrame
-    ├── 全対象ボーンのクリーン位置を保存
-    ├── InitializeBlend: 各ボーンの Offset = prevPose - cleanPose
-    ├── CalculateAndApplyOffset（decay=1.0、完全に前ポーズを維持）
+[Frame N] LateUpdate - WaitingFirstFrame
+    ├── UpdateCleanPoseCache（新アニメーションのクリーンポーズを保存）
+    ├── cleanLocal* = 現在のボーン値（新アニメーション）
+    ├── InitializeBlend:
+    │   ├── 位置: x₀ = |prev - clean|, v₀ = (x₀ - dot(prevPrev - clean, baseVec)) / dt
+    │   ├── 回転: x₀ = ToAngleAxis(Inv(clean) * prev), v₀ = 軸射影角速度 / dt
+    │   └── CalculatePolynomial(x₀, v₀, blendDuration) → 5次多項式係数
+    ├── CalculateAndApplyOffset（t=0: x(0)=x₀ → 表示=遷移前ポーズ）
     └── State → Blending
 
-[Frame N+2~] 毎フレーム
+[Frame N+1~] 毎フレーム
     Update:
-        └── 全対象ボーンのクリーン位置に復元
+        └── 全対象ボーンのクリーン位置に復元（Animator計算前）
     LateUpdate:
         ├── 全対象ボーンの新しいクリーン位置を保存
-        ├── decay = (1 + ω·t) · e^(-ω·t) を計算（1回のみ）
-        ├── 各ボーン: posOffset = initialOffset * decay
-        ├── 各ボーン: rotOffset = Slerp(identity, initialRotOffset, decay)
+        ├── 各ボーン: posVal = EvaluatePolynomial(t) → posOffset = posVal * baseVec
+        ├── 各ボーン: rotVal = EvaluatePolynomial(t) → rotOffset = AngleAxis(rotVal, axis)
         └── 各ボーン: localPos = cleanPos + posOffset, localRot = cleanRot * rotOffset
 
 [ブレンド完了] elapsedTime >= blendDuration
-    ├── 全対象ボーンをクリーン位置に戻す（オフセット除去）
-    └── State → Idle
+    └── State → Idle（t≥t₁で多項式は正確に0、ポップなし）
 ```
 
 #### InertialBlendTrack（Timeline側）
