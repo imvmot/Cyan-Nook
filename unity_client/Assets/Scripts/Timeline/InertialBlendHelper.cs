@@ -53,6 +53,9 @@ namespace CyanNook.Timeline
         private struct BoneBlendData
         {
             public Transform transform;
+            // [TODO] VRM10 ControlBone対応: VRM10のControlRigパイプラインがLateUpdate後に
+            // ControlBoneを上書きするため、現状では効果がない。VRM10内部パイプライン調査後に再有効化。
+            // public Transform controlBoneTransform;
             public Vector3 previousLocalPosition;      // 遷移前ポーズ（_lastCleanPose由来、frame N-1）
             public Quaternion previousLocalRotation;
             public Vector3 prevPrevLocalPosition;      // 2フレーム前ポーズ（_prevCleanPose由来、frame N-2）
@@ -103,7 +106,16 @@ namespace CyanNook.Timeline
                 animator = GetComponentInChildren<Animator>();
             }
 
-            // 全HumanoidボーンのTransformをキャッシュ
+            RebuildBoneCache();
+        }
+
+        /// <summary>
+        /// 全HumanoidボーンのTransformキャッシュを再構築。
+        /// VRM10のControlBoneはAwake後に作成される場合があるため、
+        /// VRM初期化完了後にも呼び出す必要がある。
+        /// </summary>
+        public void RebuildBoneCache()
+        {
             _boneTransformCache = new Dictionary<HumanBodyBones, Transform>();
             if (animator != null)
             {
@@ -116,6 +128,7 @@ namespace CyanNook.Timeline
                         _boneTransformCache[bone] = t;
                     }
                 }
+                Debug.Log($"[InertialBlendHelper] Bone cache rebuilt: {_boneTransformCache.Count} bones");
             }
         }
 
@@ -152,6 +165,11 @@ namespace CyanNook.Timeline
                 if (_boneTransformCache.TryGetValue(bone, out var t))
                 {
                     _bones[_boneCount].transform = t;
+
+                    // [TODO] VRM10 ControlBone検出（現状VRM10パイプラインが上書きするため無効）
+                    // var controlT = animator.GetBoneTransform(bone);
+                    // if (controlT != null && controlT != t)
+                    //     _bones[_boneCount].controlBoneTransform = controlT;
 
                     // 旧IBのビジュアル状態があればそれを使用（旧IBオフセット消失ジャンプ防止）
                     if (_oldVisualState.TryGetValue(t, out var visualPose))
@@ -229,6 +247,11 @@ namespace CyanNook.Timeline
                     continue;
 
                 _bones[_boneCount].transform = t;
+
+                // [TODO] VRM10 ControlBone検出（現状VRM10パイプラインが上書きするため無効）
+                // var controlT = animator.GetBoneTransform(bone);
+                // if (controlT != null && controlT != t)
+                //     _bones[_boneCount].controlBoneTransform = controlT;
 
                 // 旧IBのビジュアル状態があればそれを使用（旧IBオフセット消失ジャンプ防止）
                 // なければクリーンポーズキャッシュ（通常の新規IB）
@@ -679,6 +702,16 @@ namespace CyanNook.Timeline
         private static void CalculatePolynomial(float x0, float v0, float blendTime,
             out float t1, out float a0, out float a, out float b, out float c)
         {
+            // [TODO] v0がx0と同符号（ターゲットから離れる方向）の場合のオーバーシュート防止
+            // 以下のクランプはthink→talkIdleの逆方向オーバーシュート（v0=133°/s等）を防止するが、
+            // sit→walk等でNeck/Spine親ボーンの速度も制限してしまい、Headの追従が悪化する副作用がある。
+            // VRM10 ControlBoneパイプラインとの統合後に再検討する。
+            // if (x0 != 0f && v0 * x0 > 0f)
+            // {
+            //     float maxV0 = Mathf.Abs(x0) / blendTime;
+            //     v0 = Mathf.Sign(v0) * Mathf.Min(Mathf.Abs(v0), maxV0);
+            // }
+
             // オーバーシュート防止: v₀とx₀が逆符号の場合、ブレンド時間を短縮
             float timeMax = (v0 == 0f || x0 / v0 > 0f) ? blendTime : -5f * x0 / v0;
             t1 = Mathf.Min(blendTime, timeMax);
@@ -792,6 +825,10 @@ namespace CyanNook.Timeline
                 $"posX0={_bones[0].posX0:F4}, rotX0={_bones[0].rotX0 * Mathf.Rad2Deg:F2}°, " +
                 $"posV0={_bones[0].posV0:F2}, rotV0={_bones[0].rotV0 * Mathf.Rad2Deg:F1}°/s, " +
                 $"frame={Time.frameCount}");
+
+            // [TODO] Headボーンの個別デバッグログ（VRM10 ControlBone調査用）
+            // VRM10ではGetBoneTransformがControlBoneを返すがキャッシュにはスケルトンボーンがあるため注意。
+            // VRM10パイプライン調査時に再有効化する。
         }
 
         /// <summary>
@@ -818,6 +855,16 @@ namespace CyanNook.Timeline
                 // オフセットを適用（ローカル座標）
                 _bones[i].transform.localPosition = _bones[i].cleanLocalPosition + posOffset;
                 _bones[i].transform.localRotation = _bones[i].cleanLocalRotation * rotOffset;
+
+                // [TODO] VRM10 ControlBoneへのオフセット追加適用
+                // ControlBoneへの書き込みは実行されるが、VRM10の内部パイプラインが
+                // LateUpdate後にControlBoneを上書きするため視覚的に効果がない。
+                // VRM10のControlRigパイプラインの処理タイミング調査後に再有効化する。
+                // if (_bones[i].controlBoneTransform != null)
+                // {
+                //     _bones[i].controlBoneTransform.localPosition += posOffset;
+                //     _bones[i].controlBoneTransform.localRotation = _bones[i].controlBoneTransform.localRotation * rotOffset;
+                // }
             }
             _isOffsetApplied = true;
         }
