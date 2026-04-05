@@ -314,10 +314,10 @@ namespace CyanNook.Character
                 float angle = Vector3.SignedAngle(currentForward, direction.normalized, Vector3.up);
                 Debug.Log($"[CharacterNavigationController] StartNavigation: angle={angle:F1}°, threshold={turnAnimationThreshold}, direction={direction}");
 
-                // 角度差が大きい場合は回転アニメーションを使用
+                // 角度差が大きい場合は旋回歩き出しアニメーションを使用
                 if (Mathf.Abs(angle) > turnAnimationThreshold)
                 {
-                    StartTurning(angle);
+                    StartMovingWithTurn(angle);
                 }
                 else
                 {
@@ -326,8 +326,18 @@ namespace CyanNook.Character
             }
             else
             {
-                // すでに目標位置にいる場合は回転のみ
-                StartFinalTurning();
+                // すでに目標位置にいる場合
+                if (_currentInteraction != null)
+                {
+                    // インタラクション: 歩行を経由せず直接準備完了
+                    Debug.Log("[CharacterNavigationController] Already at target, skipping walk for interaction");
+                    OnInteractionReady();
+                }
+                else
+                {
+                    // 通常移動: 回転のみ
+                    StartFinalTurning();
+                }
             }
         }
 
@@ -470,6 +480,37 @@ namespace CyanNook.Character
         }
 
         /// <summary>
+        /// 旋回歩き出しで移動開始（角度が大きい場合）
+        /// Walk-TurnのSTクリップを使用してその場旋回なしで即座に歩き始める
+        /// </summary>
+        private void StartMovingWithTurn(float angle)
+        {
+            _currentState = _currentInteraction != null
+                ? NavigationState.ApproachingInteraction
+                : NavigationState.Moving;
+
+            _stuckTimer = 0f;
+            _movementTimer = 0f;
+            _pathChecked = false;
+            _inFinalApproach = false;
+
+            if (agent != null && agent.isOnNavMesh)
+            {
+                agent.isStopped = false;
+            }
+
+            var turnMode = angle < 0
+                ? CharacterAnimationController.TurnMode.TurnLeft
+                : CharacterAnimationController.TurnMode.TurnRight;
+
+            string moveAnim = _useRun ? "common_run01" : "common_walk01";
+            animationController?.SetTurnMode(turnMode);
+            animationController?.PlayAnimation(moveAnim);
+
+            Debug.Log($"[CharacterNavigationController] StartMovingWithTurn: angle={angle:F1}°, mode={turnMode}");
+        }
+
+        /// <summary>
         /// NavMeshAgent駆動の移動更新
         /// agentが位置を制御し、desiredVelocityで回転、再生速度を調整
         /// </summary>
@@ -480,7 +521,7 @@ namespace CyanNook.Character
             {
                 if (agent != null && agent.isOnNavMesh)
                 {
-                    Vector3 move = transform.forward * walkSpeed * Time.deltaTime;
+                    Vector3 move = transform.forward * walkSpeed * _moveSpeedMultiplier * Time.deltaTime;
                     agent.Move(move);
                 }
                 return;

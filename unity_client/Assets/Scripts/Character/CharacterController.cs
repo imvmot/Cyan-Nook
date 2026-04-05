@@ -537,9 +537,16 @@ namespace CyanNook.Character
                         // （height はLookAt用でNavMeshの高さとは異なる）
                         var movePosition = targetPosition;
                         movePosition.y = transform.position.y;
+                        // 移動先方向を向く回転を計算
+                        var lookDirection = movePosition - transform.position;
+                        lookDirection.y = 0f;
+                        var targetRotation = lookDirection.sqrMagnitude > 0.001f
+                            ? Quaternion.LookRotation(lookDirection)
+                            : transform.rotation;
+
                         navigationController?.MoveTo(
                             movePosition,
-                            Quaternion.identity,
+                            targetRotation,
                             () => SetState(CharacterState.Idle)
                         );
                         SetState(CharacterState.Walking);

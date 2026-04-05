@@ -63,6 +63,10 @@ namespace CyanNook.UI
         [Tooltip("StatusOverlayコンポーネント")]
         public StatusOverlay statusOverlay;
 
+        [Header("UI - Log Export")]
+        [Tooltip("ログエクスポートボタン")]
+        public Button exportLogButton;
+
         [Header("UI - License")]
         [Tooltip("ライセンス表示ボタン")]
         public Button licenseButton;
@@ -164,6 +168,12 @@ namespace CyanNook.UI
                 settingsExporter.OnImportComplete += OnSettingsImportComplete;
             }
 
+            // Log Export
+            if (exportLogButton != null)
+            {
+                exportLogButton.onClick.AddListener(OnExportLogClicked);
+            }
+
             // License
             if (licenseButton != null)
             {
@@ -205,6 +215,8 @@ namespace CyanNook.UI
                 timelineDebugToggle.onValueChanged.RemoveListener(OnTimelineDebugToggleChanged);
             if (statusOverlayToggle != null)
                 statusOverlayToggle.onValueChanged.RemoveListener(OnStatusOverlayToggleChanged);
+            if (exportLogButton != null)
+                exportLogButton.onClick.RemoveListener(OnExportLogClicked);
             if (exportSettingsButton != null)
                 exportSettingsButton.onClick.RemoveListener(OnExportSettingsClicked);
             if (importSettingsButton != null)
@@ -278,6 +290,21 @@ namespace CyanNook.UI
         // ─────────────────────────────────────
         // Settings Import/Export
         // ─────────────────────────────────────
+
+        private void OnExportLogClicked()
+        {
+            var logger = CyanNook.DebugTools.PerformanceLogger.Instance;
+            if (logger != null)
+            {
+                logger.DownloadLog();
+                SetImportExportStatus("Log exported!");
+            }
+            else
+            {
+                Debug.LogWarning("[DebugSettingsPanel] PerformanceLogger not found");
+                SetImportExportStatus("Logger not found");
+            }
+        }
 
         private void OnExportSettingsClicked()
         {

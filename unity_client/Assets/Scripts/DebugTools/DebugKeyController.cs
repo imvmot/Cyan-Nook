@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using TMPro;
+using System.Linq;
 using CyanNook.Character;
 using CyanNook.Core;
 using CyanNook.Furniture;
@@ -343,6 +344,11 @@ namespace CyanNook.DebugTools
             foreach (var furniture in allFurniture)
             {
                 if (furniture.isOccupied) continue;
+
+                // exit/entry専用の家具はデバッグインタラクトから除外
+                if (furniture.typeData?.availableActions != null &&
+                    furniture.typeData.availableActions.All(a => a == "exit" || a == "enter" || a == "entry"))
+                    continue;
 
                 float distance = Vector3.Distance(characterTransform.position, furniture.transform.position);
                 if (distance < nearestDistance)

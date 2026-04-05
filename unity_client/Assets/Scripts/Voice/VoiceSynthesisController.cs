@@ -195,7 +195,7 @@ namespace CyanNook.Voice
 
                 if (!string.IsNullOrEmpty(completeSentence))
                 {
-                    // 音声合成開始
+                    Debug.Log("[PERF] TTS sentence queued");
                     _ = SynthesizeAndEnqueue(completeSentence);
                 }
 

@@ -68,6 +68,7 @@ namespace CyanNook.Character
         private float _dreamTimer;
         private DateTime _wakeTime;
         private string _sleepFurnitureId;
+        private bool _pendingDreamMessage;
 
         // Wake-up完了時のコールバック
         private Action _onWakeUpComplete;
@@ -119,6 +120,18 @@ namespace CyanNook.Character
                 Debug.Log("[SleepController] Wake timer expired");
                 ExitSleep(null);
                 return;
+            }
+
+            // 保留中のDream Promptをリトライ
+            if (_pendingDreamMessage)
+            {
+                if (chatManager != null && chatManager.CurrentState == ChatState.Idle)
+                {
+                    _pendingDreamMessage = false;
+                    Debug.Log("[SleepController] Retrying pending dream message");
+                    chatManager.SendAutoRequest(dreamPromptMessage);
+                }
+                return; // 保留中はタイマーを進めない
             }
 
             // 夢メッセージタイマー
@@ -192,6 +205,7 @@ namespace CyanNook.Character
 
             Debug.Log("[SleepController] ExitSleep started");
 
+            _pendingDreamMessage = false;
             _onWakeUpComplete = onComplete;
 
             // interact_sleep のloop脱出（CancelRegionスキップでed全体を再生）
@@ -429,8 +443,16 @@ namespace CyanNook.Character
         /// </summary>
         private void SendDreamMessage()
         {
-            if (chatManager == null || chatManager.CurrentState != ChatState.Idle) return;
+            if (chatManager == null) return;
 
+            if (chatManager.CurrentState != ChatState.Idle)
+            {
+                _pendingDreamMessage = true;
+                Debug.Log("[SleepController] Dream message deferred (ChatManager busy)");
+                return;
+            }
+
+            _pendingDreamMessage = false;
             Debug.Log("[SleepController] Sending dream message");
             chatManager.SendAutoRequest(dreamPromptMessage);
         }

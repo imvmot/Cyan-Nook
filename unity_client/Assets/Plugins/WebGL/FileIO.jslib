@@ -32,6 +32,33 @@ mergeInto(LibraryManager.library, {
     },
 
     /**
+     * テキストコンテンツをファイルとしてダウンロード
+     * @param {string} filename - ダウンロードファイル名
+     * @param {string} content - ファイル内容（テキスト文字列）
+     */
+    FileIO_DownloadText: function(filename, content) {
+        var filenameStr = UTF8ToString(filename);
+        var contentStr = UTF8ToString(content);
+
+        var blob = new Blob([contentStr], { type: 'text/plain' });
+        var url = URL.createObjectURL(blob);
+
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filenameStr;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+
+        setTimeout(function() {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+
+        console.log('[FileIO] Text download triggered: ' + filenameStr);
+    },
+
+    /**
      * ファイル選択ダイアログを開いてテキストファイルを読み込む
      * 読み込み完了後、指定GameObjectのメソッドにコールバック
      * @param {string} callbackObjectName - コールバック先のGameObject名
