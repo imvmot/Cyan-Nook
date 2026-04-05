@@ -67,6 +67,7 @@ namespace CyanNook.Chat
         [Tooltip("キャラクターカメラの画像をリクエストに含める")]
         public bool useVision = false;
         public CharacterCameraController cameraController;
+        public ScreenCaptureDisplayController screenCaptureController;
         public VisibleObjectsProvider visibleObjectsProvider;
 
         [Header("State")]
@@ -102,6 +103,34 @@ namespace CyanNook.Chat
         private bool IsVisionSuppressed =>
             (sleepController != null && sleepController.IsSleeping) ||
             (outingController != null && outingController.IsOutside);
+
+        /// <summary>
+        /// Vision画像をキャプチャしてリストで��す
+        /// キャラクターカメラ + 共有画面（アクティブ時のみ）
+        /// </summary>
+        private List<string> CaptureVisionImages()
+        {
+            if (!useVision || IsVisionSuppressed) return null;
+
+            var images = new List<string>();
+
+            if (cameraController != null)
+            {
+                string img = cameraController.CaptureImageAsBase64();
+                if (img != null) images.Add(img);
+            }
+
+            if (screenCaptureController != null && screenCaptureController.IsPlaying)
+            {
+                string img = screenCaptureController.CaptureImageAsBase64();
+                if (img != null) images.Add(img);
+            }
+
+            if (images.Count == 0) return null;
+
+            Debug.Log($"[ChatManager] Vision images captured: {images.Count} (camera={cameraController != null}, screenCapture={screenCaptureController != null && screenCaptureController.IsPlaying})");
+            return images;
+        }
 
         // --- 共通イベント ---
         public event Action<LLMResponseData> OnChatResponseReceived;
@@ -333,15 +362,7 @@ namespace CyanNook.Chat
             SaveHistory();
 
             // Vision: カメラ画像をキャプチャ（sleep/outing中は抑制）
-            string imageBase64 = null;
-            if (useVision && cameraController != null && !IsVisionSuppressed)
-            {
-                imageBase64 = cameraController.CaptureImageAsBase64();
-                if (imageBase64 != null)
-                {
-                    Debug.Log($"[ChatManager] Vision image captured, base64 length={imageBase64.Length}");
-                }
-            }
+            List<string> imagesBase64 = CaptureVisionImages();
 
             // LLMに送信
             _isStreamingRequest = useStreaming;
@@ -351,9 +372,9 @@ namespace CyanNook.Chat
                 // 会話履歴とシステムプロンプトはDify側で管理（conversation_id）
                 llmClient.SetRequestInputs(BuildDynamicInputs());
                 if (useStreaming)
-                    llmClient.SendStreamingRequest("", userMessage, imageBase64);
+                    llmClient.SendStreamingRequest("", userMessage, imagesBase64);
                 else
-                    llmClient.SendRequest("", userMessage, imageBase64);
+                    llmClient.SendRequest("", userMessage, imagesBase64);
             }
             else
             {
@@ -362,9 +383,9 @@ namespace CyanNook.Chat
                 string systemPrompt = GenerateSystemPrompt();
                 string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPrompt(userMessage));
                 if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imageBase64);
+                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
                 else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, imageBase64);
+                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
             }
         }
 
@@ -391,11 +412,7 @@ namespace CyanNook.Chat
             Debug.Log($"[ChatManager] Sending auto-request (streaming={useStreaming}, vision={useVision})");
 
             // Vision: カメラ画像をキャプチャ（sleep/outing中は抑制）
-            string imageBase64 = null;
-            if (useVision && cameraController != null && !IsVisionSuppressed)
-            {
-                imageBase64 = cameraController.CaptureImageAsBase64();
-            }
+            List<string> imagesBase64 = CaptureVisionImages();
 
             // 状態を更新（HandleRequestStartedはスキップされるため手動で設定）
             SetState(ChatState.WaitingForResponse);
@@ -406,9 +423,9 @@ namespace CyanNook.Chat
                 // Dify: idleMessageのみ送信、動的値はinputsで送信
                 llmClient.SetRequestInputs(BuildDynamicInputs());
                 if (useStreaming)
-                    llmClient.SendStreamingRequest("", idleMessage, imageBase64);
+                    llmClient.SendStreamingRequest("", idleMessage, imagesBase64);
                 else
-                    llmClient.SendRequest("", idleMessage, imageBase64);
+                    llmClient.SendRequest("", idleMessage, imagesBase64);
             }
             else
             {
@@ -417,9 +434,9 @@ namespace CyanNook.Chat
                 string systemPrompt = GenerateSystemPrompt();
                 string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPromptWithAppend(idleMessage));
                 if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imageBase64);
+                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
                 else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, imageBase64);
+                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
             }
         }
 

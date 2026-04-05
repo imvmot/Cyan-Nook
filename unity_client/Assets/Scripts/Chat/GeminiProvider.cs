@@ -29,10 +29,10 @@ namespace CyanNook.Chat
 
         public IEnumerator SendRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<string> onSuccess, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null)
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null)
         {
             string url = BuildEndpointUrl(config, false);
-            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, imageBase64);
+            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, imagesBase64);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
@@ -83,12 +83,12 @@ namespace CyanNook.Chat
         public IEnumerator SendStreamingRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action onComplete, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null,
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null,
             Action<string, string> onField = null,
             Action<string, string> onParseError = null)
         {
             string url = BuildEndpointUrl(config, true);
-            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, imageBase64);
+            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, imagesBase64);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
@@ -212,7 +212,7 @@ namespace CyanNook.Chat
         /// generationConfig: パラメータオブジェクト
         /// </summary>
         private static string BuildRequestJson(LLMConfig config, string systemPrompt,
-            string userMessage, string imageBase64 = null)
+            string userMessage, List<string> imagesBase64 = null)
         {
             string escapedSystem = EscapeJsonString(systemPrompt);
             string escapedUser = EscapeJsonString(userMessage);
@@ -229,10 +229,13 @@ namespace CyanNook.Chat
             // テキストパート
             sb.Append($"{{\"text\":\"{escapedUser}\"}}");
 
-            // 画像パート（あれば）
-            if (!string.IsNullOrEmpty(imageBase64))
+            // 画像パート（あれば、複数画像対応）
+            if (imagesBase64 != null)
             {
-                sb.Append($",{{\"inline_data\":{{\"mime_type\":\"image/jpeg\",\"data\":\"{imageBase64}\"}}}}");
+                foreach (var img in imagesBase64)
+                {
+                    sb.Append($",{{\"inline_data\":{{\"mime_type\":\"image/jpeg\",\"data\":\"{img}\"}}}}");
+                }
             }
 
             sb.Append("]}]");

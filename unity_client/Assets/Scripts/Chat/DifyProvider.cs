@@ -31,31 +31,40 @@ namespace CyanNook.Chat
 
         public IEnumerator SendRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<string> onSuccess, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null)
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null)
         {
             // 画像がある場合はアップロードしてfileIdを取得
-            string fileId = null;
-            if (!string.IsNullOrEmpty(imageBase64))
+            List<string> fileIds = null;
+            if (imagesBase64 != null && imagesBase64.Count > 0)
             {
-                bool uploadDone = false;
-                string uploadError = null;
-
-                yield return UploadImage(config, imageBase64,
-                    (id) => { fileId = id; uploadDone = true; },
-                    (err) => { uploadError = err; uploadDone = true; });
-
-                if (!string.IsNullOrEmpty(uploadError))
+                fileIds = new List<string>();
+                foreach (var imgBase64 in imagesBase64)
                 {
-                    Debug.LogWarning($"[DifyProvider] Image upload failed: {uploadError}, proceeding without image");
+                    string uploadedId = null;
+                    string uploadError = null;
+
+                    yield return UploadImage(config, imgBase64,
+                        (id) => { uploadedId = id; },
+                        (err) => { uploadError = err; });
+
+                    if (!string.IsNullOrEmpty(uploadError))
+                    {
+                        Debug.LogWarning($"[DifyProvider] Image upload failed: {uploadError}, skipping");
+                    }
+                    else if (!string.IsNullOrEmpty(uploadedId))
+                    {
+                        fileIds.Add(uploadedId);
+                    }
                 }
+                if (fileIds.Count == 0) fileIds = null;
             }
 
             string url = config.apiEndpoint.TrimEnd('/') + ChatEndpoint;
-            string jsonBody = BuildRequestJson(systemPrompt, userMessage, "blocking", fileId);
+            string jsonBody = BuildRequestJson(systemPrompt, userMessage, "blocking", fileIds);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
-            Debug.Log($"[DifyProvider] Sending to {url}, conversation_id={_conversationId}, hasImage={fileId != null}");
+            Debug.Log($"[DifyProvider] Sending to {url}, conversation_id={_conversationId}, imageCount={fileIds?.Count ?? 0}");
 
             using (var request = new UnityWebRequest(url, "POST"))
             {
@@ -106,32 +115,42 @@ namespace CyanNook.Chat
         public IEnumerator SendStreamingRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action onComplete, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null,
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null,
             Action<string, string> onField = null,
             Action<string, string> onParseError = null)
         {
             // 画像がある場合はアップロードしてfileIdを取得
-            string fileId = null;
-            if (!string.IsNullOrEmpty(imageBase64))
+            List<string> fileIds = null;
+            if (imagesBase64 != null && imagesBase64.Count > 0)
             {
-                string uploadError = null;
-
-                yield return UploadImage(config, imageBase64,
-                    (id) => { fileId = id; },
-                    (err) => { uploadError = err; });
-
-                if (!string.IsNullOrEmpty(uploadError))
+                fileIds = new List<string>();
+                foreach (var imgBase64 in imagesBase64)
                 {
-                    Debug.LogWarning($"[DifyProvider] Image upload failed: {uploadError}, proceeding without image");
+                    string uploadedId = null;
+                    string uploadError = null;
+
+                    yield return UploadImage(config, imgBase64,
+                        (id) => { uploadedId = id; },
+                        (err) => { uploadError = err; });
+
+                    if (!string.IsNullOrEmpty(uploadError))
+                    {
+                        Debug.LogWarning($"[DifyProvider] Image upload failed: {uploadError}, skipping");
+                    }
+                    else if (!string.IsNullOrEmpty(uploadedId))
+                    {
+                        fileIds.Add(uploadedId);
+                    }
                 }
+                if (fileIds.Count == 0) fileIds = null;
             }
 
             string url = config.apiEndpoint.TrimEnd('/') + ChatEndpoint;
-            string jsonBody = BuildRequestJson(systemPrompt, userMessage, "streaming", fileId);
+            string jsonBody = BuildRequestJson(systemPrompt, userMessage, "streaming", fileIds);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
-            Debug.Log($"[DifyProvider] Streaming request to {url}, conversation_id={_conversationId}, hasImage={fileId != null}");
+            Debug.Log($"[DifyProvider] Streaming request to {url}, conversation_id={_conversationId}, imageCount={fileIds?.Count ?? 0}");
 
             // Dify SSE用ストリーミングハンドラ
             var streamHandler = new DifySseStreamHandler(
@@ -265,7 +284,7 @@ namespace CyanNook.Chat
         /// Dify Chat Messages API のリクエストJSONを構築
         /// queryにはuserMessageのみ、動的変数はinputsフィールドで送信
         /// </summary>
-        private string BuildRequestJson(string systemPrompt, string userMessage, string responseMode, string fileId = null)
+        private string BuildRequestJson(string systemPrompt, string userMessage, string responseMode, List<string> fileIds = null)
         {
             string escapedQuery = EscapeJsonString(userMessage);
             string escapedConvId = EscapeJsonString(_conversationId);
@@ -274,10 +293,18 @@ namespace CyanNook.Chat
             string inputsJson = BuildInputsJson();
 
             string filesField = "";
-            if (!string.IsNullOrEmpty(fileId))
+            if (fileIds != null && fileIds.Count > 0)
             {
-                string escapedFileId = EscapeJsonString(fileId);
-                filesField = $",\"files\":[{{\"type\":\"image\",\"transfer_method\":\"local_file\",\"upload_file_id\":\"{escapedFileId}\"}}]";
+                var sb = new StringBuilder();
+                sb.Append(",\"files\":[");
+                for (int i = 0; i < fileIds.Count; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    string escapedFileId = EscapeJsonString(fileIds[i]);
+                    sb.Append($"{{\"type\":\"image\",\"transfer_method\":\"local_file\",\"upload_file_id\":\"{escapedFileId}\"}}");
+                }
+                sb.Append("]");
+                filesField = sb.ToString();
             }
 
             return $"{{\"inputs\":{inputsJson},\"query\":\"{escapedQuery}\",\"response_mode\":\"{responseMode}\",\"conversation_id\":\"{escapedConvId}\",\"user\":\"{DefaultUser}\"{filesField}}}";

@@ -174,8 +174,8 @@ namespace CyanNook.Chat
         /// </summary>
         /// <param name="systemPrompt">システムプロンプト</param>
         /// <param name="userMessage">ユーザーメッセージ</param>
-        /// <param name="imageBase64">画像データ（base64エンコード、null=画像なし）</param>
-        public void SendRequest(string systemPrompt, string userMessage, string imageBase64 = null)
+        /// <param name="imagesBase64">画像データリスト（base64エンコード、null=画像なし）</param>
+        public void SendRequest(string systemPrompt, string userMessage, List<string> imagesBase64 = null)
         {
             if (_isProcessing)
             {
@@ -190,15 +190,15 @@ namespace CyanNook.Chat
                 return;
             }
 
-            _currentCoroutine = StartCoroutine(SendRequestCoroutine(systemPrompt, userMessage, imageBase64));
+            _currentCoroutine = StartCoroutine(SendRequestCoroutine(systemPrompt, userMessage, imagesBase64));
         }
 
-        private IEnumerator SendRequestCoroutine(string systemPrompt, string userMessage, string imageBase64 = null)
+        private IEnumerator SendRequestCoroutine(string systemPrompt, string userMessage, List<string> imagesBase64 = null)
         {
             _isProcessing = true;
             OnRequestStarted?.Invoke();
 
-            Debug.Log($"[LLMClient] Sending request via {_currentConfig.apiType}, hasImage={imageBase64 != null}");
+            Debug.Log($"[LLMClient] Sending request via {_currentConfig.apiType}, imageCount={imagesBase64?.Count ?? 0}");
 
             yield return _provider.SendRequest(_currentConfig, systemPrompt, userMessage,
                 onSuccess: (llmOutput) =>
@@ -214,7 +214,7 @@ namespace CyanNook.Chat
                     Debug.LogError($"[LLMClient] {error}");
                     OnError?.Invoke(error);
                 },
-                imageBase64: imageBase64,
+                imagesBase64: imagesBase64,
                 onRequestBody: (body) => { OnRequestBodySent?.Invoke(body); }
             );
 
@@ -265,8 +265,8 @@ namespace CyanNook.Chat
         /// </summary>
         /// <param name="systemPrompt">システムプロンプト</param>
         /// <param name="userMessage">ユーザーメッセージ</param>
-        /// <param name="imageBase64">画像データ（base64エンコード、null=画像なし）</param>
-        public void SendStreamingRequest(string systemPrompt, string userMessage, string imageBase64 = null)
+        /// <param name="imagesBase64">画像データリスト（base64エンコード、null=画像なし）</param>
+        public void SendStreamingRequest(string systemPrompt, string userMessage, List<string> imagesBase64 = null)
         {
             if (_isProcessing)
             {
@@ -284,19 +284,19 @@ namespace CyanNook.Chat
             if (!_provider.SupportsStreaming)
             {
                 Debug.LogWarning("[LLMClient] Provider does not support streaming, falling back to blocking");
-                SendRequest(systemPrompt, userMessage, imageBase64);
+                SendRequest(systemPrompt, userMessage, imagesBase64);
                 return;
             }
 
-            _currentCoroutine = StartCoroutine(SendStreamingRequestCoroutine(systemPrompt, userMessage, imageBase64));
+            _currentCoroutine = StartCoroutine(SendStreamingRequestCoroutine(systemPrompt, userMessage, imagesBase64));
         }
 
-        private IEnumerator SendStreamingRequestCoroutine(string systemPrompt, string userMessage, string imageBase64 = null)
+        private IEnumerator SendStreamingRequestCoroutine(string systemPrompt, string userMessage, List<string> imagesBase64 = null)
         {
             _isProcessing = true;
             OnRequestStarted?.Invoke();
 
-            Debug.Log($"[LLMClient] Streaming request via {_currentConfig.apiType}, hasImage={imageBase64 != null}");
+            Debug.Log($"[LLMClient] Streaming request via {_currentConfig.apiType}, imageCount={imagesBase64?.Count ?? 0}");
             Debug.Log("[PERF] LLM request start");
 
             LlmResponseHeader receivedHeader = null;
@@ -344,7 +344,7 @@ namespace CyanNook.Chat
                     Debug.LogError($"[LLMClient] Stream error: {error}");
                     OnError?.Invoke(error);
                 },
-                imageBase64: imageBase64,
+                imagesBase64: imagesBase64,
                 onRequestBody: (body) => { OnRequestBodySent?.Invoke(body); },
                 onField: (fieldName, rawValue) =>
                 {

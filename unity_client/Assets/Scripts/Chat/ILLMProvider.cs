@@ -19,11 +19,11 @@ namespace CyanNook.Chat
         /// <param name="userMessage">ユーザーメッセージ</param>
         /// <param name="onSuccess">成功コールバック（LLMの応答テキスト）</param>
         /// <param name="onError">エラーコールバック</param>
-        /// <param name="imageBase64">画像データ（base64エンコード、null=画像なし）</param>
+        /// <param name="imagesBase64">画像データリスト（base64エンコード、null=画像なし）</param>
         /// <param name="onRequestBody">リクエストボディ通知コールバック（デバッグ表示用）</param>
         IEnumerator SendRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<string> onSuccess, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null);
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null);
 
         /// <summary>
         /// LLMにストリーミングリクエストを送信
@@ -36,14 +36,14 @@ namespace CyanNook.Chat
         /// <param name="onTextChunk">テキストチャンク受信コールバック</param>
         /// <param name="onComplete">完了コールバック</param>
         /// <param name="onError">エラーコールバック</param>
-        /// <param name="imageBase64">画像データ（base64エンコード、null=画像なし）</param>
+        /// <param name="imagesBase64">画像データリスト（base64エンコード、null=画像なし）</param>
         /// <param name="onRequestBody">リクエストボディ通知コールバック（デバッグ表示用）</param>
         /// <param name="onField">JSONフィールド逐次受信コールバック（fieldName, rawJsonValue）</param>
         /// <param name="onParseError">JSONパースエラー時コールバック（errorMessage, rawText）</param>
         IEnumerator SendStreamingRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action onComplete, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null,
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null,
             Action<string, string> onField = null,
             Action<string, string> onParseError = null);
 

@@ -17,7 +17,7 @@ namespace CyanNook.Chat
 
         public IEnumerator SendRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<string> onSuccess, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null)
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null)
         {
             var requestBody = new OllamaRequest
             {
@@ -28,7 +28,7 @@ namespace CyanNook.Chat
                 options = BuildOptions(config)
             };
 
-            string jsonBody = BuildRequestJson(requestBody, config.think, imageBase64);
+            string jsonBody = BuildRequestJson(requestBody, config.think, imagesBase64);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
@@ -74,7 +74,7 @@ namespace CyanNook.Chat
         public IEnumerator SendStreamingRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action onComplete, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null,
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null,
             Action<string, string> onField = null,
             Action<string, string> onParseError = null)
         {
@@ -87,7 +87,7 @@ namespace CyanNook.Chat
                 options = BuildOptions(config)
             };
 
-            string jsonBody = BuildRequestJson(requestBody, config.think, imageBase64);
+            string jsonBody = BuildRequestJson(requestBody, config.think, imagesBase64);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
@@ -135,7 +135,7 @@ namespace CyanNook.Chat
         /// リクエストJSON文字列を構築
         /// think（トップレベル）、images（条件付き）はJsonUtilityでは扱えないため手動構築
         /// </summary>
-        private static string BuildRequestJson(OllamaRequest request, bool think, string imageBase64 = null)
+        private static string BuildRequestJson(OllamaRequest request, bool think, List<string> imagesBase64 = null)
         {
             string escapedModel = EscapeJsonString(request.model);
             string escapedPrompt = EscapeJsonString(request.prompt);
@@ -159,10 +159,16 @@ namespace CyanNook.Chat
             sb.Append($",\"num_ctx\":{opt.num_ctx}");
             sb.Append($",\"repeat_penalty\":{opt.repeat_penalty}}}");
 
-            // images（あれば）
-            if (!string.IsNullOrEmpty(imageBase64))
+            // images（あれば、複数画像対応）
+            if (imagesBase64 != null && imagesBase64.Count > 0)
             {
-                sb.Append($",\"images\":[\"{imageBase64}\"]");
+                sb.Append(",\"images\":[");
+                for (int i = 0; i < imagesBase64.Count; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    sb.Append($"\"{imagesBase64[i]}\"");
+                }
+                sb.Append("]");
             }
 
             sb.Append("}");

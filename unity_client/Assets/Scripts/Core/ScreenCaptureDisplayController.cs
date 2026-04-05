@@ -1,3 +1,4 @@
+using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
@@ -250,6 +251,44 @@ namespace CyanNook.Core
                 _renderer.enabled = true;
             }
         }
+
+        /// <summary>
+        /// 現在のキャプチャフレームをJPEGエンコードしてbase64文字列を返す
+        /// </summary>
+        public string CaptureImageAsBase64(int jpegQuality = 75)
+        {
+            if (!_isCapturing || _texture == null) return null;
+
+            // ブラウザCanvasのY座標系がUnity Texture2Dと逆のため、上下反転してからエンコード
+            int width = _texture.width;
+            int height = _texture.height;
+            Color32[] pixels = _texture.GetPixels32();
+            for (int y = 0; y < height / 2; y++)
+            {
+                int topRow = y * width;
+                int bottomRow = (height - 1 - y) * width;
+                for (int x = 0; x < width; x++)
+                {
+                    var tmp = pixels[topRow + x];
+                    pixels[topRow + x] = pixels[bottomRow + x];
+                    pixels[bottomRow + x] = tmp;
+                }
+            }
+
+            var flipped = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            flipped.SetPixels32(pixels);
+            byte[] jpegBytes = flipped.EncodeToJPG(jpegQuality);
+            Destroy(flipped);
+
+            string base64 = Convert.ToBase64String(jpegBytes);
+            Debug.Log($"[ScreenCaptureDisplayController] Captured image: {width}x{height}, base64 length={base64.Length}");
+            return base64;
+        }
+
+        /// <summary>
+        /// 現在のキャプチャテクスチャを取得（UIプレビュー用）
+        /// </summary>
+        public Texture2D GetTexture() => _texture;
 
         private void OnDestroy()
         {
