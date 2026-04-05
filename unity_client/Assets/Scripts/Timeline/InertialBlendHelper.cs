@@ -48,8 +48,8 @@ namespace CyanNook.Timeline
         private enum State
         {
             Idle,                // 待機中
-            WaitingFirstFrame,   // 1フレーム目待機（ちらつき防止で前ポーズを維持）
-            WaitingSecondFrame,  // 2フレーム目待機（Animatorが新ポーズを適用するのを待つ）
+            WaitingFirstFrame,   // 初回フレーム待機（Animator評価後にオフセット計算・ブレンド開始）
+            WaitingSecondFrame,  // [未使用] 旧2F待機の名残。互換性のため残す
             Blending,            // 慣性補間中
         }
         private State _state = State.Idle;
@@ -75,6 +75,7 @@ namespace CyanNook.Timeline
         // Animator出力直後に保存したクリーン値を使うことでオフセットの二重適用を防止する。
         private Dictionary<Transform, (Vector3 localPos, Quaternion localRot)> _lastCleanPose
             = new Dictionary<Transform, (Vector3, Quaternion)>();
+
 
         private BoneBlendData[] _bones;
         private int _boneCount;
@@ -427,11 +428,7 @@ namespace CyanNook.Timeline
                 _prePassApplied = false;
                 if (_state == State.WaitingFirstFrame)
                 {
-                    _state = State.WaitingSecondFrame;
-                }
-                else if (_state == State.WaitingSecondFrame)
-                {
-                    // PrePassがクリーン保存・前ポーズ適用済み。ブレンド初期化と最初のオフセット適用を行う。
+                    // PrePassがクリーン保存・前ポーズ適用済み。即座にブレンド初期化・適用
                     InitializeBlend();
                     _state = State.Blending;
                     CalculateAndApplyOffset();
@@ -470,22 +467,11 @@ namespace CyanNook.Timeline
             switch (_state)
             {
                 case State.WaitingFirstFrame:
-                    // 1フレーム目 - Animatorが新ポーズを適用済みだが、初期化は次フレームで行う
-                    // ちらつき防止: 前のポーズを維持してそのまま描画させる
-                    for (int i = 0; i < _boneCount; i++)
-                    {
-                        _bones[i].transform.localPosition = _bones[i].previousLocalPosition;
-                        _bones[i].transform.localRotation = _bones[i].previousLocalRotation;
-                    }
-                    _isOffsetApplied = true;
-                    _state = State.WaitingSecondFrame;
-                    break;
-
-                case State.WaitingSecondFrame:
-                    // 2フレーム目 - この時点でAnimatorは確実に新しいアニメーションのポーズを適用済み
+                    // Animatorは新ポーズ適用済み（Update→Animation評価→LateUpdateの順序により）
+                    // cleanLocal*に新ポーズが格納済みなので、即座にオフセット計算・適用を行う
+                    // t=0ではdecay=1.0 → offset=full → 表示=oldPose（ちらつきなし）
                     InitializeBlend();
                     _state = State.Blending;
-                    // 初期化直後、すぐにオフセットを計算・適用
                     CalculateAndApplyOffset();
                     break;
 
@@ -545,7 +531,7 @@ namespace CyanNook.Timeline
         ///
         /// Vrm10InstanceのControlRigがAnimator出力をボーンに適用した後、
         /// SpringBone計算前にIB補正済みポーズを適用する。これにより：
-        /// - WaitingFirstFrame/SecondFrame: SpringBoneが新Timelineの突然のポーズ変化に反応しない
+        /// - WaitingFirstFrame: SpringBoneが新Timelineの突然のポーズ変化に反応しない
         /// - Blending: SpringBoneがIBオフセット適用済みの滑らかなポーズを見る
         ///   （PrePass無しではSpringBoneが生ポーズを見てしまい、髪・揺れ物がポップする）
         ///
@@ -578,8 +564,8 @@ namespace CyanNook.Timeline
                 return;
             }
 
-            // WaitingFirstFrame/WaitingSecondFrame: 前ポーズを適用
-            if (_state != State.WaitingFirstFrame && _state != State.WaitingSecondFrame) return;
+            // WaitingFirstFrame: 前ポーズを適用（SpringBoneが新ポーズに突然反応しないように）
+            if (_state != State.WaitingFirstFrame) return;
 
             // クリーンポーズキャッシュを更新（ControlRig適用後の値 = 新Timelineのポーズ）
             UpdateCleanPoseCache();
@@ -648,7 +634,7 @@ namespace CyanNook.Timeline
         /// </summary>
         private void CalculateAndApplyOffset()
         {
-            // Critical Damping減衰を計算（1回だけ）
+            // Critical Damping減衰を計算
             // x(t) = x₀ · (1 + ω·t) · e^(-ω·t)
             float t = _elapsedTime;
             float expDecay = Mathf.Exp(-_omega * t);
