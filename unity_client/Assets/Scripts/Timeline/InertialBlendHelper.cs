@@ -53,6 +53,7 @@ namespace CyanNook.Timeline
         private struct BoneBlendData
         {
             public Transform transform;
+            public string boneName; // デバッグ用ボーン名
             public Vector3 previousLocalPosition;      // 遷移前ポーズ（_lastCleanPose由来、frame N-1）
             public Quaternion previousLocalRotation;
             public Vector3 prevPrevLocalPosition;      // 2フレーム前ポーズ（_prevCleanPose由来、frame N-2）
@@ -162,6 +163,7 @@ namespace CyanNook.Timeline
                 if (_boneTransformCache.TryGetValue(bone, out var t))
                 {
                     _bones[_boneCount].transform = t;
+                    _bones[_boneCount].boneName = bone.ToString();
 
                     // 旧IBのビジュアル状態があればそれを使用（旧IBオフセット消失ジャンプ防止）
                     if (_oldVisualState.TryGetValue(t, out var visualPose))
@@ -239,6 +241,7 @@ namespace CyanNook.Timeline
                     continue;
 
                 _bones[_boneCount].transform = t;
+                _bones[_boneCount].boneName = bone.ToString();
 
                 // 旧IBのビジュアル状態があればそれを使用（旧IBオフセット消失ジャンプ防止）
                 // なければクリーンポーズキャッシュ（通常の新規IB）
@@ -303,6 +306,7 @@ namespace CyanNook.Timeline
 
             _bones = new BoneBlendData[1];
             _bones[0].transform = hipsTransform;
+            _bones[0].boneName = "Hips";
 
             // 旧IBのビジュアル状態があればそれを使用（旧IBオフセット消失ジャンプ防止）
             if (_oldVisualState.TryGetValue(hipsTransform, out var visualPose))
@@ -361,6 +365,10 @@ namespace CyanNook.Timeline
                         _bones[i].transform.localRotation
                     );
                 }
+                // 旧IBのビジュアル状態（clean + IBオフセット）をpreviousLocalとして使用するため、
+                // _prevCleanPose（IBオフセットなし）と参照系が不整合になる。
+                // v₀計算で旧IBオフセットが「巨大な偽速度」として検出されるのを防ぐ。
+                _prevCleanPose.Clear();
             }
         }
 
@@ -823,10 +831,21 @@ namespace CyanNook.Timeline
                 }
             }
 
-            Debug.Log($"[InertialBlendHelper] InitializeBlend - " +
-                $"posX0={_bones[0].posX0:F4}, rotX0={_bones[0].rotX0 * Mathf.Rad2Deg:F2}°, " +
-                $"posV0={_bones[0].posV0:F2}, rotV0={_bones[0].rotV0 * Mathf.Rad2Deg:F1}°/s, " +
-                $"frame={Time.frameCount}");
+            // 全ボーン詳細ログ（診断用）
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"[IB-DETAIL] InitializeBlend frame={Time.frameCount}, duration={_blendDuration:F3}");
+            for (int j = 0; j < _boneCount; j++)
+            {
+                float rDeg = _bones[j].rotX0 * Mathf.Rad2Deg;
+                float rvDeg = _bones[j].rotV0 * Mathf.Rad2Deg;
+                bool sameSign = _bones[j].rotX0 != 0f && _bones[j].rotV0 * _bones[j].rotX0 > 0f;
+                // rotX0 > 1° または |rotV0| > 30°/s のボーンのみ表示
+                if (Mathf.Abs(rDeg) > 1f || Mathf.Abs(rvDeg) > 30f || _bones[j].posX0 > 0.01f)
+                {
+                    sb.AppendLine($"  {_bones[j].boneName}: rot={rDeg:F1}° v={rvDeg:F1}°/s{(sameSign ? " SAME_SIGN" : "")} | pos={_bones[j].posX0:F4} pv={_bones[j].posV0:F2} pp={(_bones[j].hasPrevPrev ? "Y" : "N")}");
+                }
+            }
+            Debug.Log(sb.ToString());
 
         }
 
