@@ -689,10 +689,15 @@ namespace CyanNook.Timeline
         private static void CalculatePolynomial(float x0, float v0, float blendTime,
             out float t1, out float a0, out float a, out float b, out float c)
         {
-            // [TODO] v0がx0と同符号（ターゲットから離れる方向）の場合のオーバーシュート防止
-            // v0=0クランプ: 親ボーン（Spine/Neck）の速度もゼロになり子ボーン（Head）が遅れる
-            // maxV0=|x0/blendTime|キャップ: x0≈0の遷移（emote→sit_end等）で位置慣性がゼロになる
-            // いずれも副作用が大きく、遷移パターンごとの分析を踏まえた別アプローチが必要
+            // オーバーシュート防止: v0がx0と同符号（ターゲットから離れる方向）の場合、v0=0
+            // v0とx0が同符号 = 前アニメーションのボーンがターゲットから離れる方向に動いていた。
+            // この速度を新しいブレンドに引き継ぐと逆方向への初期変位（オーバーシュート）を起こす。
+            // 比率クランプ（v0/x0比率ベース）では x0が大きい場合にクランプ後のv0も巨大になり不十分。
+            // LookAt上書き修正(dfa835b)済みのため、親ボーンv0=0によるHead遅延の副作用は解消済み。
+            if (x0 != 0f && v0 * x0 > 0f)
+            {
+                v0 = 0f;
+            }
 
             // オーバーシュート防止: v₀とx₀が逆符号の場合、ブレンド時間を短縮
             float timeMax = (v0 == 0f || x0 / v0 > 0f) ? blendTime : -5f * x0 / v0;
@@ -807,6 +812,7 @@ namespace CyanNook.Timeline
                 $"posX0={_bones[0].posX0:F4}, rotX0={_bones[0].rotX0 * Mathf.Rad2Deg:F2}°, " +
                 $"posV0={_bones[0].posV0:F2}, rotV0={_bones[0].rotV0 * Mathf.Rad2Deg:F1}°/s, " +
                 $"frame={Time.frameCount}");
+
         }
 
         /// <summary>
