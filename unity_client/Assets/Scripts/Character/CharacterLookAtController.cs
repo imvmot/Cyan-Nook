@@ -202,14 +202,16 @@ namespace CyanNook.Character
             float chestWeight = weight * _chestEffectiveFactor;
             if (chestWeight > 0f && _chestBone != null)
             {
-                ApplyBoneLookAt(_chestBone, _chestAngleLimitX, _chestAngleLimitY, chestWeight, ref _chestSmoothedOffset);
+                ApplyBoneLookAtPreservingIB(_chestBone, _chestAngleLimitX, _chestAngleLimitY,
+                    chestWeight, ref _chestSmoothedOffset, _chestCleanLocalRotation);
             }
 
             // Head
             float headWeight = weight * _headEffectiveFactor;
             if (headWeight > 0f && _headBone != null)
             {
-                ApplyBoneLookAt(_headBone, _headAngleLimitX, _headAngleLimitY, headWeight, ref _headSmoothedOffset);
+                ApplyBoneLookAtPreservingIB(_headBone, _headAngleLimitX, _headAngleLimitY,
+                    headWeight, ref _headSmoothedOffset, _headCleanLocalRotation);
             }
 
             _isLookAtOffsetApplied = headWeight > 0f || chestWeight > 0f;
@@ -473,6 +475,34 @@ namespace CyanNook.Character
             // アニメーション回転とブレンド（weight考慮）
             Quaternion animationRotation = bone.localRotation;
             bone.localRotation = Quaternion.Slerp(animationRotation, smoothedLocalRotation, weight);
+        }
+
+        /// <summary>
+        /// InertialBlendHelper(IB)のオフセットを保持しつつLookAtを適用する。
+        ///
+        /// IBが適用したオフセット（慣性補間）とLookAtのオフセット（視線追跡）を共存させる。
+        /// 1. IBオフセット込みの現在回転を保存
+        /// 2. クリーン回転（Animator出力）に戻してからLookAtを計算
+        /// 3. LookAt差分をIBオフセット込み回転に上乗せ
+        ///
+        /// IB非動作時はwithIBOffset == cleanLocalRotationとなり、
+        /// lookAtDeltaがそのまま適用されるため既存動作と同一。
+        /// </summary>
+        private void ApplyBoneLookAtPreservingIB(Transform bone, float limitX, float limitY,
+            float weight, ref Quaternion smoothedOffset, Quaternion cleanLocalRotation)
+        {
+            // IBオフセット込みの現在回転を保存
+            Quaternion withIBOffset = bone.localRotation;
+
+            // クリーン回転に戻してからLookAtを計算
+            bone.localRotation = cleanLocalRotation;
+            ApplyBoneLookAt(bone, limitX, limitY, weight, ref smoothedOffset);
+
+            // LookAtが計算した差分（クリーン基準）
+            Quaternion lookAtDelta = Quaternion.Inverse(cleanLocalRotation) * bone.localRotation;
+
+            // IBオフセット込み回転にLookAt差分を上乗せ
+            bone.localRotation = withIBOffset * lookAtDelta;
         }
 
         private float ClampAngle(float angle, float min, float max)
