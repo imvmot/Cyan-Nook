@@ -365,6 +365,19 @@ namespace CyanNook.Timeline
         }
 
         /// <summary>
+        /// ループバック（Timeline再生位置の巻き戻し）が発生したことを通知する。
+        /// _prevCleanPoseを無効化し、次回のIB開始時にv₀=0フォールバックを強制する。
+        ///
+        /// ループバック時、_prevCleanPoseにはループ末尾のポーズが残り、
+        /// _lastCleanPoseにはループ先頭のポーズが入る。この不連続が
+        /// v₀計算で「巨大な偽速度」として検出されるのを防ぐ。
+        /// </summary>
+        public void NotifyLoopBack()
+        {
+            _prevCleanPose.Clear();
+        }
+
+        /// <summary>
         /// 現在のボーン状態を_lastCleanPoseとしてスナップショットする。
         /// AdditiveOverrideHelper停止前に呼ぶことで、AO補正込みの実際の表示ポーズを
         /// 次回StartInertialBlendの「前のポーズ」として使用できる。
@@ -689,16 +702,6 @@ namespace CyanNook.Timeline
         private static void CalculatePolynomial(float x0, float v0, float blendTime,
             out float t1, out float a0, out float a, out float b, out float c)
         {
-            // オーバーシュート防止: v0がx0と同符号（ターゲットから離れる方向）の場合、v0=0
-            // v0とx0が同符号 = 前アニメーションのボーンがターゲットから離れる方向に動いていた。
-            // この速度を新しいブレンドに引き継ぐと逆方向への初期変位（オーバーシュート）を起こす。
-            // 比率クランプ（v0/x0比率ベース）では x0が大きい場合にクランプ後のv0も巨大になり不十分。
-            // LookAt上書き修正(dfa835b)済みのため、親ボーンv0=0によるHead遅延の副作用は解消済み。
-            if (x0 != 0f && v0 * x0 > 0f)
-            {
-                v0 = 0f;
-            }
-
             // オーバーシュート防止: v₀とx₀が逆符号の場合、ブレンド時間を短縮
             float timeMax = (v0 == 0f || x0 / v0 > 0f) ? blendTime : -5f * x0 / v0;
             t1 = Mathf.Min(blendTime, timeMax);
@@ -750,12 +753,17 @@ namespace CyanNook.Timeline
                 {
                     _bones[i].posBaseVec = vec / posX0; // normalized
                     // 2フレーム前のポーズから速度を計算（StartInertialBlend時に保存済み）
-                    float xn1 = 0f;
+                    float posV0;
                     if (_bones[i].hasPrevPrev)
                     {
-                        xn1 = Vector3.Dot(_bones[i].prevPrevLocalPosition - _bones[i].cleanLocalPosition, _bones[i].posBaseVec);
+                        float xn1 = Vector3.Dot(_bones[i].prevPrevLocalPosition - _bones[i].cleanLocalPosition, _bones[i].posBaseVec);
+                        posV0 = (posX0 - xn1) / dt;
                     }
-                    float posV0 = (posX0 - xn1) / dt;
+                    else
+                    {
+                        // prevPrevデータなし（ループバック直後、初回ブレンド等）→ 速度不明のためゼロ
+                        posV0 = 0f;
+                    }
                     CalculatePolynomial(posX0, posV0, _blendDuration,
                         out _bones[i].posT1, out _bones[i].posA0,
                         out _bones[i].posA, out _bones[i].posB, out _bones[i].posC);
@@ -780,9 +788,10 @@ namespace CyanNook.Timeline
                 {
                     _bones[i].rotAxis = axis;
                     // 2フレーム前のポーズから角速度を計算（StartInertialBlend時に保存済み）
-                    float xn1 = 0f;
+                    float rotV0;
                     if (_bones[i].hasPrevPrev)
                     {
+                        float xn1 = 0f;
                         Quaternion qn1 = invRot * _bones[i].prevPrevLocalRotation;
                         if (Mathf.Abs(qn1.w) > Mathf.Epsilon)
                         {
@@ -790,9 +799,14 @@ namespace CyanNook.Timeline
                             xn1 = 2f * Mathf.Atan(Vector3.Dot(qVec, axis) / qn1.w);
                             xn1 = NormalizeAngle(xn1);
                         }
+                        float deltaAngle = NormalizeAngle(rotX0 - xn1);
+                        rotV0 = deltaAngle / dt;
                     }
-                    float deltaAngle = NormalizeAngle(rotX0 - xn1);
-                    float rotV0 = deltaAngle / dt;
+                    else
+                    {
+                        // prevPrevデータなし（ループバック直後、初回ブレンド等）→ 速度不明のためゼロ
+                        rotV0 = 0f;
+                    }
                     CalculatePolynomial(rotX0, rotV0, _blendDuration,
                         out _bones[i].rotT1, out _bones[i].rotA0,
                         out _bones[i].rotA, out _bones[i].rotB, out _bones[i].rotC);

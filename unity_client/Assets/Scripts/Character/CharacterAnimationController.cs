@@ -316,6 +316,9 @@ namespace CyanNook.Character
                 {
                     _loopJumpOccurred = true;
                     director.time = _loopStartTime;
+                    // ループバックによる再生位置の不連続を通知し、
+                    // _prevCleanPoseを無効化して偽v₀の発生を防ぐ
+                    inertialBlendHelper?.NotifyLoopBack();
                     Debug.Log($"[CharacterAnimationController] Loop back to {_loopStartTime:F3} (predicted={predictedTime:F3})");
                 }
             }
