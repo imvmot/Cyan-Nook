@@ -365,14 +365,15 @@ namespace CyanNook.Timeline
         }
 
         /// <summary>
-        /// ループバック（Timeline再生位置の巻き戻し）が発生したことを通知する。
         /// _prevCleanPoseを無効化し、次回のIB開始時にv₀=0フォールバックを強制する。
         ///
-        /// ループバック時、_prevCleanPoseにはループ末尾のポーズが残り、
-        /// _lastCleanPoseにはループ先頭のポーズが入る。この不連続が
-        /// v₀計算で「巨大な偽速度」として検出されるのを防ぐ。
+        /// 以下の状況で呼び出す:
+        /// - ループバック: _prevCleanPoseにループ末尾、_lastCleanPoseにループ先頭のポーズが
+        ///   入り、この不連続が偽速度として検出される
+        /// - AdditiveOverride停止: IBキャッシュにAO復元前のポーズ（Thinking/Emoteの全身）が
+        ///   残っており、AO停止後のTimeline切替時に不連続が偽速度として検出される
         /// </summary>
-        public void NotifyLoopBack()
+        public void InvalidatePrevCleanPose()
         {
             _prevCleanPose.Clear();
         }

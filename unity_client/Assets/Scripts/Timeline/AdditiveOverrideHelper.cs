@@ -32,6 +32,9 @@ namespace CyanNook.Timeline
         [Tooltip("対象のAnimator")]
         public Animator animator;
 
+        [Tooltip("AO停止時にクリーンポーズキャッシュを無効化するためのIB参照")]
+        public InertialBlendHelper inertialBlendHelper;
+
         [Header("Debug")]
         [SerializeField]
         private bool _isActive;
@@ -129,6 +132,12 @@ namespace CyanNook.Timeline
             _isActive = false;
             _restoreBones = null;
             _restoreCount = 0;
+
+            // AO動作中、IBのクリーンポーズキャッシュにはAO復元前のポーズ
+            // （Thinking/Emoteの全身ポーズ）が記録されている。
+            // AO停止後の次回IB開始時にこの不連続が偽v₀として検出されるため、
+            // _prevCleanPoseを無効化してv₀=0フォールバックを強制する。
+            inertialBlendHelper?.InvalidatePrevCleanPose();
 
             Debug.Log("[AdditiveOverrideHelper] StopOverride");
         }
