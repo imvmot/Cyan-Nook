@@ -28,13 +28,67 @@ namespace CyanNook.Timeline
     [System.Serializable]
     public class InertialBlendBehaviour : PlayableBehaviour
     {
+        public System.Collections.Generic.List<HumanBodyBones> targetBones;
     }
 
     /// <summary>
     /// Inertial Blend Mixer Behaviour
-    /// Timeline上でのクリップ状態を管理する。ボーン操作は行わない。
+    /// Timeline再生中にクリップ位置に到達したらInertialBlendHelperを起動する。
+    /// SetupInertialBlendTrackで処理される最初のクリップ以外（lp→ed遷移用等）を担当。
     /// </summary>
     public class InertialBlendMixerBehaviour : PlayableBehaviour
     {
+        private bool _clipWasActive;
+        private InertialBlendHelper _helper;
+        private bool _helperResolved;
+
+        public override void ProcessFrame(Playable playable, FrameData info, object playerData)
+        {
+            // InertialBlendHelperの参照をバインディングのAnimatorから取得
+            if (!_helperResolved)
+            {
+                _helperResolved = true;
+                if (playerData is Animator animator)
+                {
+                    _helper = animator.GetComponent<InertialBlendHelper>();
+                }
+            }
+            if (_helper == null) return;
+
+            // いずれかのクリップがアクティブか判定
+            int inputCount = playable.GetInputCount();
+            bool clipActive = false;
+            int activeIndex = -1;
+            for (int i = 0; i < inputCount; i++)
+            {
+                if (playable.GetInputWeight(i) > 0f)
+                {
+                    clipActive = true;
+                    activeIndex = i;
+                    break;
+                }
+            }
+
+            // クリップが非アクティブ→アクティブに変わった瞬間にIBを開始
+            if (clipActive && !_clipWasActive && activeIndex >= 0)
+            {
+                var inputPlayable = (ScriptPlayable<InertialBlendBehaviour>)playable.GetInput(activeIndex);
+                // クリップのdurationとtargetBonesを取得するため、
+                // トラックのクリップ情報はMixerからは直接アクセスできないが、
+                // inputPlayableのdurationでクリップ長を取得可能
+                float duration = (float)inputPlayable.GetDuration();
+
+                // IBがすでにアクティブなら重複開始しない
+                // （SetupInertialBlendTrackで最初のクリップが既に開始されている場合）
+                if (!_helper.IsActive)
+                {
+                    var behaviour = inputPlayable.GetBehaviour();
+                    _helper.StartInertialBlend(duration, behaviour.targetBones);
+                    Debug.Log($"[InertialBlendMixerBehaviour] Started IB from Timeline clip, duration={duration:F3}");
+                }
+            }
+
+            _clipWasActive = clipActive;
+        }
     }
 }
