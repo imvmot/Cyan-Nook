@@ -53768,7 +53768,6 @@ MonoBehaviour:
   navigationController: {fileID: 0}
   roomLightController: {fileID: 0}
   timelineBindings: {fileID: 11400000, guid: d3bad345f1bf36d4181e0a1d2ee8217f, type: 2}
-  defaultBlendTime: 0.25
   emoteHoldDuration: 20
   _currentState: 0
   _currentAnimationId: 
