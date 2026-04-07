@@ -93,8 +93,6 @@ namespace CyanNook.Character
         private int _endingFrameCount;
         private const int ENDING_GRACE_FRAMES = 3;
 
-        // InertialBlendTrackが無いTimeline遷移時のフォールバックブレンド時間
-        private const float FALLBACK_INERTIAL_BLEND_DURATION = 0.15f;
 
         // Timelineのフレームレートが取得できない場合のデフォルト値
         private const double DEFAULT_FRAME_RATE = 60.0;
@@ -533,16 +531,7 @@ namespace CyanNook.Character
             }
             else
             {
-                bool hasInertialBlendTrack = SetupInertialBlendTrack(timeline);
-
-                // InertialBlendTrackが無い場合、フォールバック慣性補間を開始
-                // director.Stop()による1Fポーズジャンプを防止するため、
-                // 全ての状態遷移で慣性補間によるスムーズな遷移を保証する
-                if (!hasInertialBlendTrack && inertialBlendHelper != null)
-                {
-                    inertialBlendHelper.StartInertialBlendAllBones(FALLBACK_INERTIAL_BLEND_DURATION);
-                    Debug.Log($"[CharacterAnimationController] Started fallback InertialBlend (no InertialBlendTrack), duration={FALLBACK_INERTIAL_BLEND_DURATION}");
-                }
+                SetupInertialBlendTrack(timeline);
             }
 
             // WrapMode設定
@@ -578,6 +567,11 @@ namespace CyanNook.Character
                 director.time = 0;
             }
             director.Play();
+
+            // director.Play()後にEvaluate()で即時評価し、1Fポーズフラッシュを防止する。
+            // コルーチン等からの呼び出し時、アニメーション評価サイクルが済んでいる場合に
+            // 前のTimeline/ポーズが1F見える問題を解消する。
+            director.Evaluate();
 
             string resumeInfo = resumeAtEnd && _hasLoopRegion ? $", ResumedAtEnd: {_endStartTime:F3}"
                               : resumeAtLoop && _hasLoopRegion ? $", ResumedAt: {_loopStartTime:F3}"
@@ -739,14 +733,7 @@ namespace CyanNook.Character
             SetupLoopRegion(timeline);
             SetupInteractionEnd(timeline);
             SetupCancelRegions(timeline);
-            bool hasInertialBlendTrack = SetupInertialBlendTrack(timeline);
-
-            // InertialBlendTrackが無い場合、フォールバック慣性補間を開始
-            if (!hasInertialBlendTrack && inertialBlendHelper != null)
-            {
-                inertialBlendHelper.StartInertialBlendAllBones(FALLBACK_INERTIAL_BLEND_DURATION);
-                Debug.Log($"[CharacterAnimationController] Started fallback InertialBlend (no InertialBlendTrack), duration={FALLBACK_INERTIAL_BLEND_DURATION}");
-            }
+            SetupInertialBlendTrack(timeline);
 
             // WrapMode設定
             // LoopRegionTrackがある場合はHold（クリップベースループ制御が優先）
@@ -763,6 +750,7 @@ namespace CyanNook.Character
 
             director.time = 0;
             director.Play();
+            director.Evaluate();
 
             Debug.Log($"[CharacterAnimationController] PlayTimeline: {timeline.name}, AnimId: {animationId}, LoopRegion: {_hasLoopRegion}, WrapMode: {director.extrapolationMode}");
         }
@@ -1442,34 +1430,23 @@ namespace CyanNook.Character
             _isEnding = true;
             _endingFrameCount = 0;
 
-            // lp→ed遷移はTimeline内の時間ジャンプであり、lpの途中ポーズとedの開始ポーズが
-            // 一致しない場合にポーズポップ（一瞬別ポーズが見える）が発生する。
-            // IBを開始してlpポーズからedポーズへスムーズに遷移させる。
-            // 既にIBがアクティブな場合もStartInertialBlendAllBonesが
-            // CaptureVisualStateIfActive→RestoreCleanIfActiveで正しく引き継ぐ。
-            if (inertialBlendHelper != null)
-            {
-                // ForceStopThinking/Emote → PlayState(resumeAtLoop) でIBが直前に開始されている場合、
-                // そのIBの残り時間を引き継ぐ。FALLBACK(0.15s)だと短すぎてポーズが飛ぶ。
-                float duration = FALLBACK_INERTIAL_BLEND_DURATION;
-                if (inertialBlendHelper.IsActive)
-                {
-                    duration = Mathf.Max(duration, inertialBlendHelper.RemainingDuration);
-                }
-                inertialBlendHelper.StartInertialBlendAllBones(duration);
-            }
-
             if (director != null)
             {
                 director.extrapolationMode = DirectorWrapMode.Hold;
                 director.time = _endStartTime;
-                Debug.Log($"[CharacterAnimationController] Jumped to end phase at {_endStartTime:F3}");
 
                 // ジャンプ後も再生を継続
                 if (director.state != UnityEngine.Playables.PlayState.Playing)
                 {
                     director.Play();
                 }
+
+                // director.timeの変更は次のアニメーション評価サイクルまで反映されないため、
+                // コルーチンなどアニメーション評価後に呼ばれた場合に1Fだけ前のポーズが見える。
+                // Evaluate()で即時反映させて1Fポーズフラッシュを防止する。
+                director.Evaluate();
+
+                Debug.Log($"[CharacterAnimationController] Jumped to end phase at {_endStartTime:F3}");
             }
         }
 

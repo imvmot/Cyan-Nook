@@ -1276,7 +1276,7 @@ MonoBehaviour:
   m_MatchTargetFields: 0
   m_RemoveStartOffset: 0
   m_ApplyFootIK: 1
-  m_Loop: 0
+  m_Loop: 1
   m_Version: 1
   m_Rotation: {x: 0, y: 0, z: 0, w: 1}
 --- !u!114 &3370535760673500431

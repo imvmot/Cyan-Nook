@@ -3488,7 +3488,7 @@ VrmLoader.LoadBytesAsync(showMeshes: false)
 ├─ UniVRM が全 Renderer を disabled で生成（T-pose が描画されない）
 ├─ OnVrmLoaded()
 │   ├─ PlayState(Idle, skipBlend: true) または RestoreSleep(skipBlend: true)
-│   │   └─ skipBlend=true: InertialBlendTrack / フォールバックIB 両方をスキップ
+│   │   └─ skipBlend=true: InertialBlendTrackのセットアップをスキップ
 │   │       → T-poseからの補間が発生しない
 │   └─ StartCoroutine(ShowModelAfterAnimation)
 │       ├─ yield return null × 3（PlayableDirector評価→Animator反映→確定待ち）
@@ -3498,10 +3498,7 @@ VrmLoader.LoadBytesAsync(showMeshes: false)
 
 #### skipBlend パラメータ
 
-`PlayState(skipBlend: true)` は InertialBlend 全体をスキップする:
-- **InertialBlendTrack**: `SetupInertialBlendTrack()` の呼び出し自体をスキップ
-- **フォールバックIB**: `StartInertialBlendAllBones()` の呼び出しをスキップ
-
+`PlayState(skipBlend: true)` は `SetupInertialBlendTrack()` の呼び出しをスキップする。
 VRM初回読み込み時にのみ使用。通常の状態遷移では使用しない。
 
 #### VrmLoader メッシュ表示制御
@@ -5044,40 +5041,33 @@ private void StopAdditiveOverrideWithSnapshot()
 - `ForceStopThinkingToEnd()` - Thinking強制停止→ed再生
 - `OnThinkingEndPhaseComplete()` - Thinking終了フェーズ完了
 
-#### フォールバック慣性補間（StartInertialBlendAllBones）
+#### director.Evaluate()による1Fポーズフラッシュ防止
 
-InertialBlendTrackを持たないTimelineの遷移時に、`director.Stop()`による1Fポーズジャンプを
-防止するため、全Humanoidボーン（目・顎除く）を対象とした短時間（0.15秒）のフォールバック
-慣性補間を自動的に開始する。
+`director.time`の変更や`director.Play()`は、次のアニメーション評価サイクル（Update後、LateUpdate前）
+まで反映されない。コルーチン等からの呼び出し時にそのフレームのアニメーション評価が済んでいると、
+前のTimeline/ポーズが1Fだけ描画される（ポーズフラッシュ）。
 
-```csharp
-// CharacterAnimationController.PlayState / PlayTimeline 内
-bool hasInertialBlendTrack = SetupInertialBlendTrack(timeline);
-if (!hasInertialBlendTrack && inertialBlendHelper != null)
-{
-    inertialBlendHelper.StartInertialBlendAllBones(FALLBACK_INERTIAL_BLEND_DURATION); // 0.15秒
-}
-```
+これを防止するため、以下の3箇所で`director.Evaluate()`を呼んで即時評価する:
 
-#### JumpToEndPhase時のIB開始（lp→ed遷移スムージング）
-
-lp→ed遷移（`JumpToEndPhase`）時に、IBを開始してポーズポップを防止する。
-
-**背景:** lpクリップのループ途中ポーズからedクリップの開始ポーズへ`director.time`をジャンプさせるため、
-ポーズが一致しない場合に1Fのポーズポップ（フラッシュ）が発生する。
-IBを使ってlpポーズからedポーズへスムーズに遷移させることで解消する。
-
-既にIBがアクティブな場合（同一フレームでPlayStateが先行実行された場合など）も、
-`StartInertialBlendAllBones`が内部で`CaptureVisualStateIfActive → RestoreCleanIfActive`を
-行うため、旧IBのビジュアル状態を正しく引き継いで新IBを開始する。
+1. **PlayState** — `director.Play()`直後
+2. **PlayTimeline** — `director.Play()`直後
+3. **JumpToEndPhase** — `director.time = _endStartTime`後
 
 ```csharp
-// CharacterAnimationController.JumpToEndPhase 内
-if (inertialBlendHelper != null)
-{
-    inertialBlendHelper.StartInertialBlendAllBones(FALLBACK_INERTIAL_BLEND_DURATION); // 0.15秒
-}
+director.Play();
+director.Evaluate(); // 即時評価で1Fポーズフラッシュを防止
 ```
+
+**経緯:** 以前はフォールバック慣性補間（`StartInertialBlendAllBones`、0.15秒）で1Fギャップを
+隠蔽していたが、IBが間違ったポーズ（フラッシュした前Timelineのポーズ）から差分を計算し
+オーバーシュートを引き起こしていた。`director.Evaluate()`で根本原因を解消したため、
+フォールバック慣性補間は削除済み。
+
+#### 慣性補間のルール
+
+慣性補間（InertialBlend）はタイムライン作業者がIBトラックを明示的に配置した場合にのみ動作する。
+システムによる自動補間（フォールバックIB）は行わない。
+補間が不要な遷移（ポーズスナップが意図的な場合等）もアニメーター側で制御する。
 
 #### データ構造
 
@@ -5132,6 +5122,18 @@ t₁ = v₀≠0 かつ x₀/v₀<0 → min(blendTime, -5·x₀/v₀)  ← オー
 **回転の処理**: `Quaternion.ToAngleAxis()`で軸角度表現に変換してスカラー`x₀`（ラジアン）に変換。角速度`v₀`は2フレーム前の回転を同じ軸に射影して差分計算。適用時: `Quaternion.AngleAxis(EvaluatePolynomial(t) * Rad2Deg, axis)`
 
 **速度の取得**: `_prevCleanPose`辞書（2フレーム前のAnimator出力）を`StartInertialBlend()`時点（Update中、スワップ前）で`BoneBlendData.prevPrevLocal*`に保存。`InitializeBlend()`（LateUpdate中）で速度計算に使用。
+
+**v₀偽速度の防止策**: v₀の2フレーム差分計算は「連続した2フレームのクリーンポーズ」が前提。
+以下の状況でこの前提が崩れるため、`_prevCleanPose`を無効化（`InvalidatePrevCleanPose()`）して
+`hasPrevPrev=false` → `v₀=0`にフォールバックする:
+
+1. **ループバック時** — ループ末尾から先頭への時間ジャンプで、2フレーム間のポーズが不連続になる。
+   `CharacterAnimationController.Update()`のループバック検出で呼び出し。
+2. **AdditiveOverride停止時** — AO(実行順20050)がIB(20000)の後にボーンを上書きするため、
+   AO停止前後の`_prevCleanPose`はAO補正の有無が混在する。
+   `AdditiveOverrideHelper.StopOverride()`で呼び出し。
+3. **旧IB動作中の新IB開始時** — 旧IBのオフセットが乗ったボーン値が`_prevCleanPose`に
+   キャッシュされている。`CaptureVisualStateIfActive()`で呼び出し。
 
 #### 処理フロー
 
@@ -5213,7 +5215,7 @@ Updateでクリーン位置に復元することで蓄積を防止する。
 | メソッド/プロパティ | 用途 |
 |---|---|
 | `StartInertialBlend(duration, targetBones)` | InertialBlendTrackから呼び出し（指定ボーン） |
-| `StartInertialBlendAllBones(duration)` | フォールバック用（全ボーン、目・顎除く） |
+| `StartInertialBlendAllBones(duration)` | 全ボーン対象（目・顎除く） |
 | `CancelBlend()` | 動作中IBをキャンセル |
 | `ApplyPrePassIfNeeded()` | PrePass用：SpringBone計算前にWaitingFirstFrame/SecondFrameのポーズ補正を適用 |
 | `IsActive` | 慣性補間が動作中かどうか |
@@ -6901,21 +6903,10 @@ IDを生成していたが、`$"interact_{action}01"`（アクション名）に
 - IB開始時のWaitingFirstFrame/SecondFrame → PrePassで前ポーズをSpringBone前に適用
 - ~~IB Blending中のポーズ変化~~ → PrePassをBlending状態にも拡張し、IB全期間にわたって
   SpringBoneがIB補正済みポーズで計算するように修正済み
-- lp→ed遷移のポーズポップ → JumpToEndPhaseでIBを開始してスムージング
-
-**残存する可能性のあるケース:**
-
-1. **PlayState内のdirector.Stop()→Play()間の1Fギャップ**: `StopDirectorForAssetChange()`で
-   directorを停止し、新Timelineを設定後にPlay()する。Stop()時にAnimatorが出すポーズと
-   新Timeline開始ポーズの間で1F差が出る可能性がある（IBのWaitingFirstFrameで対処するが、
-   Stop()の瞬間のAnimator出力が予測不能）。
-   → 検討: director.Stop()前にボーンポーズをスナップショットし、IBの前ポーズとして使用
-
-2. **複数IB重複開始**: 同一フレームでPlayState→JumpToEndPhaseが実行され、
-   PlayStateのIBがWaitingFirstFrameの状態でJumpToEndPhaseが新IBを開始するケース。
-   CaptureVisualStateIfActiveで引き継ぐが、WaitingFirstFrame時のvisualStateは
-   前ポーズ（previousLocal*）であり、「ControlRig適用後のクリーンポーズ」ではない。
-   → 検討: WaitingFirstFrame中のCaptureVisualStateIfActiveで何を返すべきか再検討
+- ~~lp→ed遷移のポーズポップ~~ → `director.Evaluate()`による即時評価で解消（以前のIBスムージングは削除）
+- ~~PlayState内のdirector.Stop()→Play()間の1Fギャップ~~ → `director.Evaluate()`で解消
+- ~~フォールバックIBによるオーバーシュート~~ → フォールバックIB自体を削除。根本原因は
+  `director.Evaluate()`の欠如による1Fポーズフラッシュだった
 
 ### 優先度低
 
