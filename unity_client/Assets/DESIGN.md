@@ -5063,6 +5063,23 @@ director.Evaluate(); // 即時評価で1Fポーズフラッシュを防止
 オーバーシュートを引き起こしていた。`director.Evaluate()`で根本原因を解消したため、
 フォールバック慣性補間は削除済み。
 
+#### Timeline終端境界条件によるポーズフラッシュ防止
+
+`director.time`がTimeline durationに正確に到達すると、AnimationTrackのクリップが
+clip.end境界でweight=0になり、Animatorがキャッシュされた古いポーズを1F出力する。
+
+EndPhase完了検出はUpdate内で行われるが、`director.time`はUpdate時点で**前フレームの
+Animator評価値**のため、Animatorが終端に到達するフレームでは検出が1F遅れる。
+
+これを防止するため、完了検出のマージンを2フレーム分に設定:
+```csharp
+double frameMargin = 2.0 / frameRate;
+if (currentTime >= assetDuration - frameMargin)
+    CompleteEndPhase();
+```
+edアニメーションの最終1-2Fはカットされるが、edの終端ポーズは次のステートの
+開始ポーズとほぼ同一のため視覚的な影響はない。
+
 #### 慣性補間のルール
 
 慣性補間（InertialBlend）はタイムライン作業者がIBトラックを明示的に配置した場合にのみ動作する。
@@ -6484,9 +6501,12 @@ if (!isPlaying && !isEditorPaused && currentTime >= endStartTime)
 
 **原因:** 完了判定のマージンが0.1秒（約6F）だった
 
-**解決:** 1フレーム分のマージンに変更
+**解決:** 2フレーム分のマージンに変更
 ```csharp
-double frameMargin = 1.0 / frameRate;  // 0.1秒 → 1F
+// 2フレーム分のマージン: Update時のdirector.timeは前フレームのAnimator評価値のため、
+// 1フレームマージンではAnimatorが終端に到達した後のUpdateでしか検出できず、
+// Timeline終端境界でクリップ外のポーズが1F描画される。
+double frameMargin = 2.0 / frameRate;
 if (currentTime >= expectedEndTime - frameMargin)
 ```
 
@@ -6907,6 +6927,8 @@ IDを生成していたが、`$"interact_{action}01"`（アクション名）に
 - ~~PlayState内のdirector.Stop()→Play()間の1Fギャップ~~ → `director.Evaluate()`で解消
 - ~~フォールバックIBによるオーバーシュート~~ → フォールバックIB自体を削除。根本原因は
   `director.Evaluate()`の欠如による1Fポーズフラッシュだった
+- ~~think_ed→talk_idle遷移時の間欠的1Fポーズフラッシュ~~ → Timeline終端境界条件。
+  EndPhase完了検出のframeMarginを1F→2Fに変更して解消
 
 ### 優先度低
 

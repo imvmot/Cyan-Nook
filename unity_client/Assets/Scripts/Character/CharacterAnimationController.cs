@@ -330,7 +330,10 @@ namespace CyanNook.Character
                 double assetDuration = director.playableAsset?.duration ?? 0;
                 var timelineAsset = director.playableAsset as TimelineAsset;
                 double frameRate = timelineAsset?.editorSettings.frameRate ?? DEFAULT_FRAME_RATE;
-                double frameMargin = 1.0 / frameRate;
+                // 2フレーム分のマージン: Update時のdirector.timeは前フレームのAnimator評価値のため、
+                // 1フレームマージンではAnimatorが終端に到達した後のUpdateでしか検出できず、
+                // Timeline終端境界でクリップ外のポーズが1F描画される（think_ed→talk_idle等で発生）。
+                double frameMargin = 2.0 / frameRate;
 
                 // Timeline終端に到達
                 if (currentTime >= assetDuration - frameMargin)
@@ -532,6 +535,14 @@ namespace CyanNook.Character
             else
             {
                 SetupInertialBlendTrack(timeline);
+
+                // Timeline切り替え時、古いIBが残っていればキャンセルする。
+                // 新しいIBはdirector.Evaluate()→MixerBehaviour.ProcessFrameで
+                // 再生位置にIBクリップがある場合にのみ自動開始される。
+                if (inertialBlendHelper != null && inertialBlendHelper.IsActive)
+                {
+                    inertialBlendHelper.CancelBlend();
+                }
             }
 
             // WrapMode設定
@@ -734,6 +745,10 @@ namespace CyanNook.Character
             SetupInteractionEnd(timeline);
             SetupCancelRegions(timeline);
             SetupInertialBlendTrack(timeline);
+            if (inertialBlendHelper != null && inertialBlendHelper.IsActive)
+            {
+                inertialBlendHelper.CancelBlend();
+            }
 
             // WrapMode設定
             // LoopRegionTrackがある場合はHold（クリップベースループ制御が優先）
@@ -1499,6 +1514,12 @@ namespace CyanNook.Character
         /// TimelineからInertialBlendTrackを検出し、InertialBlendHelperを起動
         /// </summary>
         /// <returns>InertialBlendTrackが見つかった場合true</returns>
+        /// <summary>
+        /// TimelineにInertialBlendTrackが含まれるかを返す。
+        /// IBの実際の開始はInertialBlendMixerBehaviour.ProcessFrame（director.Evaluate()経由）が行う。
+        /// これにより、再生開始位置にIBクリップがない場合（resumeAtLoop等）に
+        /// 不要なIBが開始されることを防ぐ。
+        /// </summary>
         private bool SetupInertialBlendTrack(TimelineAsset timeline)
         {
             if (inertialBlendHelper == null) return false;
@@ -1506,25 +1527,9 @@ namespace CyanNook.Character
 
             foreach (var track in timeline.GetOutputTracks())
             {
-                if (track is InertialBlendTrack inertialTrack)
+                if (track is InertialBlendTrack)
                 {
-                    // トラックからクリップの長さとボーンリストを取得
-                    float blendDuration = 0.3f;
-                    List<HumanBodyBones> targetBones = null;
-                    foreach (var clip in inertialTrack.GetClips())
-                    {
-                        blendDuration = (float)clip.duration;
-                        var inertialClip = clip.asset as InertialBlendClip;
-                        if (inertialClip != null)
-                        {
-                            targetBones = inertialClip.targetBones;
-                        }
-                        break; // 最初のクリップのみ使用
-                    }
-
-                    inertialBlendHelper.StartInertialBlend(blendDuration, targetBones);
-                    Debug.Log($"[CharacterAnimationController] Started InertialBlendHelper with duration={blendDuration}");
-                    return true; // 最初のInertialBlendTrackのみ処理
+                    return true;
                 }
             }
             return false;
