@@ -34,7 +34,7 @@ namespace CyanNook.Timeline
     /// <summary>
     /// Inertial Blend Mixer Behaviour
     /// Timeline再生中にクリップ位置に到達したらInertialBlendHelperを起動する。
-    /// SetupInertialBlendTrackで処理される最初のクリップ以外（lp→ed遷移用等）を担当。
+    /// director.Evaluate()経由でProcessFrameが呼ばれ、クリップ位置到達時にIBを開始する。
     /// </summary>
     public class InertialBlendMixerBehaviour : PlayableBehaviour
     {
@@ -79,7 +79,7 @@ namespace CyanNook.Timeline
                 float duration = (float)inputPlayable.GetDuration();
 
                 // IBがすでにアクティブなら重複開始しない
-                // （SetupInertialBlendTrackで最初のクリップが既に開始されている場合）
+                // （同一フレーム内で既にIBが開始されている場合は重複開始しない）
                 if (!_helper.IsActive)
                 {
                     var behaviour = inputPlayable.GetBehaviour();

@@ -49,10 +49,6 @@ namespace CyanNook.Character
         [Tooltip("ステートごとのTimelineアセット")]
         public TimelineBindingData timelineBindings;
 
-        [Header("Settings")]
-        [Tooltip("アニメーション遷移のブレンド時間")]
-        public float defaultBlendTime = 0.25f;
-
         [Header("Emote Hold")]
         [Tooltip("テキスト表示完了後、emoteループを維持する時間（秒）。この時間経過後にedモーションを再生して終了")]
         public float emoteHoldDuration = 5f;
@@ -534,7 +530,7 @@ namespace CyanNook.Character
             }
             else
             {
-                SetupInertialBlendTrack(timeline);
+                HasInertialBlendTrack(timeline);
 
                 // Timeline切り替え時、古いIBが残っていればキャンセルする。
                 // 新しいIBはdirector.Evaluate()→MixerBehaviour.ProcessFrameで
@@ -744,7 +740,7 @@ namespace CyanNook.Character
             SetupLoopRegion(timeline);
             SetupInteractionEnd(timeline);
             SetupCancelRegions(timeline);
-            SetupInertialBlendTrack(timeline);
+            HasInertialBlendTrack(timeline);
             if (inertialBlendHelper != null && inertialBlendHelper.IsActive)
             {
                 inertialBlendHelper.CancelBlend();
@@ -1511,16 +1507,12 @@ namespace CyanNook.Character
         // --- InertialBlend制御メソッド ---
 
         /// <summary>
-        /// TimelineからInertialBlendTrackを検出し、InertialBlendHelperを起動
-        /// </summary>
-        /// <returns>InertialBlendTrackが見つかった場合true</returns>
-        /// <summary>
         /// TimelineにInertialBlendTrackが含まれるかを返す。
         /// IBの実際の開始はInertialBlendMixerBehaviour.ProcessFrame（director.Evaluate()経由）が行う。
         /// これにより、再生開始位置にIBクリップがない場合（resumeAtLoop等）に
         /// 不要なIBが開始されることを防ぐ。
         /// </summary>
-        private bool SetupInertialBlendTrack(TimelineAsset timeline)
+        private bool HasInertialBlendTrack(TimelineAsset timeline)
         {
             if (inertialBlendHelper == null) return false;
             if (timeline == null) return false;

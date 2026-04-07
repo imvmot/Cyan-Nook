@@ -139,7 +139,7 @@ namespace CyanNook.Timeline
         {
             if (targetBones == null || targetBones.Count == 0)
             {
-                StartInertialBlend(duration);
+                Debug.LogWarning("[InertialBlendHelper] StartInertialBlend called with no target bones");
                 return;
             }
 
@@ -204,121 +204,6 @@ namespace CyanNook.Timeline
                 Debug.LogWarning("[InertialBlendHelper] No valid bones found, cannot start inertial blend");
                 return;
             }
-
-            BeginBlend(duration);
-        }
-
-        /// <summary>
-        /// 慣性補間を開始（全Humanoidボーン、目・顎を除く）
-        /// InertialBlendTrackが無いTimeline遷移時のフォールバックとして使用
-        /// </summary>
-        /// <param name="duration">ブレンド時間（秒）</param>
-        public void StartInertialBlendAllBones(float duration = DEFAULT_BLEND_DURATION)
-        {
-            if (_boneTransformCache == null || _boneTransformCache.Count == 0)
-            {
-                Debug.LogWarning("[InertialBlendHelper] Bone transform cache is empty, cannot start inertial blend");
-                return;
-            }
-
-            // 旧IBのビジュアル状態を保存（RestoreCleanIfActiveで消える前に）
-            CaptureVisualStateIfActive();
-            // 前回のブレンドが動作中の場合、クリーン値に復元してからオフセット汚染を除去
-            RestoreCleanIfActive();
-
-            // キャッシュ内の全ボーンを対象（目・顎を除く、InertialBlendClipと同じ）
-            _bones = new BoneBlendData[_boneTransformCache.Count];
-            _boneCount = 0;
-            foreach (var kvp in _boneTransformCache)
-            {
-                var bone = kvp.Key;
-                var t = kvp.Value;
-                if (t == null) continue;
-                if (bone == HumanBodyBones.LeftEye || bone == HumanBodyBones.RightEye || bone == HumanBodyBones.Jaw)
-                    continue;
-
-                _bones[_boneCount].transform = t;
-
-                // 旧IBのビジュアル状態があればそれを使用（旧IBオフセット消失ジャンプ防止）
-                // なければクリーンポーズキャッシュ（通常の新規IB）
-                if (_oldVisualState.TryGetValue(t, out var visualPose))
-                {
-                    _bones[_boneCount].previousLocalPosition = visualPose.localPos;
-                    _bones[_boneCount].previousLocalRotation = visualPose.localRot;
-                }
-                else if (_lastCleanPose.TryGetValue(t, out var cleanPose))
-                {
-                    _bones[_boneCount].previousLocalPosition = cleanPose.localPos;
-                    _bones[_boneCount].previousLocalRotation = cleanPose.localRot;
-                }
-                else
-                {
-                    _bones[_boneCount].previousLocalPosition = t.localPosition;
-                    _bones[_boneCount].previousLocalRotation = t.localRotation;
-                }
-
-                // 速度計算用: _prevCleanPose（2フレーム前）をUpdate時点で保存
-                if (_prevCleanPose.TryGetValue(t, out var prevPrev))
-                {
-                    _bones[_boneCount].prevPrevLocalPosition = prevPrev.localPos;
-                    _bones[_boneCount].prevPrevLocalRotation = prevPrev.localRot;
-                    _bones[_boneCount].hasPrevPrev = true;
-                }
-                else
-                {
-                    _bones[_boneCount].hasPrevPrev = false;
-                }
-                _boneCount++;
-            }
-
-            if (_boneCount == 0)
-            {
-                Debug.LogWarning("[InertialBlendHelper] No valid bones found, cannot start inertial blend");
-                return;
-            }
-
-            BeginBlend(duration);
-        }
-
-        /// <summary>
-        /// 慣性補間を開始（Hipsのみ、後方互換用）
-        /// Timeline再生前に呼び出す
-        /// </summary>
-        /// <param name="duration">ブレンド時間（秒）</param>
-        public void StartInertialBlend(float duration = DEFAULT_BLEND_DURATION)
-        {
-            if (_boneTransformCache == null || !_boneTransformCache.ContainsKey(HumanBodyBones.Hips))
-            {
-                Debug.LogWarning("[InertialBlendHelper] Hips bone not found in cache, cannot start inertial blend");
-                return;
-            }
-
-            // 旧IBのビジュアル状態を保存（RestoreCleanIfActiveで消える前に）
-            CaptureVisualStateIfActive();
-            // 前回のブレンドが動作中の場合、クリーン値に復元してからオフセット汚染を除去
-            RestoreCleanIfActive();
-
-            var hipsTransform = _boneTransformCache[HumanBodyBones.Hips];
-
-            _bones = new BoneBlendData[1];
-            _bones[0].transform = hipsTransform;
-            // 旧IBのビジュアル状態があればそれを使用（旧IBオフセット消失ジャンプ防止）
-            if (_oldVisualState.TryGetValue(hipsTransform, out var visualPose))
-            {
-                _bones[0].previousLocalPosition = visualPose.localPos;
-                _bones[0].previousLocalRotation = visualPose.localRot;
-            }
-            else if (_lastCleanPose.TryGetValue(hipsTransform, out var cleanPose))
-            {
-                _bones[0].previousLocalPosition = cleanPose.localPos;
-                _bones[0].previousLocalRotation = cleanPose.localRot;
-            }
-            else
-            {
-                _bones[0].previousLocalPosition = hipsTransform.localPosition;
-                _bones[0].previousLocalRotation = hipsTransform.localRotation;
-            }
-            _boneCount = 1;
 
             BeginBlend(duration);
         }
@@ -434,23 +319,6 @@ namespace CyanNook.Timeline
                     _lastCleanPose[t] = (t.localPosition, t.localRotation);
                 }
             }
-        }
-
-        /// <summary>
-        /// ブレンドを完了し、全ボーンをクリーン位置に戻してアイドル状態に遷移する。
-        /// PrePassパスと通常パスの両方から呼ばれる共通完了処理。
-        /// </summary>
-        private void CompleteBlend()
-        {
-            for (int i = 0; i < _boneCount; i++)
-            {
-                _bones[i].transform.localPosition = _bones[i].cleanLocalPosition;
-                _bones[i].transform.localRotation = _bones[i].cleanLocalRotation;
-            }
-            _isOffsetApplied = false;
-            _state = State.Idle;
-            _isActive = false;
-            Debug.Log("[InertialBlendHelper] Blend completed");
         }
 
         /// <summary>
@@ -575,11 +443,6 @@ namespace CyanNook.Timeline
         public bool IsActive => _isActive;
 
         /// <summary>
-        /// 現在アクティブなブレンドの残り時間（非アクティブ時は0）
-        /// </summary>
-        public float RemainingDuration => _isActive ? Mathf.Max(0f, _blendDuration - _elapsedTime) : 0f;
-
-        /// <summary>
         /// 動作中の慣性補間をキャンセルする。
         /// オフセットが適用済みの場合はクリーン値に復元してから停止する。
         /// </summary>
@@ -683,10 +546,6 @@ namespace CyanNook.Timeline
 
         #region Core Logic
 
-        /// <summary>
-        /// 慣性補間の初期化（ローカル座標）
-        /// 全ボーンのオフセットを計算
-        /// </summary>
         /// <summary>
         /// 角度を-π～+πに正規化
         /// </summary>
