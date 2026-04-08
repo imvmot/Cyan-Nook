@@ -6923,7 +6923,7 @@ IDを生成していたが、`$"interact_{action}01"`（アクション名）に
 チャット開始時などのTimeline切り替え時に、まれに髪や揺れ物が1〜数フレーム大きく動くことがある。
 
 **対処済みのケース:**
-- IB開始時のWaitingFirstFrame/SecondFrame → PrePassで前ポーズをSpringBone前に適用
+- IB開始時のWaitingFirstFrame → PrePassで前ポーズをSpringBone前に適用
 - ~~IB Blending中のポーズ変化~~ → PrePassをBlending状態にも拡張し、IB全期間にわたって
   SpringBoneがIB補正済みポーズで計算するように修正済み
 - ~~lp→ed遷移のポーズポップ~~ → `director.Evaluate()`による即時評価で解消（以前のIBスムージングは削除）
@@ -6932,6 +6932,25 @@ IDを生成していたが、`$"interact_{action}01"`（アクション名）に
   `director.Evaluate()`の欠如による1Fポーズフラッシュだった
 - ~~think_ed→talk_idle遷移時の間欠的1Fポーズフラッシュ~~ → Timeline終端境界条件。
   EndPhase完了検出のframeMarginを1F→2Fに変更して解消
+
+**既知の制限: AdditiveOverride停止時のSpringBone揺れ**
+
+Interact中のThinking/Emote終了時（ForceStopThinkingToEnd等）に、AO停止+Timeline切り替えが
+同一フレームで発生し、髪・揺れ物が数フレーム大きく揺れることがある。体の遷移はIBにより滑らか。
+
+**原因:** PrePassが復元するsnapshot（AO/LookAt処理後の最終レンダリングポーズ）と、
+SpringBone(11010)が前フレームで見ていたポーズ（ControlRig出力後の「生」ポーズ、11010時点）の間に
+実行順序差分がある。SpringBoneにとっては1Fのポーズジャンプとなり、スプリング反応が発生する。
+
+IB/PrePassでの根本修正はスナップショットの2層管理が必要で複雑化するため、
+アニメーション側の工夫で影響を最小化する方針とする。
+
+**アニメーション制作時の緩和策:**
+- **IBクリップを長めに設定** — 遷移が緩やかになりSpringBone反応が穏やかになる（最も効果的）
+- **Think/Emote中の頭・首の動きを抑えめに** — 髪SpringBoneは頭ボーンが根元のため、
+  頭の位置変化が直接揺れ量に影響する。体の傾きは上半身全体で分散させる
+- **st/edの開始・終了ポーズを前後ステートに近づける** — IB補間量が減り間接的にSpringBone影響も減る
+- **additiveBones設定でHead/Neckを外すことも検討** — 頭の動きをベースポーズに固定（演技制限とのトレードオフ）
 
 ### 優先度低
 
