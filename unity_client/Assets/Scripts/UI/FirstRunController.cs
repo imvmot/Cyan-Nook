@@ -105,6 +105,7 @@ namespace CyanNook.UI
         {
             _onComplete = onComplete;
             _isShowing = true;
+            IsPending = true;
             _webLLMSelected = false;
             _downloadOnlyMode = false;
 
@@ -149,8 +150,9 @@ namespace CyanNook.UI
         /// </summary>
         public void Complete()
         {
-            if (!_isShowing) return;
+            if (!_isShowing && !IsPending) return;
             _isShowing = false;
+            IsPending = false;
 
             if (popupPanel != null)
                 popupPanel.SetActive(false);
@@ -187,6 +189,13 @@ namespace CyanNook.UI
         /// 表示中かどうか
         /// </summary>
         public bool IsShowing => _isShowing;
+
+        /// <summary>
+        /// 初期設定が完了していない（Show()後、Complete()前）。
+        /// IsShowingと異なり、Noスキップ後（ポップアップ非表示だが設定未完了）もtrueを返す。
+        /// IdleChatController等で初期設定完了前のリクエスト抑制に使用する。
+        /// </summary>
+        public bool IsPending { get; private set; }
 
         /// <summary>
         /// WebLLMが選択されたかどうか

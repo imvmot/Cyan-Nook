@@ -2661,6 +2661,7 @@ namespace: `CyanNook.Chat`
 | フィールド | 型 | デフォルト | 説明 |
 |-----------|-----|---------|------|
 | `chatManager` | `ChatManager` | - | ChatManager参照 |
+| `firstRunController` | `FirstRunController` | - | 初期設定コントローラー（IsPending中はリクエスト抑制） |
 | `autoRequestEnabled` | `bool` | `false` | 自律リクエストの有効/無効 |
 | `cooldownDuration` | `float` | `10` | 応答完了後、次のリクエストまでの待機秒数 |
 | `idlePromptMessage` | `string` | (下記参照) | LLMに送るシステムメッセージ |
@@ -2671,6 +2672,12 @@ namespace: `CyanNook.Chat`
 | `OnUserMessageSent()` | ユーザー入力時にタイマーリセット |
 | `SetCooldownDuration(float)` | クールダウン時間を設定。PlayerPrefs に保存 |
 | `SetIdlePromptMessage(string)` | 自律リクエストメッセージを設定。PlayerPrefs に保存 |
+
+#### 初期設定完了前の抑制
+
+`FirstRunController.IsPending`がtrueの間（Show()後〜Complete()前）、`SendAutoRequest()`はリクエストを送信しない。
+Noスキップ後もIsPendingはtrueのままで、設定パネルから保存完了→Complete()が呼ばれるまで抑制が継続する。
+これにより、キャラクター未表示の状態でidleChatが暴発することを防ぐ。
 
 #### 状態フロー
 
@@ -4454,7 +4461,7 @@ CharacterSetup.OnVrmLoaded()
 | クラス | 役割 |
 |--------|------|
 | `RoomLightController` | ライトON/OFF + マテリアルEmission + ベイク済みLightmap連動。`startOff`で起動時消灯。LightControlTrack経由で制御 |
-| `FirstRunController` | ポップアップUI表示、Yes/Noボタン処理、WebLLMダウンロード進捗表示 |
+| `FirstRunController` | ポップアップUI表示、Yes/Noボタン処理、WebLLMダウンロード進捗表示。`IsPending`でShow()〜Complete()間の未完了状態を公開（IdleChatController等で抑制に使用） |
 | `CharacterSetup` | `firstRunController`/`llmSettingsPanel`参照保持、初回判定によるEntry抑制、`PlayEntryOrIdle()`でEntry開始 |
 | `LLMSettingsPanel` | `OnLLMConfigured`イベント、WebLLM選択時のUI制御、`firstRunController`参照によるダウンロードフロー連携 |
 

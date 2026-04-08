@@ -1,5 +1,6 @@
 using UnityEngine;
 using CyanNook.Core;
+using CyanNook.UI;
 
 namespace CyanNook.Chat
 {
@@ -17,6 +18,9 @@ namespace CyanNook.Chat
 
         [Header("References")]
         public ChatManager chatManager;
+
+        [Tooltip("初期設定コントローラー（表示中はidleChatを抑制）")]
+        public FirstRunController firstRunController;
 
         [Header("Settings")]
         [Tooltip("自律リクエストを有効にする")]
@@ -195,6 +199,13 @@ namespace CyanNook.Chat
             if (chatManager == null || chatManager.CurrentState != ChatState.Idle)
             {
                 // チャットがビジー状態ならリトライ（次フレームで再チェック）
+                return;
+            }
+
+            // 初期設定が完了していない場合はリクエストを抑制
+            // （Noスキップ後もIsPending=trueのため、設定完了まで抑制される）
+            if (firstRunController != null && firstRunController.IsPending)
+            {
                 return;
             }
 
