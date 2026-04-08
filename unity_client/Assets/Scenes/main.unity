@@ -37184,7 +37184,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: ScreenCap
+  m_text: Screen Capture
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 00fd06fabdab9af4ebc96979689e4f22, type: 2}
   m_sharedMaterial: {fileID: 2881308192036439566, guid: 00fd06fabdab9af4ebc96979689e4f22, type: 2}
@@ -37211,18 +37211,18 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 36
-  m_fontSizeBase: 36
+  m_fontSize: 32
+  m_fontSizeBase: 32
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
   m_fontSizeMax: 72
   m_fontStyle: 0
   m_HorizontalAlignment: 1
-  m_VerticalAlignment: 256
+  m_VerticalAlignment: 512
   m_textAlignment: 65535
   m_characterSpacing: -8
-  m_characterHorizontalScale: 1
+  m_characterHorizontalScale: 0.8
   m_wordSpacing: 0
   m_lineSpacing: 0
   m_lineSpacingMax: 0
@@ -51611,6 +51611,8 @@ MonoBehaviour:
   entryPromptInputField: {fileID: 1490918074}
   webCamToggle: {fileID: 1735629915}
   screenCaptureToggle: {fileID: 642773237}
+  screenCaptureLabelText: {fileID: 1233773338}
+  screenCaptureMobileLabel: Rear Camera
   screenCapturePreviewImage: {fileID: 861005137}
   difyAnnotationText: {fileID: 1660858750}
   saveButton: {fileID: 356931163}

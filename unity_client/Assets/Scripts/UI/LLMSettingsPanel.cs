@@ -142,11 +142,17 @@ namespace CyanNook.UI
         [Tooltip("Webカメラ表示切替")]
         public Toggle webCamToggle;
 
-        [Header("UI - Screen Capture")]
-        [Tooltip("画面キャプチャ表示切替")]
+        [Header("UI - Screen Capture / Mobile Camera")]
+        [Tooltip("画面キャプチャ/カメラ表示切替")]
         public Toggle screenCaptureToggle;
 
-        [Tooltip("画面キャプチャプレビュー表示用RawImage")]
+        [Tooltip("PC時のラベルテキスト（null可 = 変更しない）")]
+        public TMP_Text screenCaptureLabelText;
+
+        [Tooltip("モバイル時に表示するラベル文字列")]
+        public string screenCaptureMobileLabel = "Rear Camera";
+
+        [Tooltip("画面キャプチャ/カメラプレビュー表示用RawImage")]
         public RawImage screenCapturePreviewImage;
 
         [Header("UI - Annotations")]
@@ -825,6 +831,23 @@ namespace CyanNook.UI
             {
                 screenCaptureToggle.isOn = screenCaptureDisplayController != null && screenCaptureDisplayController.IsPlaying;
                 screenCaptureToggle.onValueChanged.AddListener(OnScreenCaptureToggleChanged);
+
+                // モバイルではトグルラベルとテキストを変更
+                if (screenCaptureDisplayController != null && screenCaptureDisplayController.IsMobileMode)
+                {
+                    // トグル内ラベル
+                    var toggleLabel = screenCaptureToggle.GetComponentInChildren<TMP_Text>();
+                    if (toggleLabel != null)
+                    {
+                        toggleLabel.text = screenCaptureMobileLabel;
+                    }
+
+                    // 別途配置されたラベルテキスト
+                    if (screenCaptureLabelText != null)
+                    {
+                        screenCaptureLabelText.text = screenCaptureMobileLabel;
+                    }
+                }
             }
 
             // 既にキャプチャ中の場合はプレビューを表示
@@ -865,12 +888,14 @@ namespace CyanNook.UI
 
             if (screenCaptureDisplayController != null && screenCaptureDisplayController.IsPlaying)
             {
-                var tex = screenCaptureDisplayController.GetTexture();
+                var tex = screenCaptureDisplayController.GetPreviewTexture();
                 if (tex != null)
                 {
                     screenCapturePreviewImage.texture = tex;
-                    // ブラウザCanvasのY軸反転を補正（UV Rectで上下反転）
-                    screenCapturePreviewImage.uvRect = new Rect(0, 1, 1, -1);
+                    // PC: ブラウザCanvasのY軸反転を補正。モバイル: WebCamTextureは反転不要
+                    screenCapturePreviewImage.uvRect = screenCaptureDisplayController.IsMobileMode
+                        ? new Rect(0, 0, 1, 1)
+                        : new Rect(0, 1, 1, -1);
                     screenCapturePreviewImage.gameObject.SetActive(true);
                     return;
                 }
@@ -890,10 +915,13 @@ namespace CyanNook.UI
 
                 if (screenCaptureDisplayController != null && screenCaptureDisplayController.IsPlaying)
                 {
-                    var tex = screenCaptureDisplayController.GetTexture();
+                    var tex = screenCaptureDisplayController.GetPreviewTexture();
                     if (tex != null && screenCapturePreviewImage != null)
                     {
                         screenCapturePreviewImage.texture = tex;
+                        screenCapturePreviewImage.uvRect = screenCaptureDisplayController.IsMobileMode
+                            ? new Rect(0, 0, 1, 1)
+                            : new Rect(0, 1, 1, -1);
                         screenCapturePreviewImage.gameObject.SetActive(true);
                         Debug.Log("[LLMSettingsPanel] Screen capture preview initialized");
                         _screenCapturePreviewRetryCoroutine = null;

@@ -6,7 +6,10 @@ namespace CyanNook.Core
 {
     /// <summary>
     /// ユーザーのデスクトップ/ウィンドウ画面をキャプチャし、シーン内のQuad（MeshRenderer）に表示する
-    /// ブラウザのScreen Capture API（getDisplayMedia）を使用
+    ///
+    /// PC: ブラウザのScreen Capture API（getDisplayMedia）を使用
+    /// モバイル: Screen Capture APIが非対応のため、背面カメラ（WebCamTexture）にフォールバック
+    ///
     /// WebCamDisplayControllerと同様に、キャラクターカメラがこのQuadを含むシーンをレンダリングすることで
     /// LLMがユーザーの画面を認識できるようになる
     /// </summary>
@@ -43,6 +46,15 @@ namespace CyanNook.Core
 
         [DllImport("__Internal")]
         private static extern int ScreenCapture_GetBufferSize();
+
+        [DllImport("__Internal")]
+        private static extern void MobileCamera_FindRearCamera();
+
+        [DllImport("__Internal")]
+        private static extern int MobileCamera_IsReady();
+
+        [DllImport("__Internal")]
+        private static extern string MobileCamera_GetLabel();
 #endif
 
         [Header("Capture Settings")]
@@ -64,14 +76,31 @@ namespace CyanNook.Core
         private int _captureWidth;
         private int _captureHeight;
 
+        // モバイル背面カメラ用
+        private WebCamTexture _webCamTexture;
+        private bool _isMobileMode;
+        private float _mobileCameraTimeout;
+        private const float MOBILE_CAMERA_TIMEOUT_SEC = 5f;
+
         /// <summary>
-        /// 画面キャプチャが再生中かどうか
+        /// モバイルデバイスかどうか（Screen Capture API非対応 → 背面カメラにフォールバック）
+        /// </summary>
+        public bool IsMobileMode => _isMobileMode;
+
+        /// <summary>
+        /// 画面キャプチャ（またはモバイル背面カメラ）が再生中かどうか
         /// </summary>
         public bool IsPlaying => _isCapturing;
 
         private void Start()
         {
             _renderer = GetComponent<Renderer>();
+            _isMobileMode = Application.isMobilePlatform;
+
+            if (_isMobileMode)
+            {
+                Debug.Log("[ScreenCaptureDisplayController] Mobile detected, using rear camera mode");
+            }
 
             LoadSettings();
 
@@ -98,13 +127,21 @@ namespace CyanNook.Core
         }
 
         /// <summary>
-        /// 画面キャプチャを開始（ブラウザの画面共有ダイアログが表示される）
+        /// キャプチャを開始
+        /// PC: ブラウザの画面共有ダイアログが表示される
+        /// モバイル: 背面カメラを起動
         /// </summary>
         public void StartCapture()
         {
             if (_isCapturing || _waitingForCapture)
             {
                 Debug.Log("[ScreenCaptureDisplayController] Already capturing");
+                return;
+            }
+
+            if (_isMobileMode)
+            {
+                StartMobileCamera();
                 return;
             }
 
@@ -118,10 +155,16 @@ namespace CyanNook.Core
         }
 
         /// <summary>
-        /// 画面キャプチャを停止
+        /// キャプチャを停止
         /// </summary>
         public void StopCapture()
         {
+            if (_isMobileMode)
+            {
+                StopMobileCamera();
+                return;
+            }
+
 #if UNITY_WEBGL && !UNITY_EDITOR
             ScreenCapture_Stop();
 #endif
@@ -185,6 +228,27 @@ namespace CyanNook.Core
 
         private void Update()
         {
+            // モバイルカメラ: jslibのenumerateDevices結果をポーリング
+            if (_isMobileMode && _waitingForCapture)
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                if (MobileCamera_IsReady() == 1)
+                {
+                    string label = MobileCamera_GetLabel();
+                    Debug.Log($"[ScreenCaptureDisplayController] Rear camera search complete: \"{label}\"");
+                    StartMobileCameraWithDevice(label);
+                    return;
+                }
+#endif
+                _mobileCameraTimeout -= Time.deltaTime;
+                if (_mobileCameraTimeout <= 0f)
+                {
+                    Debug.LogWarning("[ScreenCaptureDisplayController] Mobile camera search timeout, using default");
+                    StartMobileCameraWithDevice("");
+                }
+                return;
+            }
+
 #if UNITY_WEBGL && !UNITY_EDITOR
             // SendMessageが届かなかった場合のフォールバック：jslib側の状態をポーリング
             if (_waitingForCapture && !_isCapturing)
@@ -257,7 +321,15 @@ namespace CyanNook.Core
         /// </summary>
         public string CaptureImageAsBase64(int jpegQuality = 75)
         {
-            if (!_isCapturing || _texture == null) return null;
+            if (!_isCapturing) return null;
+
+            // モバイル背面カメラモード
+            if (_isMobileMode)
+            {
+                return CaptureMobileCameraAsBase64(jpegQuality);
+            }
+
+            if (_texture == null) return null;
 
             // ブラウザCanvasのY座標系がUnity Texture2Dと逆のため、上下反転してからエンコード
             int width = _texture.width;
@@ -287,13 +359,151 @@ namespace CyanNook.Core
 
         /// <summary>
         /// 現在のキャプチャテクスチャを取得（UIプレビュー用）
+        /// モバイルモードではWebCamTextureを直接返す（自動更新されるためリアルタイムプレビュー可能）
+        /// PC: Texture2D（Update()で毎フレーム更新）
         /// </summary>
-        public Texture2D GetTexture() => _texture;
+        public Texture GetPreviewTexture()
+        {
+            if (_isMobileMode)
+                return _webCamTexture;
+            return _texture;
+        }
+
+        // ─────────────────────────────────────
+        // モバイル背面カメラ
+        // ─────────────────────────────────────
+
+        private void StartMobileCamera()
+        {
+            _waitingForCapture = true;
+            _mobileCameraTimeout = MOBILE_CAMERA_TIMEOUT_SEC;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // jslib経由でenumerateDevices()を使って背面カメラを検索（結果はポーリング取得）
+            MobileCamera_FindRearCamera();
+#else
+            // エディタではisFrontFacingベースのフォールバック
+            StartMobileCameraWithDevice(FindRearCameraDeviceFallback() ?? "");
+#endif
+        }
+
+        /// <summary>
+        /// 背面カメラデバイスラベルでWebCamTextureを起動する
+        /// </summary>
+        private void StartMobileCameraWithDevice(string deviceLabel)
+        {
+            _waitingForCapture = false;
+
+            if (string.IsNullOrEmpty(deviceLabel))
+            {
+                // 背面カメラが見つからない場合はデフォルトカメラを使用
+                _webCamTexture = new WebCamTexture(maxWidth, maxHeight, 15);
+                Debug.Log("[ScreenCaptureDisplayController] Rear camera not found, using default camera");
+            }
+            else
+            {
+                _webCamTexture = new WebCamTexture(deviceLabel, maxWidth, maxHeight, 15);
+                Debug.Log($"[ScreenCaptureDisplayController] Using rear camera: {deviceLabel}");
+            }
+
+            _webCamTexture.Play();
+            _isCapturing = true;
+
+            SetupMobileCameraMaterial();
+
+            Debug.Log($"[ScreenCaptureDisplayController] Mobile camera started: {_webCamTexture.deviceName}");
+        }
+
+        private void StopMobileCamera()
+        {
+            if (_webCamTexture != null)
+            {
+                _webCamTexture.Stop();
+                Destroy(_webCamTexture);
+                _webCamTexture = null;
+            }
+
+            _isCapturing = false;
+
+            if (_renderer != null)
+            {
+                _renderer.enabled = false;
+            }
+
+            Debug.Log("[ScreenCaptureDisplayController] Mobile camera stopped");
+        }
+
+        /// <summary>
+        /// isFrontFacingベースの背面カメラ検索（エディタ用フォールバック）
+        /// iOS WebGLではisFrontFacingが信頼できないため、本番ではjslib経由で検索する
+        /// </summary>
+        private string FindRearCameraDeviceFallback()
+        {
+            foreach (var device in WebCamTexture.devices)
+            {
+                if (!device.isFrontFacing)
+                {
+                    return device.name;
+                }
+            }
+            return null;
+        }
+
+        private void SetupMobileCameraMaterial()
+        {
+            if (_renderer == null || _webCamTexture == null) return;
+
+            if (_material == null)
+            {
+                var shader = Shader.Find("Unlit/Texture");
+                if (shader == null)
+                {
+                    Debug.LogError("[ScreenCaptureDisplayController] Shader 'Unlit/Texture' not found");
+                    return;
+                }
+                _material = new Material(shader);
+            }
+
+            _material.mainTexture = _webCamTexture;
+            // 背面カメラはミラー不要、Y軸反転もなし
+            _material.mainTextureScale = new Vector2(1, 1);
+            _material.mainTextureOffset = new Vector2(0, 0);
+
+            _renderer.material = _material;
+            _renderer.enabled = true;
+        }
+
+        private string CaptureMobileCameraAsBase64(int jpegQuality)
+        {
+            if (_webCamTexture == null || !_webCamTexture.isPlaying) return null;
+
+            int width = _webCamTexture.width;
+            int height = _webCamTexture.height;
+
+            var captureTex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+            captureTex.SetPixels(_webCamTexture.GetPixels());
+            byte[] jpegBytes = captureTex.EncodeToJPG(jpegQuality);
+            Destroy(captureTex);
+
+            string base64 = Convert.ToBase64String(jpegBytes);
+            Debug.Log($"[ScreenCaptureDisplayController] Mobile camera captured: {width}x{height}, base64 length={base64.Length}");
+            return base64;
+        }
+
+        // ─────────────────────────────────────
 
         private void OnDestroy()
         {
+            // モバイルカメラのクリーンアップ
+            if (_webCamTexture != null)
+            {
+                _webCamTexture.Stop();
+                Destroy(_webCamTexture);
+                _webCamTexture = null;
+            }
+
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (_isCapturing)
+            if (_isCapturing && !_isMobileMode)
             {
                 ScreenCapture_Stop();
             }
