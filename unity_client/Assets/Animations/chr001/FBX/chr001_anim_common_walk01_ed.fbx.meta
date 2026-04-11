@@ -21,14 +21,15 @@ ModelImporter:
       warnings that might lower retargeting quality:\nNote: Activate translation
       DOF on avatar to improve retargeting quality.\n\t'J_Bip_L_UpperArm' has scale
       animation that will be discarded.\n\t'J_Bip_L_LowerArm' has scale animation
-      that will be discarded.\n\t'J_Bip_L_Little1' has translation animation that
-      will be discarded.\n\t'J_Bip_L_Middle1' has translation animation that will
-      be discarded.\n\t'J_Bip_L_Ring1' has translation animation that will be discarded.\n\t'J_Bip_R_UpperArm'
-      has scale animation that will be discarded.\n\t'J_Bip_R_LowerArm' has scale
-      animation that will be discarded.\n\t'J_Bip_R_Hand' has translation animation
-      that will be discarded.\n\t'J_Bip_R_Little1' has translation animation that
-      will be discarded.\n\t'J_Bip_R_Middle1' has translation animation that will
-      be discarded.\n\t'J_Bip_R_Ring1' has translation animation that will be discarded.\n"
+      that will be discarded.\n\t'J_Bip_L_Hand' has translation animation that will
+      be discarded.\n\t'J_Bip_L_Little1' has translation animation that will be discarded.\n\t'J_Bip_L_Middle1'
+      has translation animation that will be discarded.\n\t'J_Bip_L_Ring1' has translation
+      animation that will be discarded.\n\t'J_Bip_R_UpperArm' has scale animation
+      that will be discarded.\n\t'J_Bip_R_LowerArm' has scale animation that will
+      be discarded.\n\t'J_Bip_R_Hand' has translation animation that will be discarded.\n\t'J_Bip_R_Little1'
+      has translation animation that will be discarded.\n\t'J_Bip_R_Middle1' has
+      translation animation that will be discarded.\n\t'J_Bip_R_Ring1' has translation
+      animation that will be discarded.\n"
     animationRetargetingWarnings: 
     animationDoRetargetingWarnings: 0
     importAnimatedCustomProperties: 0

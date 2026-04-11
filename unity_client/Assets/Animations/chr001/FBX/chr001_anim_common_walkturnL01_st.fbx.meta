@@ -19,13 +19,12 @@ ModelImporter:
     animationImportErrors: 
     animationImportWarnings: "\nClip 'chr001_anim_common_walkturnL01_st' has import
       animation warnings that might lower retargeting quality:\nNote: Activate translation
-      DOF on avatar to improve retargeting quality.\n\t'J_Bip_L_UpperArm' has scale
-      animation that will be discarded.\n\t'J_Bip_L_Hand' has translation animation
-      that will be discarded.\n\t'J_Bip_L_Little1' has translation animation that
-      will be discarded.\n\t'J_Bip_L_Middle1' has translation animation that will
-      be discarded.\n\t'J_Bip_L_Ring1' has translation animation that will be discarded.\n\t'J_Bip_R_Little1'
-      has translation animation that will be discarded.\n\t'J_Bip_R_Middle1' has
-      translation animation that will be discarded.\n\t'J_Bip_R_Ring1' has translation
+      DOF on avatar to improve retargeting quality.\n\t'J_Bip_L_Hand' has translation
+      animation that will be discarded.\n\t'J_Bip_L_Little1' has translation animation
+      that will be discarded.\n\t'J_Bip_L_Middle1' has translation animation that
+      will be discarded.\n\t'J_Bip_L_Ring1' has translation animation that will be
+      discarded.\n\t'J_Bip_R_Little1' has translation animation that will be discarded.\n\t'J_Bip_R_Middle1'
+      has translation animation that will be discarded.\n\t'J_Bip_R_Ring1' has translation
       animation that will be discarded.\n"
     animationRetargetingWarnings: 
     animationDoRetargetingWarnings: 0
