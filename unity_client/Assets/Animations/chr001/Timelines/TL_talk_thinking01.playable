@@ -1311,7 +1311,7 @@ MonoBehaviour:
   enableChest: 0
   chestAngleLimitX: 5
   chestAngleLimitY: 5
-  blendFrames: 10
+  blendFrames: 90
 --- !u!114 &11400000
 MonoBehaviour:
   m_ObjectHideFlags: 0
