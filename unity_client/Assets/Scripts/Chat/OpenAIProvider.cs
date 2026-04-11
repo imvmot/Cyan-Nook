@@ -20,9 +20,9 @@ namespace CyanNook.Chat
 
         public IEnumerator SendRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<string> onSuccess, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null)
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null)
         {
-            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, false, imageBase64);
+            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, false, imagesBase64);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
@@ -72,11 +72,11 @@ namespace CyanNook.Chat
         public IEnumerator SendStreamingRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action onComplete, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null,
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null,
             Action<string, string> onField = null,
             Action<string, string> onParseError = null)
         {
-            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, true, imageBase64);
+            string jsonBody = BuildRequestJson(config, systemPrompt, userMessage, true, imagesBase64);
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
@@ -181,7 +181,7 @@ namespace CyanNook.Chat
         /// messages配列形式、画像はOpenAI Vision形式で埋め込み
         /// </summary>
         private static string BuildRequestJson(LLMConfig config, string systemPrompt,
-            string userMessage, bool stream, string imageBase64 = null)
+            string userMessage, bool stream, List<string> imagesBase64 = null)
         {
             string escapedModel = EscapeJsonString(config.modelName);
             string escapedSystem = EscapeJsonString(systemPrompt);
@@ -198,12 +198,15 @@ namespace CyanNook.Chat
             // systemメッセージ
             sb.Append($"{{\"role\":\"system\",\"content\":\"{escapedSystem}\"}}");
 
-            // userメッセージ（画像がある場合はcontent配列形式）
-            if (!string.IsNullOrEmpty(imageBase64))
+            // userメッセージ（画像がある場合はcontent配列形式、複数画像対応）
+            if (imagesBase64 != null && imagesBase64.Count > 0)
             {
                 sb.Append(",{\"role\":\"user\",\"content\":[");
                 sb.Append($"{{\"type\":\"text\",\"text\":\"{escapedUser}\"}}");
-                sb.Append($",{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"data:image/jpeg;base64,{imageBase64}\"}}}}");
+                foreach (var img in imagesBase64)
+                {
+                    sb.Append($",{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"data:image/jpeg;base64,{img}\"}}}}");
+                }
                 sb.Append("]}");
             }
             else

@@ -25901,6 +25901,78 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 849716526}
   m_CullTransparentMesh: 1
+--- !u!1 &861005136
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 861005139}
+  - component: {fileID: 861005138}
+  - component: {fileID: 861005137}
+  m_Layer: 5
+  m_Name: ScreenCaptureImage
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &861005137
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 861005136}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1344c3c82d62a2a41a3576d8abb8e3ea, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.RawImage
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Texture: {fileID: 0}
+  m_UVRect:
+    serializedVersion: 2
+    x: 0
+    y: 0
+    width: 1
+    height: 1
+--- !u!222 &861005138
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 861005136}
+  m_CullTransparentMesh: 1
+--- !u!224 &861005139
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 861005136}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1019936557}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0.75}
+  m_AnchorMax: {x: 0, y: 0.75}
+  m_AnchoredPosition: {x: 256, y: 0}
+  m_SizeDelta: {x: 256, y: 256}
+  m_Pivot: {x: 0, y: 0}
 --- !u!1 &861440280
 GameObject:
   m_ObjectHideFlags: 0
@@ -27504,7 +27576,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: -0.00018310547}
+  m_AnchoredPosition: {x: 0, y: -0.00024414062}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 1}
 --- !u!114 &905720444
@@ -31718,6 +31790,7 @@ RectTransform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 315027853}
+  - {fileID: 861005139}
   - {fileID: 31940279}
   - {fileID: 262338720}
   m_Father: {fileID: 792668895}
@@ -31941,7 +32014,7 @@ Transform:
   m_GameObject: {fileID: 1025352762}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 1, z: 0, w: 0}
-  m_LocalPosition: {x: -1.003, y: 0, z: -2.554}
+  m_LocalPosition: {x: -1.003, y: 0, z: -2.341}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -37111,7 +37184,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: ScreenCap
+  m_text: Screen Capture
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 00fd06fabdab9af4ebc96979689e4f22, type: 2}
   m_sharedMaterial: {fileID: 2881308192036439566, guid: 00fd06fabdab9af4ebc96979689e4f22, type: 2}
@@ -37138,18 +37211,18 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 36
-  m_fontSizeBase: 36
+  m_fontSize: 32
+  m_fontSizeBase: 32
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
   m_fontSizeMax: 72
   m_fontStyle: 0
   m_HorizontalAlignment: 1
-  m_VerticalAlignment: 256
+  m_VerticalAlignment: 512
   m_textAlignment: 65535
   m_characterSpacing: -8
-  m_characterHorizontalScale: 1
+  m_characterHorizontalScale: 0.8
   m_wordSpacing: 0
   m_lineSpacing: 0
   m_lineSpacingMax: 0
@@ -49975,6 +50048,7 @@ MonoBehaviour:
   useStreaming: 1
   useVision: 0
   cameraController: {fileID: 1752575850}
+  screenCaptureController: {fileID: 2092994476}
   visibleObjectsProvider: {fileID: 1693997535}
   _currentState: 0
   _currentPose: idle
@@ -49992,6 +50066,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: CyanNook::CyanNook.Chat.IdleChatController
   chatManager: {fileID: 1637253016}
+  firstRunController: {fileID: 179285283}
   autoRequestEnabled: 1
   cooldownDuration: 20
   idlePromptMessage: "[SYSTEM]: \u30E6\u30FC\u30B6\u30FC\u306F\u9ED9\u3063\u3066\u3044\u307E\u3059\u3002\r\n\u8A71\u3057\u304B\u3051\u3066\u3082\u3001\u4E00\u4EBA\u3067\u884C\u52D5\u3057\u3066\u3082\u3001\u4F55\u3082\u3057\u306A\u304F\u3066\u3082\u69CB\u3044\u307E\u305B\u3093\u3002\r\n\u3042\u306A\u305F\u306E\u4ECA\u306E\u6C17\u5206\u306B\u5408\u3063\u305F\u884C\u52D5\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002"
@@ -50168,6 +50243,8 @@ MonoBehaviour:
   rootCanvas: {fileID: 704106166}
   longPressDuration: 0.5
   longPressMoveThreshold: 10
+  menuDismissProtectionDuration: 0.5
+  contextMenuOffsetY: 10
 --- !u!1 &1652104426
 GameObject:
   m_ObjectHideFlags: 0
@@ -51534,6 +51611,9 @@ MonoBehaviour:
   entryPromptInputField: {fileID: 1490918074}
   webCamToggle: {fileID: 1735629915}
   screenCaptureToggle: {fileID: 642773237}
+  screenCaptureLabelText: {fileID: 1233773338}
+  screenCaptureMobileLabel: Rear Camera
+  screenCapturePreviewImage: {fileID: 861005137}
   difyAnnotationText: {fileID: 1660858750}
   saveButton: {fileID: 356931163}
   testConnectionButton: {fileID: 1598722000}
@@ -53691,7 +53771,6 @@ MonoBehaviour:
   navigationController: {fileID: 0}
   roomLightController: {fileID: 0}
   timelineBindings: {fileID: 11400000, guid: d3bad345f1bf36d4181e0a1d2ee8217f, type: 2}
-  defaultBlendTime: 0.25
   emoteHoldDuration: 20
   _currentState: 0
   _currentAnimationId: 

@@ -18,7 +18,7 @@ namespace CyanNook.Chat
 
         public IEnumerator SendRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<string> onSuccess, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null)
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null)
         {
             var bridge = WebLLMBridge.Instance;
             if (bridge == null)
@@ -75,7 +75,7 @@ namespace CyanNook.Chat
         public IEnumerator SendStreamingRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action onComplete, Action<string> onError,
-            string imageBase64 = null, Action<string> onRequestBody = null,
+            List<string> imagesBase64 = null, Action<string> onRequestBody = null,
             Action<string, string> onField = null,
             Action<string, string> onParseError = null)
         {

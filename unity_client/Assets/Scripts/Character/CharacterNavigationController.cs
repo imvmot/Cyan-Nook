@@ -185,10 +185,7 @@ namespace CyanNook.Character
                 bool hasPosition = deltaPosition.sqrMagnitude > 0.0001f;
                 bool hasRotation = Quaternion.Angle(Quaternion.identity, deltaRotation) > 0.01f;
 
-                if (hasPosition || hasRotation)
-                {
-                    Debug.Log($"[CharacterNavigationController] Root Motion SKIPPED (position preserved): deltaPos={deltaPosition}, deltaRot={deltaRotation.eulerAngles}");
-                }
+                // Root Motion position preserved（毎フレーム発生するためログ省略）
                 return;
             }
 
@@ -213,7 +210,7 @@ namespace CyanNook.Character
             // ループジャンプフラグのチェック（Interact等のループ再生時の巻き戻しデルタを除外）
             if (animationController != null && animationController.ConsumeLoopJumpFlag())
             {
-                Debug.Log("[CharacterNavigationController] Root Motion SKIPPED (loop jump detected)");
+                // Root Motion loop jump detected（毎ループ発生するためログ省略）
                 return;
             }
 
@@ -231,14 +228,7 @@ namespace CyanNook.Character
             }
             characterTransform.localRotation *= deltaRotation;
 
-            // デバッグ: 有意なdeltaがある場合のみログ出力
-            bool hasPos = deltaPosition.sqrMagnitude > 0.0001f;
-            bool hasRot = Quaternion.Angle(Quaternion.identity, deltaRotation) > 0.01f;
-
-            if (hasPos || hasRot)
-            {
-                Debug.Log($"[CharacterNavigationController] Root Motion applied: state={_currentState}, deltaPos={deltaPosition}, deltaRot={deltaRotation.eulerAngles}, newPos={characterTransform.position}, newRot={characterTransform.rotation.eulerAngles}");
-            }
+            // Root Motion applied（毎フレーム発生するためログ省略）
         }
 
         /// <summary>

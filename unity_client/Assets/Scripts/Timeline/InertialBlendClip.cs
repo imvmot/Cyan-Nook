@@ -33,7 +33,10 @@ namespace CyanNook.Timeline
 
         public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
         {
-            return ScriptPlayable<InertialBlendBehaviour>.Create(graph);
+            var playable = ScriptPlayable<InertialBlendBehaviour>.Create(graph);
+            var behaviour = playable.GetBehaviour();
+            behaviour.targetBones = targetBones;
+            return playable;
         }
     }
 }

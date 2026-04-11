@@ -482,8 +482,10 @@ namespace CyanNook.Character
                     additiveHelper = _currentVrmInstance.gameObject.AddComponent<AdditiveOverrideHelper>();
                 }
                 additiveHelper.animator = animator;
+                additiveHelper.inertialBlendHelper = inertialHelper;
                 animationController.additiveOverrideHelper = additiveHelper;
                 Debug.Log("[VrmLoader] AdditiveOverrideHelper added to VRM instance");
+
             }
 
             // TalkController

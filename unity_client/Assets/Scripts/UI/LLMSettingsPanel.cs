@@ -142,9 +142,18 @@ namespace CyanNook.UI
         [Tooltip("Webカメラ表示切替")]
         public Toggle webCamToggle;
 
-        [Header("UI - Screen Capture")]
-        [Tooltip("画面キャプチャ表示切替")]
+        [Header("UI - Screen Capture / Mobile Camera")]
+        [Tooltip("画面キャプチャ/カメラ表示切替")]
         public Toggle screenCaptureToggle;
+
+        [Tooltip("PC時のラベルテキスト（null可 = 変更しない）")]
+        public TMP_Text screenCaptureLabelText;
+
+        [Tooltip("モバイル時に表示するラベル文字列")]
+        public string screenCaptureMobileLabel = "Rear Camera";
+
+        [Tooltip("画面キャプチャ/カメラプレビュー表示用RawImage")]
+        public RawImage screenCapturePreviewImage;
 
         [Header("UI - Annotations")]
         [Tooltip("Dify選択時の注釈テキスト")]
@@ -683,6 +692,19 @@ namespace CyanNook.UI
                     }
                 }
 
+                // カメラプレビューOFF時は共有画面プレビューも非表示
+                if (screenCapturePreviewImage != null)
+                {
+                    if (cameraCtrl != null && cameraCtrl.alwaysRender)
+                    {
+                        UpdateScreenCapturePreview();
+                    }
+                    else
+                    {
+                        screenCapturePreviewImage.gameObject.SetActive(false);
+                    }
+                }
+
                 // イベントハンドラは初回のみ登録
                 if (!_isCameraPreviewInitialized)
                 {
@@ -753,6 +775,19 @@ namespace CyanNook.UI
                 }
             }
 
+            // 共有画面プレビューもカメラプレビュートグルに連動
+            if (screenCapturePreviewImage != null)
+            {
+                if (isOn)
+                {
+                    UpdateScreenCapturePreview();
+                }
+                else
+                {
+                    screenCapturePreviewImage.gameObject.SetActive(false);
+                }
+            }
+
             Debug.Log($"[LLMSettingsPanel] Camera preview: {(isOn ? "ON" : "OFF")}");
         }
 
@@ -796,7 +831,27 @@ namespace CyanNook.UI
             {
                 screenCaptureToggle.isOn = screenCaptureDisplayController != null && screenCaptureDisplayController.IsPlaying;
                 screenCaptureToggle.onValueChanged.AddListener(OnScreenCaptureToggleChanged);
+
+                // モバイルではトグルラベルとテキストを変更
+                if (screenCaptureDisplayController != null && screenCaptureDisplayController.IsMobileMode)
+                {
+                    // トグル内ラベル
+                    var toggleLabel = screenCaptureToggle.GetComponentInChildren<TMP_Text>();
+                    if (toggleLabel != null)
+                    {
+                        toggleLabel.text = screenCaptureMobileLabel;
+                    }
+
+                    // 別途配置されたラベルテキスト
+                    if (screenCaptureLabelText != null)
+                    {
+                        screenCaptureLabelText.text = screenCaptureMobileLabel;
+                    }
+                }
             }
+
+            // 既にキャプチャ中の場合はプレビューを表示
+            UpdateScreenCapturePreview();
         }
 
         private void OnScreenCaptureToggleChanged(bool isOn)
@@ -808,11 +863,79 @@ namespace CyanNook.UI
             }
 
             if (isOn)
+            {
                 screenCaptureDisplayController.StartCapture();
+                // キャプチャ開始は非同期（ブラウザダイアログ後）なのでリトライでプレビュー表示
+                if (_screenCapturePreviewRetryCoroutine == null)
+                {
+                    _screenCapturePreviewRetryCoroutine = StartCoroutine(RetryScreenCapturePreview());
+                }
+            }
             else
+            {
                 screenCaptureDisplayController.StopCapture();
+                UpdateScreenCapturePreview();
+            }
 
             Debug.Log($"[LLMSettingsPanel] ScreenCapture: {(isOn ? "ON" : "OFF")}");
+        }
+
+        private Coroutine _screenCapturePreviewRetryCoroutine;
+
+        private void UpdateScreenCapturePreview()
+        {
+            if (screenCapturePreviewImage == null) return;
+
+            if (screenCaptureDisplayController != null && screenCaptureDisplayController.IsPlaying)
+            {
+                var tex = screenCaptureDisplayController.GetPreviewTexture();
+                if (tex != null)
+                {
+                    screenCapturePreviewImage.texture = tex;
+                    // PC: ブラウザCanvasのY軸反転を補正。モバイル: WebCamTextureは反転不要
+                    screenCapturePreviewImage.uvRect = screenCaptureDisplayController.IsMobileMode
+                        ? new Rect(0, 0, 1, 1)
+                        : new Rect(0, 1, 1, -1);
+                    screenCapturePreviewImage.gameObject.SetActive(true);
+                    return;
+                }
+            }
+            screenCapturePreviewImage.gameObject.SetActive(false);
+        }
+
+        private System.Collections.IEnumerator RetryScreenCapturePreview()
+        {
+            int maxRetries = 20;
+            int retryCount = 0;
+
+            while (retryCount < maxRetries)
+            {
+                yield return new WaitForSeconds(0.5f);
+                retryCount++;
+
+                if (screenCaptureDisplayController != null && screenCaptureDisplayController.IsPlaying)
+                {
+                    var tex = screenCaptureDisplayController.GetPreviewTexture();
+                    if (tex != null && screenCapturePreviewImage != null)
+                    {
+                        screenCapturePreviewImage.texture = tex;
+                        screenCapturePreviewImage.uvRect = screenCaptureDisplayController.IsMobileMode
+                            ? new Rect(0, 0, 1, 1)
+                            : new Rect(0, 1, 1, -1);
+                        screenCapturePreviewImage.gameObject.SetActive(true);
+                        Debug.Log("[LLMSettingsPanel] Screen capture preview initialized");
+                        _screenCapturePreviewRetryCoroutine = null;
+                        yield break;
+                    }
+                }
+                else if (screenCaptureDisplayController == null || !screenCaptureDisplayController.IsPlaying)
+                {
+                    // キャプチャが中断された場合はリトライ終了
+                    break;
+                }
+            }
+
+            _screenCapturePreviewRetryCoroutine = null;
         }
 
         // ─────────────────────────────────────

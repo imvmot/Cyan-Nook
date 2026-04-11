@@ -49,10 +49,6 @@ namespace CyanNook.Character
         [Tooltip("ステートごとのTimelineアセット")]
         public TimelineBindingData timelineBindings;
 
-        [Header("Settings")]
-        [Tooltip("アニメーション遷移のブレンド時間")]
-        public float defaultBlendTime = 0.25f;
-
         [Header("Emote Hold")]
         [Tooltip("テキスト表示完了後、emoteループを維持する時間（秒）。この時間経過後にedモーションを再生して終了")]
         public float emoteHoldDuration = 5f;
@@ -93,8 +89,6 @@ namespace CyanNook.Character
         private int _endingFrameCount;
         private const int ENDING_GRACE_FRAMES = 3;
 
-        // InertialBlendTrackが無いTimeline遷移時のフォールバックブレンド時間
-        private const float FALLBACK_INERTIAL_BLEND_DURATION = 0.15f;
 
         // Timelineのフレームレートが取得できない場合のデフォルト値
         private const double DEFAULT_FRAME_RATE = 60.0;
@@ -316,6 +310,9 @@ namespace CyanNook.Character
                 {
                     _loopJumpOccurred = true;
                     director.time = _loopStartTime;
+                    // ループバックによる再生位置の不連続を通知し、
+                    // _prevCleanPoseを無効化して偽v₀の発生を防ぐ
+                    inertialBlendHelper?.InvalidatePrevCleanPose();
                     Debug.Log($"[CharacterAnimationController] Loop back to {_loopStartTime:F3} (predicted={predictedTime:F3})");
                 }
             }
@@ -329,7 +326,10 @@ namespace CyanNook.Character
                 double assetDuration = director.playableAsset?.duration ?? 0;
                 var timelineAsset = director.playableAsset as TimelineAsset;
                 double frameRate = timelineAsset?.editorSettings.frameRate ?? DEFAULT_FRAME_RATE;
-                double frameMargin = 1.0 / frameRate;
+                // 2フレーム分のマージン: Update時のdirector.timeは前フレームのAnimator評価値のため、
+                // 1フレームマージンではAnimatorが終端に到達した後のUpdateでしか検出できず、
+                // Timeline終端境界でクリップ外のポーズが1F描画される（think_ed→talk_idle等で発生）。
+                double frameMargin = 2.0 / frameRate;
 
                 // Timeline終端に到達
                 if (currentTime >= assetDuration - frameMargin)
@@ -530,15 +530,14 @@ namespace CyanNook.Character
             }
             else
             {
-                bool hasInertialBlendTrack = SetupInertialBlendTrack(timeline);
+                HasInertialBlendTrack(timeline);
 
-                // InertialBlendTrackが無い場合、フォールバック慣性補間を開始
-                // director.Stop()による1Fポーズジャンプを防止するため、
-                // 全ての状態遷移で慣性補間によるスムーズな遷移を保証する
-                if (!hasInertialBlendTrack && inertialBlendHelper != null)
+                // Timeline切り替え時、古いIBが残っていればキャンセルする。
+                // 新しいIBはdirector.Evaluate()→MixerBehaviour.ProcessFrameで
+                // 再生位置にIBクリップがある場合にのみ自動開始される。
+                if (inertialBlendHelper != null && inertialBlendHelper.IsActive)
                 {
-                    inertialBlendHelper.StartInertialBlendAllBones(FALLBACK_INERTIAL_BLEND_DURATION);
-                    Debug.Log($"[CharacterAnimationController] Started fallback InertialBlend (no InertialBlendTrack), duration={FALLBACK_INERTIAL_BLEND_DURATION}");
+                    inertialBlendHelper.CancelBlend();
                 }
             }
 
@@ -575,6 +574,11 @@ namespace CyanNook.Character
                 director.time = 0;
             }
             director.Play();
+
+            // director.Play()後にEvaluate()で即時評価し、1Fポーズフラッシュを防止する。
+            // コルーチン等からの呼び出し時、アニメーション評価サイクルが済んでいる場合に
+            // 前のTimeline/ポーズが1F見える問題を解消する。
+            director.Evaluate();
 
             string resumeInfo = resumeAtEnd && _hasLoopRegion ? $", ResumedAtEnd: {_endStartTime:F3}"
                               : resumeAtLoop && _hasLoopRegion ? $", ResumedAt: {_loopStartTime:F3}"
@@ -736,13 +740,10 @@ namespace CyanNook.Character
             SetupLoopRegion(timeline);
             SetupInteractionEnd(timeline);
             SetupCancelRegions(timeline);
-            bool hasInertialBlendTrack = SetupInertialBlendTrack(timeline);
-
-            // InertialBlendTrackが無い場合、フォールバック慣性補間を開始
-            if (!hasInertialBlendTrack && inertialBlendHelper != null)
+            HasInertialBlendTrack(timeline);
+            if (inertialBlendHelper != null && inertialBlendHelper.IsActive)
             {
-                inertialBlendHelper.StartInertialBlendAllBones(FALLBACK_INERTIAL_BLEND_DURATION);
-                Debug.Log($"[CharacterAnimationController] Started fallback InertialBlend (no InertialBlendTrack), duration={FALLBACK_INERTIAL_BLEND_DURATION}");
+                inertialBlendHelper.CancelBlend();
             }
 
             // WrapMode設定
@@ -760,6 +761,7 @@ namespace CyanNook.Character
 
             director.time = 0;
             director.Play();
+            director.Evaluate();
 
             Debug.Log($"[CharacterAnimationController] PlayTimeline: {timeline.name}, AnimId: {animationId}, LoopRegion: {_hasLoopRegion}, WrapMode: {director.extrapolationMode}");
         }
@@ -1439,34 +1441,23 @@ namespace CyanNook.Character
             _isEnding = true;
             _endingFrameCount = 0;
 
-            // lp→ed遷移はTimeline内の時間ジャンプであり、lpの途中ポーズとedの開始ポーズが
-            // 一致しない場合にポーズポップ（一瞬別ポーズが見える）が発生する。
-            // IBを開始してlpポーズからedポーズへスムーズに遷移させる。
-            // 既にIBがアクティブな場合もStartInertialBlendAllBonesが
-            // CaptureVisualStateIfActive→RestoreCleanIfActiveで正しく引き継ぐ。
-            if (inertialBlendHelper != null)
-            {
-                // ForceStopThinking/Emote → PlayState(resumeAtLoop) でIBが直前に開始されている場合、
-                // そのIBの残り時間を引き継ぐ。FALLBACK(0.15s)だと短すぎてポーズが飛ぶ。
-                float duration = FALLBACK_INERTIAL_BLEND_DURATION;
-                if (inertialBlendHelper.IsActive)
-                {
-                    duration = Mathf.Max(duration, inertialBlendHelper.RemainingDuration);
-                }
-                inertialBlendHelper.StartInertialBlendAllBones(duration);
-            }
-
             if (director != null)
             {
                 director.extrapolationMode = DirectorWrapMode.Hold;
                 director.time = _endStartTime;
-                Debug.Log($"[CharacterAnimationController] Jumped to end phase at {_endStartTime:F3}");
 
                 // ジャンプ後も再生を継続
                 if (director.state != UnityEngine.Playables.PlayState.Playing)
                 {
                     director.Play();
                 }
+
+                // director.timeの変更は次のアニメーション評価サイクルまで反映されないため、
+                // コルーチンなどアニメーション評価後に呼ばれた場合に1Fだけ前のポーズが見える。
+                // Evaluate()で即時反映させて1Fポーズフラッシュを防止する。
+                director.Evaluate();
+
+                Debug.Log($"[CharacterAnimationController] Jumped to end phase at {_endStartTime:F3}");
             }
         }
 
@@ -1516,35 +1507,21 @@ namespace CyanNook.Character
         // --- InertialBlend制御メソッド ---
 
         /// <summary>
-        /// TimelineからInertialBlendTrackを検出し、InertialBlendHelperを起動
+        /// TimelineにInertialBlendTrackが含まれるかを返す。
+        /// IBの実際の開始はInertialBlendMixerBehaviour.ProcessFrame（director.Evaluate()経由）が行う。
+        /// これにより、再生開始位置にIBクリップがない場合（resumeAtLoop等）に
+        /// 不要なIBが開始されることを防ぐ。
         /// </summary>
-        /// <returns>InertialBlendTrackが見つかった場合true</returns>
-        private bool SetupInertialBlendTrack(TimelineAsset timeline)
+        private bool HasInertialBlendTrack(TimelineAsset timeline)
         {
             if (inertialBlendHelper == null) return false;
             if (timeline == null) return false;
 
             foreach (var track in timeline.GetOutputTracks())
             {
-                if (track is InertialBlendTrack inertialTrack)
+                if (track is InertialBlendTrack)
                 {
-                    // トラックからクリップの長さとボーンリストを取得
-                    float blendDuration = 0.3f;
-                    List<HumanBodyBones> targetBones = null;
-                    foreach (var clip in inertialTrack.GetClips())
-                    {
-                        blendDuration = (float)clip.duration;
-                        var inertialClip = clip.asset as InertialBlendClip;
-                        if (inertialClip != null)
-                        {
-                            targetBones = inertialClip.targetBones;
-                        }
-                        break; // 最初のクリップのみ使用
-                    }
-
-                    inertialBlendHelper.StartInertialBlend(blendDuration, targetBones);
-                    Debug.Log($"[CharacterAnimationController] Started InertialBlendHelper with duration={blendDuration}");
-                    return true; // 最初のInertialBlendTrackのみ処理
+                    return true;
                 }
             }
             return false;
