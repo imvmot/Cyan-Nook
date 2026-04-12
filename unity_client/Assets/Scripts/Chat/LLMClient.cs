@@ -515,5 +515,24 @@ namespace CyanNook.Chat
                     return new OllamaProvider();
             }
         }
+
+        /// <summary>
+        /// WebGLビルドかつlocalhostサーバーからの配信時に、
+        /// APIリクエストURLをCORSプロキシ経由に変換する。
+        /// server.ps1の/proxy/エンドポイントに転送先URLをパスとして渡す。
+        /// エディタ実行時やlocalhost以外からの配信時はURLをそのまま返す。
+        /// </summary>
+        public static string GetCorsProxyUrl(string targetUrl)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            string appUrl = Application.absoluteURL;
+            if (!string.IsNullOrEmpty(appUrl) && appUrl.StartsWith("http://localhost"))
+            {
+                var origin = new System.Uri(appUrl);
+                return $"{origin.Scheme}://{origin.Authority}/proxy/{System.Uri.EscapeDataString(targetUrl)}";
+            }
+#endif
+            return targetUrl;
+        }
     }
 }

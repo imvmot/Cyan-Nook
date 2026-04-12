@@ -34,9 +34,10 @@ namespace CyanNook.Chat
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
-            Debug.Log($"[ClaudeProvider] Sending to {config.apiEndpoint}, model={config.modelName}");
+            string url = LLMClient.GetCorsProxyUrl(config.apiEndpoint);
+            Debug.Log($"[ClaudeProvider] Sending to {url}, model={config.modelName}");
 
-            using (var request = new UnityWebRequest(config.apiEndpoint, "POST"))
+            using (var request = new UnityWebRequest(url, "POST"))
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
@@ -86,12 +87,13 @@ namespace CyanNook.Chat
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
-            Debug.Log($"[ClaudeProvider] Streaming request to {config.apiEndpoint}, model={config.modelName}");
+            string url = LLMClient.GetCorsProxyUrl(config.apiEndpoint);
+            Debug.Log($"[ClaudeProvider] Streaming request to {url}, model={config.modelName}");
 
             var streamHandler = new ClaudeSseStreamHandler(
                 new byte[4096], onHeader, onTextChunk, onError, onField, onParseError);
 
-            using (var request = new UnityWebRequest(config.apiEndpoint, "POST"))
+            using (var request = new UnityWebRequest(url, "POST"))
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = streamHandler;
@@ -122,7 +124,8 @@ namespace CyanNook.Chat
                 "\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
-            using (var request = new UnityWebRequest(config.apiEndpoint, "POST"))
+            string url = LLMClient.GetCorsProxyUrl(config.apiEndpoint);
+            using (var request = new UnityWebRequest(url, "POST"))
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();

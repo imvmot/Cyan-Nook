@@ -26,9 +26,10 @@ namespace CyanNook.Chat
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
-            Debug.Log($"[OpenAIProvider] Sending to {config.apiEndpoint}, model={config.modelName}");
+            string url = LLMClient.GetCorsProxyUrl(config.apiEndpoint);
+            Debug.Log($"[OpenAIProvider] Sending to {url}, model={config.modelName}");
 
-            using (var request = new UnityWebRequest(config.apiEndpoint, "POST"))
+            using (var request = new UnityWebRequest(url, "POST"))
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
@@ -80,13 +81,14 @@ namespace CyanNook.Chat
             onRequestBody?.Invoke(jsonBody);
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
-            Debug.Log($"[OpenAIProvider] Streaming request to {config.apiEndpoint}, model={config.modelName}");
+            string url = LLMClient.GetCorsProxyUrl(config.apiEndpoint);
+            Debug.Log($"[OpenAIProvider] Streaming request to {url}, model={config.modelName}");
 
             // OpenAI SSEストリーミング（LMStudioと同じフォーマット）
             var streamHandler = new LMStudioSseStreamHandler(
                 new byte[4096], onHeader, onTextChunk, onError, onField, onParseError);
 
-            using (var request = new UnityWebRequest(config.apiEndpoint, "POST"))
+            using (var request = new UnityWebRequest(url, "POST"))
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = streamHandler;
@@ -121,6 +123,7 @@ namespace CyanNook.Chat
                 testUrl = $"{uri.Scheme}://{uri.Authority}/v1/models";
             }
 
+            testUrl = LLMClient.GetCorsProxyUrl(testUrl);
             using (var request = UnityWebRequest.Get(testUrl))
             {
                 SetAuthHeader(request, config.apiKey);
@@ -220,10 +223,11 @@ namespace CyanNook.Chat
             sb.Append($",\"temperature\":{config.temperature.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
             sb.Append($",\"top_p\":{config.topP.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
 
-            // max_tokens: numPredict > 0 の場合のみ送信
+            // max_completion_tokens: numPredict > 0 の場合のみ送信
+            // 新しいモデル（gpt-4o以降）はmax_tokensではなくmax_completion_tokensを使用
             if (config.numPredict > 0)
             {
-                sb.Append($",\"max_tokens\":{config.numPredict}");
+                sb.Append($",\"max_completion_tokens\":{config.numPredict}");
             }
 
             // repeat_penalty → frequency_penalty として送信（近似マッピング）
