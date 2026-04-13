@@ -3,8 +3,24 @@
 AIチャットボット＋マスコットアプリ — VRMキャラクターと会話できるWebアプリケーションです。
 
 ## 起動方法
-**Build>start-server.bat**で起動し、ブラウザで開きます。
+
+### Windows
+**Build > start-server.bat** をダブルクリックで起動し、自動的にブラウザが開きます。
 同時起動するPowerShellウインドウを閉じると終了します。
+
+### macOS / Linux
+[Node.js](https://nodejs.org/) 18以降をインストールした上で、ターミナルから以下を実行します。
+
+```bash
+cd Build
+chmod +x start-server.sh   # 初回のみ
+./start-server.sh
+```
+
+> Node.jsはHomebrew (`brew install node`)、apt (`sudo apt install nodejs`)、または [nodejs.org](https://nodejs.org/) から導入できます。
+> Windowsでも Node.js 版をテストしたい場合は `start-server-node.bat` を使用できます（通常は `start-server.bat` で十分です）。
+
+いずれの起動方式でもローカルCORSプロキシが同梱されているため、Claude / OpenAI / Gemini などのクラウドLLMへの接続が可能です。
 
 ## ブラウザAIの使用について
 
