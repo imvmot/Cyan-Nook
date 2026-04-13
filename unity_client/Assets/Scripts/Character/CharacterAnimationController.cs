@@ -459,6 +459,7 @@ namespace CyanNook.Character
                 {
                     _isThinkingActive = false;
                     OnEndPhaseComplete -= OnThinkingEndPhaseComplete;
+                    OnThinkingExited?.Invoke();
                     Debug.Log("[CharacterAnimationController] Thinking force-stopped due to state change");
                 }
             }
@@ -1053,6 +1054,12 @@ namespace CyanNook.Character
         public bool IsThinkingActive => _isThinkingActive;
 
         /// <summary>
+        /// Thinkingが終了した瞬間に発火（_isThinkingActive true→false の全経路）。
+        /// CharacterController の grace period計測に使用。
+        /// </summary>
+        public event System.Action OnThinkingExited;
+
+        /// <summary>
         /// 現在のTimelineでThinking再生が可能かチェック
         /// ThinkingPlayableTrackのClipが現在時刻にアクティブであれば再生可能
         /// EmoteのTimelineにもThinkingPlayableClipを配置することでEmote中も判定可能
@@ -1134,6 +1141,7 @@ namespace CyanNook.Character
                 OnEndPhaseComplete -= OnThinkingEndPhaseComplete;
                 additiveOverrideHelper?.StopOverride();
                 _isThinkingActive = false;
+                OnThinkingExited?.Invoke();
                 return;
             }
 
@@ -1164,6 +1172,7 @@ namespace CyanNook.Character
 
             StopAdditiveOverrideWithSnapshot();
             _isThinkingActive = false;
+            OnThinkingExited?.Invoke();
 
             // StopThinkingAndReturn(graceful)がJumpToEndPhaseで_ed遷移を開始済みの場合、
             // resumeAtLoopでループ開始に戻すと_ed遷移がキャンセルされ、
@@ -1218,6 +1227,7 @@ namespace CyanNook.Character
 
             StopAdditiveOverrideWithSnapshot();
             _isThinkingActive = false;
+            OnThinkingExited?.Invoke();
 
             // 復帰先ステートの終了フェーズに直接ジャンプ（ループ再開を経由しない）
             PlayState(_thinkingReturnState, _thinkingReturnAnimationId, resumeAtEnd: true);
@@ -1230,6 +1240,7 @@ namespace CyanNook.Character
             StopAdditiveOverrideWithSnapshot();
 
             _isThinkingActive = false;
+            OnThinkingExited?.Invoke();
 
             // 復帰先ステートに戻る（LoopRegionがある場合はループ開始地点から再開）
             if (_currentState == AnimationStateType.Thinking)
