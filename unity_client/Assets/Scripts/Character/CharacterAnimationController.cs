@@ -923,10 +923,19 @@ namespace CyanNook.Character
 
                 OnEndPhaseComplete -= OnThinkingEndPhaseComplete;
 
-                // 現ポーズ（加算込み）をIBの補間元として確定させる
+                // 現ポーズ（加算込み）をIBの補間元として確定させる。
+                // ここは director.Evaluate() 内（LateUpdate前）のため、まだAOの復元が走っていない。
+                // そのままSnapshotすると「下半身もthinking全身ポーズ」が補間元になるので、
+                // 先にAOの復元を手動で1回適用して「見えていたポーズ（下半身スナップショット＋上半身加算）」を
+                // 作ってからSnapshotする。
+                // さらに _prevCleanPose は AO復元前の「thinking全身」が残っているため、
+                // そのままだと v₀ = lastClean - prevClean が偽の下向き速度としてHipsに入り
+                // IBが沈み込む。InvalidatePrevCleanPose() で v₀=0 フォールバックを強制する。
                 if (additiveOverrideHelper != null && additiveOverrideHelper.IsActive)
                 {
+                    additiveOverrideHelper.ApplyRestoreNow();
                     inertialBlendHelper?.SnapshotCurrentPoseAsClean();
+                    inertialBlendHelper?.InvalidatePrevCleanPose();
                 }
                 additiveOverrideHelper?.StopOverride(invalidateCleanPose: false);
 
@@ -943,9 +952,12 @@ namespace CyanNook.Character
                 director.stopped -= OnEmoteTimelineStopped;
                 OnEndPhaseComplete -= OnEmoteEndPhaseComplete;
 
+                // Thinking分岐と同様、Snapshot前にAO復元を手動適用＋v₀=0強制
                 if (additiveOverrideHelper != null && additiveOverrideHelper.IsActive)
                 {
+                    additiveOverrideHelper.ApplyRestoreNow();
                     inertialBlendHelper?.SnapshotCurrentPoseAsClean();
+                    inertialBlendHelper?.InvalidatePrevCleanPose();
                 }
                 additiveOverrideHelper?.StopOverride(invalidateCleanPose: false);
 
@@ -956,7 +968,9 @@ namespace CyanNook.Character
             {
                 // 保険: Thinking/Emote以外で加算中の場合はAO停止のみ
                 Debug.LogWarning("[CharacterAnimationController] ForceCompleteAdditive called while not Thinking/Emote; stopping override only");
+                additiveOverrideHelper.ApplyRestoreNow();
                 inertialBlendHelper?.SnapshotCurrentPoseAsClean();
+                inertialBlendHelper?.InvalidatePrevCleanPose();
                 additiveOverrideHelper.StopOverride(invalidateCleanPose: false);
                 handled = true;
             }

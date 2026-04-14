@@ -85,15 +85,22 @@ namespace CyanNook.Timeline
 
                 // 補間対象ボーンを決定：
                 //   クリップで明示指定があればそれを使用
-                //   無ければ現在AOが管理している加算ボーンをそのまま流用
-                List<HumanBodyBones> bones = null;
+                //   無ければ全Humanoidボーンを対象にする（下半身を含めて全身IB）
+                //
+                // 加算ボーン（上半身）だけIBしていた旧実装では、直前のthink_ed入りIBを
+                // CancelBlendで打ち切る瞬間に非対象の下半身10ボーンがthinkクリーンポーズに
+                // 一時的にスナップしていた（CancelBlend→PlayState(sit)→StartInertialBlend
+                // の間に1フレーム挟まる）。Hips/Spineが跳ねるとSpringBoneに衝撃が伝わり
+                // 髪がポップしていた。全Humanoidボーンを対象にすることでこのスナップも
+                // IBに吸収される。
+                List<HumanBodyBones> bones;
                 if (behaviour.overrideBones != null && behaviour.overrideBones.Count > 0)
                 {
                     bones = behaviour.overrideBones;
                 }
-                else if (_aoHelper != null && _aoHelper.CurrentAdditiveBones != null)
+                else
                 {
-                    bones = new List<HumanBodyBones>(_aoHelper.CurrentAdditiveBones);
+                    bones = GetAllHumanoidBones();
                 }
 
                 if (_charCtrl != null)
@@ -118,6 +125,23 @@ namespace CyanNook.Timeline
             }
 
             _clipWasActive = clipActive;
+        }
+
+        // 全Humanoidボーン（Eye/Jawは除外）。InertialBlendClip.InitAllBonesと同じ基準。
+        private static List<HumanBodyBones> _cachedAllBones;
+        private static List<HumanBodyBones> GetAllHumanoidBones()
+        {
+            if (_cachedAllBones != null) return _cachedAllBones;
+            var list = new List<HumanBodyBones>();
+            for (int i = 0; i < (int)HumanBodyBones.LastBone; i++)
+            {
+                var bone = (HumanBodyBones)i;
+                if (bone == HumanBodyBones.LeftEye || bone == HumanBodyBones.RightEye || bone == HumanBodyBones.Jaw)
+                    continue;
+                list.Add(bone);
+            }
+            _cachedAllBones = list;
+            return _cachedAllBones;
         }
     }
 }

@@ -809,25 +809,22 @@ namespace CyanNook.Chat
 
         /// <summary>
         /// Thinking解除のフィールド依存ロジック
-        /// emotion/target → graceful exit（ed再生あり）
-        /// emote → 即座キャンセル（ed再生なし、直接次のアニメーションへ遷移）
+        /// emotion/target/reaction/emote → graceful exit（think_ed再生あり）
         /// action → Thinking継続（targetまたはemoteが届くまで待機）
+        ///
+        /// 過去はemoteのみForceStopThinkingで即時キャンセルしていたが、これだと
+        /// think_ed上に配置したAdditiveCancelClipが発火する前にthinking directorが
+        /// 停止されるため、加算解除時の補間が機能しなくなっていた。
+        /// 現在はemoteもgraceful exitに統一し、think_edを自然再生させることで
+        /// Clip経由の補間パス（ForceCompleteAdditiveTimelineWithBlend）を必ず経由する。
+        /// 加算/非加算どちらのthinking timelineでも、think_edにAdditiveCancelClipが
+        /// 配置されていればそこで早期補間開始。未配置ならthink_edを完走する。
+        /// emote本体の再生はCharacterControllerのFlushAfterThinkExit（Think Exit Delay）
+        /// で_isThinkingActive=false後に遅延実行される。
         /// </summary>
         private void HandleThinkingExitOnField(string fieldName)
         {
             if (talkController == null) return;
-
-            // emoteは常にForceStopThinking（ChatManagerの_isThinkingActiveに関係なく）
-            // 理由: "emotion"が先に届いてChatManager._isThinkingActive=falseにした後でも、
-            // AnimationControllerのThinkingが実際にはまだ終了中（ed再生中）の場合がある。
-            // emoteは直接次のアニメーションに遷移するため、残存Thinkingを即座に打ち切る必要がある。
-            if (fieldName == "emote")
-            {
-                talkController.ForceStopThinking();
-                _isThinkingActive = false;
-                return;
-            }
-
             if (!_isThinkingActive) return;
 
             switch (fieldName)
@@ -835,7 +832,8 @@ namespace CyanNook.Chat
                 case "emotion":
                 case "target":
                 case "reaction":
-                    // graceful exit: ed再生ありで復帰
+                case "emote":
+                    // graceful exit: think_ed再生ありで復帰
                     talkController.StopThinking();
                     _isThinkingActive = false;
                     break;

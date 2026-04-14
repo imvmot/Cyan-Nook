@@ -166,7 +166,23 @@ namespace CyanNook.Timeline
         private void LateUpdate()
         {
             if (!_isActive || _restoreBones == null) return;
+            ApplyRestore();
+        }
 
+        /// <summary>
+        /// 復元処理を即時実行する（LateUpdateを待たずに手動で呼ぶ用）。
+        /// AdditiveCancel経由でSnapshotCurrentPoseAsCleanする前に呼ぶと、
+        /// 「実際に画面に見えていたポーズ（下半身スナップショット＋上半身加算）」を
+        /// IBの補間元として正しくキャプチャできる。
+        /// </summary>
+        public void ApplyRestoreNow()
+        {
+            if (!_isActive || _restoreBones == null) return;
+            ApplyRestore();
+        }
+
+        private void ApplyRestore()
+        {
             for (int i = 0; i < _restoreCount; i++)
             {
                 _restoreBones[i].transform.localPosition = _restoreBones[i].localPosition;
