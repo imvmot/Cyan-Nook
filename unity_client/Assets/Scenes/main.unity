@@ -54013,6 +54013,7 @@ MonoBehaviour:
   sleepController: {fileID: 1637253021}
   outingController: {fileID: 1637253023}
   _currentState: 0
+  _thinkExitDelay: 0.5
 --- !u!114 &1752575853
 MonoBehaviour:
   m_ObjectHideFlags: 0
