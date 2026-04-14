@@ -5881,6 +5881,214 @@ ForceStopThinking() && _isEnding == true:
 
 ---
 
+### AdditiveCancelTrack（加算タイムラインの強制キャンセル＋補間）
+
+加算ソースタイムライン（talk_thinking01 / emote_happy01 / emote_angry01 等）の途中に配置し、
+「配置フレームで加算タイムラインを完全打ち切り、復帰先ステートに即時ループ再開、
+同フレームから加算ボーンをIBで補間する」を発火するカスタムトラック。
+通常タイムラインにおける「アクションキャンセル＋補間」の加算版。
+
+#### 背景
+
+sitループ中に加算でtalk_thinking01が再生されている状態でLLMレスポンスが到着すると、
+`StopThinkingAndReturn` → `think_ed` 遷移 → `StopAdditiveOverrideWithSnapshot` の
+流れで加算が解除される。このとき:
+
+1. **IB重複**: think_ed入りのIB / 加算解除 / sit復帰 が同一フレームに密集し、
+   SpringBone計算順序の都合で揺れもの（髪・スカート）がポップする。
+2. **立ちポーズ漏れ**: think_edは立ちポーズ前提のモーションのため、AO停止後に
+   think_edが再生されると下半身が立ちポーズに動く。
+
+`ForceStopThinking` 経路の `resumeAtEnd` / `resumeAtLoop` 分岐でも
+sit loop側のInertialBlendTrackクリップは frame=0 にあり `resumeAtLoop(2.333)` で
+飛ばされるため、上半身の補間も掛からずスナップする。
+
+#### 設計
+
+アーティストが加算ソースタイムラインの任意フレームにクリップを配置することで、
+「ここで思考／感情演技を打ち切りたい＋この時間で補間したい」という意思を
+宣言的に表現する。クリップ位置以降のタイムライン再生は破棄される。
+
+```
+Timeline（例: TL_talk_thinking01）
+├── AnimationTrack
+│   └── AnimationClip（thinking本体 st → lp → ed）
+├── ThinkingPlayableTrack（メタデータ）
+├── InertialBlendTrack（thinking入りの通常IB）
+└── AdditiveCancelTrack          ← 今回追加
+    └── AdditiveCancelClip
+        ├── overrideBones: List<HumanBodyBones>
+        │    （空欄時は実行時の AdditiveOverrideHelper.CurrentAdditiveBones を流用）
+        └── クリップの長さ = IB補間時間
+```
+
+#### ランタイム処理
+
+**AdditiveCancelMixerBehaviour.ProcessFrame:**
+1. クリップの inactive→active エッジ検出（1回だけ発火）
+2. `animator.GetComponentInParent<CharacterAnimationController>()` で親キャラを解決
+3. `ForceCompleteAdditiveTimelineWithBlend(duration, bones)` を呼ぶ
+
+**CharacterAnimationController.ForceCompleteAdditiveTimelineWithBlend(duration, bones):**
+
+Thinking中の場合:
+1. `OnEndPhaseComplete -= OnThinkingEndPhaseComplete`（重複復帰抑止）
+2. `InertialBlendHelper.SnapshotCurrentPoseAsClean()` — 現ポーズ（加算込み上半身＋sit下半身）
+   をIBの「補間元」として固定
+3. `AdditiveOverrideHelper.StopOverride(invalidateCleanPose: false)` — 加算解除するが
+   IBのprev clean poseは保持
+4. `_isThinkingActive = false` + `OnThinkingExited` 発火（think exit delay起点）
+5. `PlayState(_thinkingReturnState, _thinkingReturnAnimationId, resumeAtLoop: true)` で
+   復帰先ステートに即時ループ再開（think_edの残りフレームは破棄）
+6. `InertialBlendHelper.StartInertialBlend(duration, bones)` で加算ボーンのIBを強制開始
+   （既存のthink_ed入りIBはRestoreCleanIfActiveで上書き）
+
+Emote中の場合: `_emoteReturnState` / `OnEmoteEndPhaseComplete` / `OnEmoteTimelineStopped`
+の解除を行い、同様に復帰＋IB。
+
+それ以外で AO が Active の場合: 保険として AO 停止 + IB のみ。
+
+#### AdditiveOverrideHelper の拡張
+
+```csharp
+// 現在の加算ボーンリスト公開（クリップから流用する用）
+public IReadOnlyList<HumanBodyBones> CurrentAdditiveBones { get; }
+
+// invalidateCleanPose 引数付き StopOverride
+// false にすると IB のクリーンポーズキャッシュを残し、加算込み現ポーズを次IBの補間元にできる
+public void StopOverride(bool invalidateCleanPose = true);
+```
+
+既存呼び出し（`StopAdditiveOverrideWithSnapshot` 等）はデフォルト `true` のまま
+従来動作を維持する。AdditiveCancelClip 経由のみ `false` を渡す。
+
+#### 配置例
+
+| 配置先Timeline | 配置位置 | 効果 |
+|---|---|---|
+| TL_talk_thinking01 | think_ed 開始フレーム | think_ed本体を再生せず即復帰＋上半身IB |
+| TL_emote_happy01 | emote_ed 後半 | emote_edの最後までは再生せず途中で切上＋IB |
+
+#### 既存パスへの影響
+
+- 通常のstandalone再生時（AO非Active）は Mixer が no-op でログのみ
+- 既存の `StopOverride()`（4箇所）はデフォルト引数で従来動作
+- AdditiveCancelClipが配置されていない加算Timelineは従来通り `OnThinkingEndPhaseComplete`
+  / `OnEmoteEndPhaseComplete` 経路で正常復帰する
+
+#### 関連ファイル
+
+| ファイル | 役割 |
+|---|---|
+| `Scripts/Timeline/AdditiveCancelTrack.cs` | TrackAsset + MixerBehaviour |
+| `Scripts/Timeline/AdditiveCancelClip.cs` | PlayableAsset（overrideBones フィールド） |
+| `Scripts/Timeline/AdditiveOverrideHelper.cs` | `CurrentAdditiveBones` / `StopOverride(bool)` |
+| `Scripts/Character/CharacterAnimationController.cs` | `ForceCompleteAdditiveTimelineWithBlend()` / AdditiveCancelTrackのBind |
+
+---
+
+### Think Exit Delay（Thinking終了後のアクション遅延）
+
+Thinking終了後、次の action / emote 実行までに挟む待機時間。
+加算解除と sit_ed 等の連続発火によるIB重複・揺れもの（SpringBone）ポップを
+時間方向に分離して緩和する。AdditiveCancelTrack と併用することで、
+ポーズ連続性（AdditiveCancel担当）と発火タイミング分離（ThinkExitDelay担当）の
+両方をカバーする。
+
+#### 背景
+
+sitループ中に加算でthink再生 → LLMレスポンス到着のシナリオで、
+以下がほぼ同一フレーム内に発火する:
+
+1. thinking終了 → think_ed 再生開始（IB）
+2. 加算解除 → `AdditiveOverrideHelper.StopOverride`
+3. 復帰先 sit ループ再開
+4. 次アクション（別 interact / emote 等）のIB発火
+
+SpringBone計算順序の都合で、短時間のIB集中が発生すると物理ポーズが飛ぶ問題が
+発生していた。[4] を数フレーム遅らせるだけで大幅に緩和できる。
+
+#### 設計
+
+`CharacterController` に **think終了→次アクション実行** の間の待機時間を追加。
+Inspector で 0〜2秒の範囲で調整可能（デフォルト 0.3秒）。
+
+```csharp
+[Header("Thinking Exit")]
+[SerializeField, Range(0f, 2f)]
+[Tooltip("Thinking終了後、次のアクション/emote実行までの待機秒数。0で無効")]
+private float _thinkExitDelay = 0.3f;
+
+private float _thinkExitTime = float.NegativeInfinity;
+private LLMResponseData _deferredAction;
+private string _deferredEmote;
+private Coroutine _thinkExitFlushCoroutine;
+```
+
+`_thinkExitDelay = 0` で完全無効化（従来動作）。
+
+#### OnThinkingExited イベント
+
+`CharacterAnimationController` は `_isThinkingActive = false` となる全てのパスで
+`OnThinkingExited` を発火する。CharacterController はこれを購読し、
+`_thinkExitTime = Time.time` を記録する。`IsInThinkExitGrace()` は
+`(Time.time - _thinkExitTime) < _thinkExitDelay` を返す簡易判定。
+
+**発火箇所（6箇所）:**
+
+1. `PlayState` のステート切替ガード
+2. `StopThinkingAndReturn` の早期リターン（currentStateがThinkingでない場合）
+3. `ForceStopThinking`
+4. `ForceStopThinkingToEnd`
+5. `OnThinkingEndPhaseComplete`
+6. `ForceCompleteAdditiveTimelineWithBlend`（AdditiveCancelTrack経由）
+
+#### FlushAfterThinkExit コルーチン
+
+Thinking中にLLMストリームからemote/actionフィールドが到着した場合、
+即時実行せず `_deferredEmote` / `_deferredAction` に保留し、単一コルーチンで順次実行:
+
+```
+1. while (IsInThinkExitGrace()) yield return null;
+2. 保留中のemoteを PlayEmoteIfPossible で実行
+3. 保留中のactionを ProcessActionFromField で実行
+```
+
+emote → action の順で同一フレームに連鎖しないよう、必要に応じて間に1フレーム挟む。
+emote/actionを別コルーチンにしないのは、ForceStopThinkingで `_isThinkingActive` が
+同期的にfalseになった直後に emote 側だけ先走って発火する不具合を避けるため
+（grace窓の有無を単一コルーチンで一元判定する）。
+
+#### エッジケース
+
+| シナリオ | 挙動 |
+|---|---|
+| grace中に新しいメッセージ送信 | 既存コルーチンを StopCoroutine → 新規 thinking 開始 |
+| grace中に ForceStopThinking 再発火 | `OnThinkingExited` が再発火、`_thinkExitTime` 更新 |
+| Thinking開始前の pending action | 従来通り即時実行（本機能の対象外） |
+| Talkモード中の Thinking → 別アクション | `ProcessActionFromField` 内の `IsInTalkMode` 判定で分岐 |
+| `_thinkExitDelay = 0` | `IsInThinkExitGrace` が常に false、defer せず即時実行 |
+
+#### AdditiveCancelTrack との役割分担
+
+| 問題 | 担当 |
+|---|---|
+| 加算解除時の下半身立ちポーズ漏れ / 上半身スナップ | **AdditiveCancelTrack**（ポーズ連続性） |
+| think終了直後の複数IB重複による揺れものポップ | **Think Exit Delay**（発火タイミング分離） |
+
+両者は独立して効く。AdditiveCancelTrackのクリップdurationとThink Exit Delayは
+別パラメータだが、実用上 `delay ≥ clipDuration` を推奨
+（IB補間中に次アクションが発火すると再度IB重複となるため）。
+
+#### 関連ファイル
+
+| ファイル | 役割 |
+|---|---|
+| `Scripts/Character/CharacterController.cs` | `_thinkExitDelay` Inspectorフィールド、`FlushAfterThinkExit` コルーチン、`HandleThinkingExited` / `IsInThinkExitGrace` |
+| `Scripts/Character/CharacterAnimationController.cs` | `OnThinkingExited` イベント（6箇所で発火） |
+
+---
+
 ### VrmExpressionTrack
 
 Timeline上でVRM Expression（表情）のweightをカーブ制御するためのカスタムトラック。

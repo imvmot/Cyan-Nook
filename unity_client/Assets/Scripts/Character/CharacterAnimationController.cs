@@ -635,6 +635,11 @@ namespace CyanNook.Character
                     Debug.Log($"[CharacterAnimationController] Bound Animator '{animator.name}' to InertialBlendTrack: {inertialTrack.name}");
                     inertialTrackCount++;
                 }
+                else if (track is AdditiveCancelTrack additiveCancelTrack)
+                {
+                    director.SetGenericBinding(additiveCancelTrack, animator);
+                    Debug.Log($"[CharacterAnimationController] Bound Animator '{animator.name}' to AdditiveCancelTrack: {additiveCancelTrack.name}");
+                }
                 else if (track is LookAtTrack lookAtTrack)
                 {
                     if (lookAtController != null)
@@ -900,6 +905,68 @@ namespace CyanNook.Character
                 inertialBlendHelper?.SnapshotCurrentPoseAsClean();
             }
             additiveOverrideHelper?.StopOverride();
+        }
+
+        /// <summary>
+        /// AdditiveCancelClip経由で呼ばれる、加算タイムラインの強制キャンセル＋補間復帰。
+        /// Thinkingの場合: think_edの残り再生を破棄して復帰先ステートに即時ループ再開。
+        /// Emoteの場合: emote_edの残り再生を破棄して復帰先ステートに即時ループ再開。
+        /// どちらも指定duration/bonesでIBを走らせ、加算中の現ポーズから復帰先ポーズへ補間する。
+        /// </summary>
+        public void ForceCompleteAdditiveTimelineWithBlend(float blendDuration, List<HumanBodyBones> blendBones)
+        {
+            bool handled = false;
+
+            if (_isThinkingActive)
+            {
+                Debug.Log($"[CharacterAnimationController] ForceCompleteAdditive (Thinking) duration={blendDuration:F3}");
+
+                OnEndPhaseComplete -= OnThinkingEndPhaseComplete;
+
+                // 現ポーズ（加算込み）をIBの補間元として確定させる
+                if (additiveOverrideHelper != null && additiveOverrideHelper.IsActive)
+                {
+                    inertialBlendHelper?.SnapshotCurrentPoseAsClean();
+                }
+                additiveOverrideHelper?.StopOverride(invalidateCleanPose: false);
+
+                _isThinkingActive = false;
+                OnThinkingExited?.Invoke();
+
+                PlayState(_thinkingReturnState, _thinkingReturnAnimationId, resumeAtLoop: true);
+                handled = true;
+            }
+            else if (_currentState == AnimationStateType.Emote)
+            {
+                Debug.Log($"[CharacterAnimationController] ForceCompleteAdditive (Emote) duration={blendDuration:F3}");
+
+                director.stopped -= OnEmoteTimelineStopped;
+                OnEndPhaseComplete -= OnEmoteEndPhaseComplete;
+
+                if (additiveOverrideHelper != null && additiveOverrideHelper.IsActive)
+                {
+                    inertialBlendHelper?.SnapshotCurrentPoseAsClean();
+                }
+                additiveOverrideHelper?.StopOverride(invalidateCleanPose: false);
+
+                PlayState(_emoteReturnState, _emoteReturnAnimationId, resumeAtLoop: true);
+                handled = true;
+            }
+            else if (additiveOverrideHelper != null && additiveOverrideHelper.IsActive)
+            {
+                // 保険: Thinking/Emote以外で加算中の場合はAO停止のみ
+                Debug.LogWarning("[CharacterAnimationController] ForceCompleteAdditive called while not Thinking/Emote; stopping override only");
+                inertialBlendHelper?.SnapshotCurrentPoseAsClean();
+                additiveOverrideHelper.StopOverride(invalidateCleanPose: false);
+                handled = true;
+            }
+
+            // 復帰先Timeline評価後、上半身（加算ボーン）のIBを強制開始
+            // PlayState後なので既存IB（think_ed入り等）が走っていても上書きでOK
+            if (handled && inertialBlendHelper != null && blendBones != null && blendBones.Count > 0)
+            {
+                inertialBlendHelper.StartInertialBlend(blendDuration, blendBones);
+            }
         }
 
         /// <summary>
