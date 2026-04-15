@@ -109,6 +109,12 @@ namespace CyanNook.Core
             new SettingEntry("voice_pitchScale", PrefType.Float),
             new SettingEntry("voice_intonationScale", PrefType.Float),
 
+            // Voice - Gemini TTS
+            new SettingEntry("gemini_tts_apiKey", PrefType.String),
+            new SettingEntry("gemini_tts_model", PrefType.String),
+            new SettingEntry("gemini_tts_voiceName", PrefType.String),
+            new SettingEntry("gemini_tts_stylePrompt", PrefType.String),
+
             // Voice - Input
             new SettingEntry("voice_micEnabled", PrefType.Int),
             new SettingEntry("voice_inputLanguage", PrefType.String),

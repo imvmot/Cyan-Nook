@@ -1750,7 +1750,7 @@ WebGL 公開時にユーザーがブラウザから API エンドポイントを
 | `SettingsMenuController` | 上部アイコンメニューバー、ホバーツールチップ、パネル展開/折り畳みアニメーション |
 | `AvatarSettingsPanel` | アバター設定（VRMモデル選択、カメラ高さ、カメラルックアット、プロンプト（キャラ設定/レスポンスフォーマット）、Save/Reload） |
 | `LLMSettingsPanel` | LLM設定（API設定、Vision、IdleChat、Sleep、WebCam、Save/TestConnection） |
-| `VoiceSettingsPanel` | 音声設定（VOICEVOX音声合成 + Web Speech API音声入力） |
+| `VoiceSettingsPanel` | 音声設定（VOICEVOX / Gemini TTS / Web Speech API + 音声入力） |
 | `WebSpeechRecognition` | Web Speech API C#ラッパー（WebGL専用、音声認識） |
 | `VoiceInputController` | 音声入力統合管理（WebSpeechRecognition + VAD + UIController接続）、`OnEnabledChanged`イベントでUI同期 |
 | `VoiceActivityDetector` | 無音検出・自動送信（部分結果蓄積、N秒無音でトリガー） |
@@ -3785,7 +3785,7 @@ public enum InputMode
 |---------|--------|------|
 | 顔 | `AvatarSettingsPanel` | VRMモデル選択、カメラ高さ、カメラルックアット、プロンプト（キャラ設定/レスポンスフォーマット）、Save/Reload |
 | 吹き出し | `LLMSettingsPanel` | API設定、Vision、IdleChat、Sleep、WebCam、Save/TestConnection |
-| スピーカー | `VoiceSettingsPanel` | TTS ON/OFF、エンジン選択（VOICEVOX/Web Speech API）、VOICEVOX設定、Web Speech設定、STT設定 |
+| スピーカー | `VoiceSettingsPanel` | TTS ON/OFF、エンジン選択（Web Speech API / VOICEVOX / Gemini TTS）、各エンジン設定、STT設定 |
 | 歯車 | (空) | その他設定（将来用） |
 | [...] | `DebugSettingsPanel` | デバッグキー、JSONモード、LLM Raw Text、Timeline Debug、設定Import/Export、ライセンス表示 |
 
@@ -3980,7 +3980,7 @@ LLM API設定、生成パラメータ、Vision、IdleChat、Sleep、WebCamの設
 
 #### VoiceSettingsPanel
 
-音声設定パネル。TTS ON/OFF、エンジン選択（Web Speech API / VOICEVOX）、音声入力を統合管理。
+音声設定パネル。TTS ON/OFF、エンジン選択（Web Speech API / VOICEVOX / Gemini TTS）、音声入力を統合管理。
 
 **セクション0: TTS ON/OFF**
 - TTS有効/無効トグル（デフォルトOFF）
@@ -3988,8 +3988,9 @@ LLM API設定、生成パラメータ、Vision、IdleChat、Sleep、WebCamの設
 - 設定変更は即時PlayerPrefsに保存
 
 **セクション1: 音声合成エンジン設定**
-- TTSエンジン選択ドロップダウン（Web Speech API / VOICEVOX）
+- TTSエンジン選択ドロップダウン（Web Speech API / VOICEVOX / Gemini TTS）
 - VOICEVOX: API URL入力、スピーカー選択、音声パラメータ（話速、音高、抑揚）
+- Gemini TTS: APIキー入力（マスク表示）、モデル選択（Flash/Pro）、ボイス選択（30種類）、スタイル指示プロンプト
 - Web Speech API: ボイス選択、Rate、Pitch
 - テスト用テキスト入力、再生ボタン、接続テスト、設定保存
 
@@ -4087,6 +4088,7 @@ UIController上のTTSクレジット表示を更新する:
 | Voice TTS | 2 | `voice_ttsEnabled`, `voice_ttsEngine` |
 | Voice WebSpeech | 3 | `voice_webSpeechVoiceURI`, `voice_webSpeechRate`, `voice_webSpeechPitch` |
 | Voice VOICEVOX | 5 | `voice_apiUrl`, `voice_speakerId`, `voice_speedScale`, `voice_pitchScale`, `voice_intonationScale` |
+| Voice Gemini TTS | 4 | `gemini_tts_apiKey`, `gemini_tts_model`, `gemini_tts_voiceName`, `gemini_tts_stylePrompt` |
 | Voice Input | 3 | `voice_micEnabled`, `voice_inputLanguage`, `voice_silenceThreshold` |
 
 ※ ランタイム状態（`sleep_state`, `sleep_wake_time`, `sleep_furniture_id`）と会話履歴（`conversation_history`）はエクスポート対象外
@@ -4171,7 +4173,7 @@ PreservePos: True
 - `ttsCreditText`: TTSクレジット表示テキスト（TMP_Text）
 - `voiceSynthesisController`: VoiceSynthesisController参照（イベント購読用）
 - `VoiceSynthesisController.OnTTSCreditChanged` イベントを購読し、TTS設定変更時に自動更新
-- 表示例: `"VOICEVOX:ずんだもん(ノーマル)"` / `"Web Speech API"` / `"OFF"`
+- 表示例: `"VOICEVOX:ずんだもん(ノーマル)"` / `"Gemini TTS:Kore"` / `"Web Speech API"` / `"OFF"`
 - VOICEVOXクレジット表記は規約準拠（例: [ずんだもん利用規約](https://zunko.jp/con_ongen_kiyaku.html)）
 
 #### ストリーミング表示（UIController）
@@ -7332,12 +7334,13 @@ IB/PrePassでの根本修正はスナップショットの2層管理が必要で
 
 ## Voice Synthesis System (TTS)
 
-2つのTTSエンジンをサポート。`TTSEngineType` enum でエンジンを切り替え。
+3つのTTSエンジンをサポート。`TTSEngineType` enum でエンジンを切り替え。
 
 | エンジン | 特徴 | リップシンク |
 |---------|------|------------|
-| **Web Speech API** (デフォルト) | 設定不要、ブラウザ標準、WebGL専用 | Simulated（時間推定） |
-| **VOICEVOX** | 高品質、要ローカルサーバー | Mora（母音正確同期） |
+| **Web Speech API** (デフォルト) | 設定不要、ブラウザ標準、WebGL専用、低品質 | Simulated（時間推定） |
+| **VOICEVOX** | 高品質、要ローカル/LANサーバー、キャラクター性あり | Mora（母音正確同期） |
+| **Gemini TTS** | 高品質、要APIキー、ナチュラル系、無料枠あり | Amplitude（音量解析フォールバック） |
 
 ### System Architecture
 
@@ -7345,13 +7348,21 @@ IB/PrePassでの根本修正はスナップショットの2層管理が必要で
 ChatManager (Streaming Response)
     ↓ (文単位イベント)
 VoiceSynthesisController (TTSEngineType分岐)
-    ├─ [VOICEVOX]
-    │   ↓ (API呼び出し)
-    │   VoicevoxClient ────→ VOICEVOX API (localhost:50021)
-    │   ↓ (WAVデータ + モーラタイムライン)
-    │   AudioSource (順次再生キュー)
+    ├─ [VOICEVOX]                              ┐
+    │   ↓ (API呼び出し)                         │ AudioClip
+    │   VoicevoxClient ─→ VOICEVOX API         │ベース
+    │   ↓ (WAV + モーラタイムライン)            │共通
+    │                                          │キュー
+    ├─ [Gemini TTS]                            │
+    │   ↓ (REST呼び出し)                        │
+    │   GeminiTtsClient ─→ generativelanguage  │
+    │   ↓ (raw PCM16 24kHz mono)               │
+    │                                          ┘
+    │   ↓ AudioSource (順次再生キュー)
     │   ↓ (再生中イベント)
-    │   LipSyncController (Moraモード: 母音正確同期)
+    │   LipSyncController
+    │     ├─ Moraモード（VOICEVOX: モーラあり）
+    │     └─ Amplitudeモード（Gemini: モーラなしフォールバック）
     │
     └─ [Web Speech API]
         ↓ (Enqueue)
@@ -7361,6 +7372,10 @@ VoiceSynthesisController (TTSEngineType分岐)
 
 LipSyncController → Vrm10Instance.Expression (aa, ih, ou, ee, oh)
 ```
+
+VOICEVOX と Gemini TTS は両方とも `(AudioClip, List<MoraEntry>?)` を返すため、
+`VoiceSynthesisController` 内では共通の `_audioClipQueue` で再生制御される。
+モーラタイムラインの有無で `LipSyncController` のモードが自動切替される。
 
 ### Components
 
@@ -7495,6 +7510,61 @@ void SaveSettings();      // PlayerPrefsへ保存
    - C#側で`OnVoicesLoadedEvent`を購読前に音声が読み込まれるケースがある
    - 対策: VoiceSettingsPanelの`Start()`で`AvailableVoices`を直接参照して補完
 
+#### GeminiTtsClient (`Scripts/Voice/`)
+
+**役割**: Google Gemini TTS REST APIとの通信。VOICEVOX が使えない環境向けの代替TTS。
+
+**主要機能**:
+- テキスト→音声合成 (`POST /v1beta/models/{model}:generateContent`)
+- 30種類のプリセットボイス（Kore, Puck, Charon, Zephyr 等）
+- スタイル指示プロンプト（例: `"Say cheerfully: ..."` で感情表現）
+- raw PCM16 (24kHz / mono) → AudioClip 変換
+- PlayerPrefs保存/読込（API キー、モデル、ボイス、スタイルプロンプト）
+
+**エンドポイント**:
+```
+POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+Header: x-goog-api-key: {API_KEY}
+Body: { contents, generationConfig: { responseModalities: ["AUDIO"], speechConfig: {...} } }
+```
+
+**音声フォーマット**: PCM 16-bit, 24kHz, モノラル（base64エンコードされて返却）
+
+**PlayerPrefs キー**:
+- `gemini_tts_apiKey` (string)
+- `gemini_tts_model` (string, 例: `gemini-2.5-flash-preview-tts`)
+- `gemini_tts_voiceName` (string, 例: `Kore`)
+- `gemini_tts_stylePrompt` (string, 任意)
+
+**Public API**:
+```csharp
+Task<(AudioClip clip, List<MoraEntry> moraTimeline)> SynthesizeAsync(string text);
+// moraTimeline は常に null（Gemini TTS はモーラ情報を返さない）
+void LoadSettings();
+void SaveSettings();
+```
+
+**実装上の注意点**:
+
+1. **モーラタイムラインなし**: Gemini TTS はモーラ単位のタイミング情報を返さないため、
+   リップシンクは `AmplitudeMode`（音量解析）にフォールバックする。VoiceSynthesisController
+   側で `moraTimeline == null` 判定により自動切替される。
+
+2. **生PCMヘッダなし**: VOICEVOX は WAV ヘッダ付き、Gemini TTS はヘッダなしの生 PCM16。
+   `WavUtility.ToAudioClip` は使えないため、`PcmToAudioClip` ヘルパーで直接
+   `Int16` → `float[-1, 1]` 正規化 → `AudioClip.Create` する。
+
+3. **APIキーのブラウザ露出（WebGL）**: WebGL ビルドでは API キーが実行時に読み取り可能。
+   既存のLLMプロバイダ群と同じ自己責任モデル。`TMP_InputField.ContentType.Password` で
+   入力時のマスキングは行う。
+
+4. **JSONレスポンスからbase64抽出**: `JsonUtility` は深いネスト + キーワード `data` の
+   抽出が困難なため、文字列検索で `"inlineData"` → `"data"` → クォート間を切り出す。
+   base64文字列に `\` は含まれないためエスケープ処理は不要。
+
+5. **Preview段階**: モデル名に `preview` が含まれており、2026年4月時点でGA前。
+   仕様変更リスクあり。
+
 #### TTSEngineType (`Scripts/Core/`)
 
 **役割**: TTSエンジン種別enum
@@ -7502,8 +7572,9 @@ void SaveSettings();      // PlayerPrefsへ保存
 ```csharp
 public enum TTSEngineType
 {
-    WebSpeechAPI = 0,  // デフォルト（設定不要）
-    VOICEVOX = 1       // 高品質（要サーバー）
+    WebSpeechAPI = 0,  // デフォルト（設定不要、低品質）
+    VOICEVOX = 1,      // 高品質、要ローカルサーバー、キャラクター性あり
+    GeminiTTS = 2      // 高品質、要APIキー、ナチュラル系
 }
 ```
 

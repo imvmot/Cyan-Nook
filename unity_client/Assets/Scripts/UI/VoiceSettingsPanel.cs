@@ -10,13 +10,16 @@ namespace CyanNook.UI
 {
     /// <summary>
     /// 音声設定パネル
-    /// TTSエンジン選択（Web Speech API / VOICEVOX）、ボイスパラメータ、音声入力
+    /// TTSエンジン選択（Web Speech API / VOICEVOX / Gemini TTS）、ボイスパラメータ、音声入力
     /// </summary>
     public class VoiceSettingsPanel : MonoBehaviour
     {
         [Header("References")]
         [Tooltip("VoicevoxClient参照")]
         public VoicevoxClient voicevoxClient;
+
+        [Tooltip("GeminiTtsClient参照")]
+        public GeminiTtsClient geminiTtsClient;
 
         [Tooltip("WebSpeechSynthesis参照")]
         public WebSpeechSynthesis webSpeechSynthesis;
@@ -44,6 +47,9 @@ namespace CyanNook.UI
 
         [Tooltip("VOICEVOX設定セクション")]
         public GameObject voicevoxSettingsSection;
+
+        [Tooltip("Gemini TTS設定セクション")]
+        public GameObject geminiTtsSettingsSection;
 
         [Header("UI - Web Speech API")]
         [Tooltip("Web Speech APIボイス選択")]
@@ -84,6 +90,22 @@ namespace CyanNook.UI
         public Slider intonationSlider;
         [Tooltip("抑揚表示テキスト")]
         public TMP_Text intonationValueText;
+
+        [Header("UI - Gemini TTS")]
+        [Tooltip("Gemini APIキー入力")]
+        public TMP_InputField geminiApiKeyInputField;
+
+        [Tooltip("Gemini TTSモデル選択ドロップダウン (Flash/Pro)")]
+        public TMP_Dropdown geminiModelDropdown;
+
+        [Tooltip("Gemini TTSボイス選択ドロップダウン")]
+        public TMP_Dropdown geminiVoiceDropdown;
+
+        [Tooltip("Gemini TTSスタイル指示プロンプト入力")]
+        public TMP_InputField geminiStylePromptInputField;
+
+        [Tooltip("Gemini TTS音声テスト再生ボタン")]
+        public Button geminiTtsTestButton;
 
         [Header("UI - Test")]
         [Tooltip("テスト用テキスト入力")]
@@ -126,6 +148,23 @@ namespace CyanNook.UI
         // Web Speech APIボイスリスト
         private List<WebSpeechVoice> _webSpeechVoices = new List<WebSpeechVoice>();
 
+        // Gemini TTS の固定リスト（公式30種類のうち代表的なもの）
+        // ref: https://ai.google.dev/gemini-api/docs/speech-generation
+        private static readonly string[] GeminiVoiceNames = new[]
+        {
+            "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede",
+            "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+            "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+            "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+            "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat"
+        };
+
+        private static readonly string[] GeminiModelNames = new[]
+        {
+            "gemini-2.5-flash-preview-tts",
+            "gemini-2.5-pro-preview-tts"
+        };
+
         // PlayerPrefs キー（音声入力用）
         private const string PREF_MIC_ENABLED = "voice_micEnabled";
         private const string PREF_VOICE_INPUT_LANGUAGE = "voice_inputLanguage";
@@ -144,6 +183,9 @@ namespace CyanNook.UI
 
             // Web Speech API設定
             InitializeWebSpeechSettings();
+
+            // Gemini TTS設定
+            InitializeGeminiTtsSettings();
 
             // VOICEVOXスライダーイベント
             if (speedSlider != null)
@@ -192,6 +234,20 @@ namespace CyanNook.UI
             // （OnEnable→LoadVoiceInputSettingsはリスナー登録前に実行されるため、ここで明示的に適用）
             ApplySavedMicrophoneSetting();
 
+            // Unityライフサイクル: 初回アクティブ化時はOnEnable → Startの順で実行されるため、
+            // OnEnableのLoad*ToUI()はInitialize*()より先に走っている。この時点でドロップダウンの
+            // optionsはまだPrefabデフォルトのまま（"Option A/B/C"等）で、.valueを設定しても
+            // 正しく反映されない。Initialize*()が終わった今、静的ドロップダウン系のLoadを
+            // 再実行して正しい値を反映する。
+            // 対象:
+            //   - LoadTTSEngineToUI: ttsEngineDropdown（3択）
+            //   - LoadGeminiTtsSettingsToUI: geminiModelDropdown（2択）+ geminiVoiceDropdown（30択）
+            // 動的dropdown（speakerDropdown, webSpeechVoiceDropdown）は別経路で非同期populate
+            // されるのでここでの再Loadは不要。
+            LoadTTSEngineToUI();
+            LoadGeminiTtsSettingsToUI();
+            UpdateTTSSettingsVisibility();
+
             // 起動時のTTSクレジット初期化
             NotifyTTSCreditChanged();
         }
@@ -202,6 +258,7 @@ namespace CyanNook.UI
             LoadTTSEngineToUI();
             LoadVoicevoxSettingsToUI();
             LoadWebSpeechSettingsToUI();
+            LoadGeminiTtsSettingsToUI();
             LoadVoiceInputSettings();
             UpdateTTSSettingsVisibility();
 
@@ -246,6 +303,18 @@ namespace CyanNook.UI
                 webSpeechTestButton.onClick.RemoveListener(OnWebSpeechTestPlayClicked);
             if (webSpeechSynthesis != null)
                 webSpeechSynthesis.OnVoicesLoadedEvent.RemoveListener(OnWebSpeechVoicesLoaded);
+
+            // Gemini TTS
+            if (geminiModelDropdown != null)
+                geminiModelDropdown.onValueChanged.RemoveListener(OnGeminiModelChanged);
+            if (geminiVoiceDropdown != null)
+                geminiVoiceDropdown.onValueChanged.RemoveListener(OnGeminiVoiceChanged);
+            if (geminiApiKeyInputField != null)
+                geminiApiKeyInputField.onEndEdit.RemoveListener(OnGeminiApiKeyChanged);
+            if (geminiStylePromptInputField != null)
+                geminiStylePromptInputField.onEndEdit.RemoveListener(OnGeminiStylePromptChanged);
+            if (geminiTtsTestButton != null)
+                geminiTtsTestButton.onClick.RemoveListener(OnGeminiTtsTestPlayClicked);
 
             // VOICEVOX
             if (speedSlider != null)
@@ -316,6 +385,8 @@ namespace CyanNook.UI
                     webSpeechSettingsSection.SetActive(false);
                 if (voicevoxSettingsSection != null)
                     voicevoxSettingsSection.SetActive(false);
+                if (geminiTtsSettingsSection != null)
+                    geminiTtsSettingsSection.SetActive(false);
             }
             else
             {
@@ -336,7 +407,8 @@ namespace CyanNook.UI
                 ttsEngineDropdown.AddOptions(new List<string>
                 {
                     "Web Speech API",
-                    "VOICEVOX"
+                    "VOICEVOX",
+                    "Gemini TTS"
                 });
                 ttsEngineDropdown.onValueChanged.AddListener(OnTTSEngineChanged);
             }
@@ -352,21 +424,23 @@ namespace CyanNook.UI
 
         private void OnTTSEngineChanged(int index)
         {
+            var engine = (TTSEngineType)index;
+
             if (voiceSynthesisController != null)
             {
-                voiceSynthesisController.SetTTSEngine((TTSEngineType)index);
+                voiceSynthesisController.SetTTSEngine(engine);
             }
 
             UpdateTTSSettingsVisibility();
             NotifyTTSCreditChanged();
 
             // VOICEVOX選択時はスピーカーリストを取得
-            if ((TTSEngineType)index == TTSEngineType.VOICEVOX)
+            if (engine == TTSEngineType.VOICEVOX)
             {
                 _ = RefreshSpeakerList();
             }
 
-            Debug.Log($"[VoiceSettingsPanel] TTS Engine: {(TTSEngineType)index}");
+            Debug.Log($"[VoiceSettingsPanel] TTS Engine: {engine}");
         }
 
         /// <summary>
@@ -374,12 +448,15 @@ namespace CyanNook.UI
         /// </summary>
         private void UpdateTTSEngineUI()
         {
-            bool isWebSpeech = ttsEngineDropdown != null && ttsEngineDropdown.value == 0;
+            int idx = ttsEngineDropdown != null ? ttsEngineDropdown.value : 0;
+            var engine = (TTSEngineType)idx;
 
             if (webSpeechSettingsSection != null)
-                webSpeechSettingsSection.SetActive(isWebSpeech);
+                webSpeechSettingsSection.SetActive(engine == TTSEngineType.WebSpeechAPI);
             if (voicevoxSettingsSection != null)
-                voicevoxSettingsSection.SetActive(!isWebSpeech);
+                voicevoxSettingsSection.SetActive(engine == TTSEngineType.VOICEVOX);
+            if (geminiTtsSettingsSection != null)
+                geminiTtsSettingsSection.SetActive(engine == TTSEngineType.GeminiTTS);
         }
 
         // ─────────────────────────────────────
@@ -465,14 +542,14 @@ namespace CyanNook.UI
         {
             if (webSpeechSynthesis == null)
             {
-                SetStatus("Error: WebSpeechSynthesis not available");
+                SetStatusForEngine(TTSEngineType.WebSpeechAPI, "Error: WebSpeechSynthesis not available");
                 return;
             }
 
             string text = testTextInputField != null ? testTextInputField.text : "こんにちは、音声合成のテストです。";
             if (string.IsNullOrEmpty(text))
             {
-                SetStatus("Please enter test text");
+                SetStatusForEngine(TTSEngineType.WebSpeechAPI, "Please enter test text");
                 return;
             }
 
@@ -487,7 +564,7 @@ namespace CyanNook.UI
             }
 
             webSpeechSynthesis.Speak(text);
-            SetStatus("Speaking...");
+            SetStatusForEngine(TTSEngineType.WebSpeechAPI, "Speaking...");
             Debug.Log($"[VoiceSettingsPanel] Web Speech test: {text}");
         }
 
@@ -564,13 +641,13 @@ namespace CyanNook.UI
                 return;
             }
 
-            SetStatus("Loading speakers...");
+            SetStatusForEngine(TTSEngineType.VOICEVOX, "Loading speakers...");
 
             _speakers = await voicevoxClient.GetSpeakers();
 
             if (_speakers == null || _speakers.Count == 0)
             {
-                SetStatus("Failed to load speakers");
+                SetStatusForEngine(TTSEngineType.VOICEVOX, "Failed to load speakers");
                 if (speakerDropdown != null)
                 {
                     speakerDropdown.ClearOptions();
@@ -612,7 +689,7 @@ namespace CyanNook.UI
             }
 
             NotifyTTSCreditChanged();
-            SetStatus($"Loaded {_speakerEntries.Count} voices");
+            SetStatusForEngine(TTSEngineType.VOICEVOX, $"Loaded {_speakerEntries.Count} voices");
             Debug.Log($"[VoiceSettingsPanel] Loaded {_speakerEntries.Count} speaker styles");
         }
 
@@ -731,7 +808,7 @@ namespace CyanNook.UI
                     if (_speakerEntries.Count == 0)
                     {
                         Debug.LogWarning("[VoiceSettingsPanel] Speaker list is empty! Please click Test Connection first.");
-                        SetStatus("Error: Speaker list not loaded");
+                        SetStatusForEngine(TTSEngineType.VOICEVOX, "Error: Speaker list not loaded");
                         return;
                     }
 
@@ -757,6 +834,13 @@ namespace CyanNook.UI
                 webSpeechSynthesis.SaveSettings();
             }
 
+            // Gemini TTS設定保存
+            if (geminiTtsClient != null)
+            {
+                ApplyGeminiUiToClient();
+                geminiTtsClient.SaveSettings();
+            }
+
             // 音声入力設定保存
             SaveVoiceInputSettings();
 
@@ -769,7 +853,7 @@ namespace CyanNook.UI
         {
             if (voicevoxClient == null) return;
 
-            SetStatus("Testing connection...");
+            SetStatusForEngine(TTSEngineType.VOICEVOX, "Testing connection...");
 
             if (apiUrlInputField != null)
             {
@@ -780,12 +864,12 @@ namespace CyanNook.UI
 
             if (success)
             {
-                SetStatus("Connection OK!");
+                SetStatusForEngine(TTSEngineType.VOICEVOX, "Connection OK!");
                 await RefreshSpeakerList();
             }
             else
             {
-                SetStatus("Connection Failed");
+                SetStatusForEngine(TTSEngineType.VOICEVOX, "Connection Failed");
             }
         }
 
@@ -793,13 +877,13 @@ namespace CyanNook.UI
         {
             if (voicevoxClient == null || testAudioSource == null)
             {
-                SetStatus("Error: Missing references");
+                SetStatusForEngine(TTSEngineType.VOICEVOX, "Error: Missing references");
                 return;
             }
 
             if (testTextInputField == null || string.IsNullOrEmpty(testTextInputField.text))
             {
-                SetStatus("Please enter test text");
+                SetStatusForEngine(TTSEngineType.VOICEVOX, "Please enter test text");
                 return;
             }
 
@@ -824,21 +908,21 @@ namespace CyanNook.UI
                 Debug.LogWarning("[VoiceSettingsPanel] speakerDropdown is null!");
             }
 
-            SetStatus("Synthesizing...");
+            SetStatusForEngine(TTSEngineType.VOICEVOX, "Synthesizing...");
 
             string text = testTextInputField.text;
             var (clip, _) = await voicevoxClient.SynthesizeAsync(text);
 
             if (clip == null)
             {
-                SetStatus("Synthesis failed");
+                SetStatusForEngine(TTSEngineType.VOICEVOX, "Synthesis failed");
                 return;
             }
 
             testAudioSource.clip = clip;
             testAudioSource.Play();
 
-            SetStatus($"Playing... ({clip.length:F1}s)");
+            SetStatusForEngine(TTSEngineType.VOICEVOX, $"Playing... ({clip.length:F1}s)");
             Debug.Log($"[VoiceSettingsPanel] Playing test audio: {text}");
         }
 
@@ -848,6 +932,22 @@ namespace CyanNook.UI
             {
                 statusText.text = message;
             }
+        }
+
+        /// <summary>
+        /// エンジン別のstatus書き込み。
+        /// 現在選択中のエンジンと一致しない場合はログのみで表示は更新しない。
+        /// 非同期処理が完了するまでの間にユーザーが別エンジンに切り替えた場合、
+        /// 残像のような古いメッセージで混乱するのを防ぐ。
+        /// </summary>
+        private void SetStatusForEngine(TTSEngineType engine, string message)
+        {
+            if (voiceSynthesisController != null && voiceSynthesisController.CurrentEngine != engine)
+            {
+                Debug.Log($"[VoiceSettingsPanel] Status suppressed (engine={engine}, current={voiceSynthesisController.CurrentEngine}): {message}");
+                return;
+            }
+            SetStatus(message);
         }
 
         // ─────────────────────────────────────
@@ -1091,6 +1191,162 @@ namespace CyanNook.UI
             {
                 voiceInputStatusText.text = "Standby";
             }
+        }
+
+        // ─────────────────────────────────────
+        // Gemini TTS 設定
+        // ─────────────────────────────────────
+
+        private void InitializeGeminiTtsSettings()
+        {
+            // モデルドロップダウン
+            if (geminiModelDropdown != null)
+            {
+                geminiModelDropdown.ClearOptions();
+                geminiModelDropdown.AddOptions(new List<string>(GeminiModelNames));
+                geminiModelDropdown.onValueChanged.AddListener(OnGeminiModelChanged);
+            }
+
+            // ボイスドロップダウン
+            if (geminiVoiceDropdown != null)
+            {
+                geminiVoiceDropdown.ClearOptions();
+                geminiVoiceDropdown.AddOptions(new List<string>(GeminiVoiceNames));
+                geminiVoiceDropdown.onValueChanged.AddListener(OnGeminiVoiceChanged);
+            }
+
+            // APIキー入力
+            if (geminiApiKeyInputField != null)
+            {
+                geminiApiKeyInputField.contentType = TMP_InputField.ContentType.Password;
+                geminiApiKeyInputField.onEndEdit.AddListener(OnGeminiApiKeyChanged);
+            }
+
+            // スタイルプロンプト入力
+            if (geminiStylePromptInputField != null)
+            {
+                geminiStylePromptInputField.onEndEdit.AddListener(OnGeminiStylePromptChanged);
+            }
+
+            // テスト再生ボタン
+            if (geminiTtsTestButton != null)
+            {
+                geminiTtsTestButton.onClick.AddListener(OnGeminiTtsTestPlayClicked);
+            }
+        }
+
+        private void LoadGeminiTtsSettingsToUI()
+        {
+            if (geminiTtsClient == null) return;
+
+            if (geminiApiKeyInputField != null)
+            {
+                geminiApiKeyInputField.text = geminiTtsClient.apiKey ?? "";
+            }
+
+            if (geminiModelDropdown != null)
+            {
+                int idx = System.Array.IndexOf(GeminiModelNames, geminiTtsClient.model);
+                geminiModelDropdown.value = idx >= 0 ? idx : 0;
+            }
+
+            if (geminiVoiceDropdown != null)
+            {
+                int idx = System.Array.IndexOf(GeminiVoiceNames, geminiTtsClient.voiceName);
+                geminiVoiceDropdown.value = idx >= 0 ? idx : 0;
+            }
+
+            if (geminiStylePromptInputField != null)
+            {
+                geminiStylePromptInputField.text = geminiTtsClient.stylePrompt ?? "";
+            }
+        }
+
+        /// <summary>
+        /// UIの値をGeminiTtsClientに反映（保存前/テスト再生前に呼ぶ）
+        /// </summary>
+        private void ApplyGeminiUiToClient()
+        {
+            if (geminiTtsClient == null) return;
+
+            if (geminiApiKeyInputField != null)
+                geminiTtsClient.apiKey = geminiApiKeyInputField.text;
+
+            if (geminiModelDropdown != null && geminiModelDropdown.value < GeminiModelNames.Length)
+                geminiTtsClient.model = GeminiModelNames[geminiModelDropdown.value];
+
+            if (geminiVoiceDropdown != null && geminiVoiceDropdown.value < GeminiVoiceNames.Length)
+                geminiTtsClient.voiceName = GeminiVoiceNames[geminiVoiceDropdown.value];
+
+            if (geminiStylePromptInputField != null)
+                geminiTtsClient.stylePrompt = geminiStylePromptInputField.text;
+        }
+
+        private void OnGeminiModelChanged(int index)
+        {
+            if (geminiTtsClient == null || index < 0 || index >= GeminiModelNames.Length) return;
+            geminiTtsClient.model = GeminiModelNames[index];
+            NotifyTTSCreditChanged();
+        }
+
+        private void OnGeminiVoiceChanged(int index)
+        {
+            if (geminiTtsClient == null || index < 0 || index >= GeminiVoiceNames.Length) return;
+            geminiTtsClient.voiceName = GeminiVoiceNames[index];
+            NotifyTTSCreditChanged();
+        }
+
+        private void OnGeminiApiKeyChanged(string value)
+        {
+            if (geminiTtsClient == null) return;
+            geminiTtsClient.apiKey = value;
+        }
+
+        private void OnGeminiStylePromptChanged(string value)
+        {
+            if (geminiTtsClient == null) return;
+            geminiTtsClient.stylePrompt = value;
+        }
+
+        private async void OnGeminiTtsTestPlayClicked()
+        {
+            if (geminiTtsClient == null || testAudioSource == null)
+            {
+                SetStatusForEngine(TTSEngineType.GeminiTTS, "Error: Missing references");
+                return;
+            }
+
+            if (testTextInputField == null || string.IsNullOrEmpty(testTextInputField.text))
+            {
+                SetStatusForEngine(TTSEngineType.GeminiTTS, "Please enter test text");
+                return;
+            }
+
+            // UIの最新値をクライアントに反映してから合成
+            ApplyGeminiUiToClient();
+
+            if (string.IsNullOrEmpty(geminiTtsClient.apiKey))
+            {
+                SetStatusForEngine(TTSEngineType.GeminiTTS, "Error: Gemini API key is empty");
+                return;
+            }
+
+            SetStatusForEngine(TTSEngineType.GeminiTTS, "Synthesizing (Gemini TTS)...");
+
+            string text = testTextInputField.text;
+            var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
+
+            if (clip == null)
+            {
+                SetStatusForEngine(TTSEngineType.GeminiTTS, "Gemini TTS synthesis failed");
+                return;
+            }
+
+            testAudioSource.clip = clip;
+            testAudioSource.Play();
+
+            SetStatusForEngine(TTSEngineType.GeminiTTS, $"Playing... ({clip.length:F1}s)");
+            Debug.Log($"[VoiceSettingsPanel] Gemini TTS test playing: {text}");
         }
     }
 }

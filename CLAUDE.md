@@ -34,7 +34,7 @@ Cyan-Nook/
 │       │   ├── Furniture/      # 家具システム
 │       │   ├── Timeline/       # カスタムTimelineトラック（ループ、キャンセル、慣性補間等）
 │       │   ├── UI/             # UI制御（UIController, 設定パネル群）
-│       │   ├── Voice/          # 音声合成（VOICEVOX）・音声入力（Web Speech API）
+│       │   ├── Voice/          # 音声合成（VOICEVOX / Gemini TTS / Web Speech API）・音声入力（Web Speech API）
 │       │   ├── Animation/      # アニメーションユーティリティ
 │       │   ├── Utilities/      # 汎用ユーティリティ
 │       │   ├── DebugTools/     # デバッグ用コンポーネント（DebugKeyController）
@@ -114,7 +114,7 @@ Cyan-Nook/
 | `SettingsMenuController` | 上部アイコンメニューバー、パネル開閉アニメーション |
 | `AvatarSettingsPanel` | アバター設定（VRM選択、カメラ、プロンプト、退屈レート、Save/Reload） |
 | `LLMSettingsPanel` | LLM設定（API設定、Vision、IdleChat、Sleep、WebCam） |
-| `VoiceSettingsPanel` | 音声設定（VOICEVOX音声合成 + Web Speech API音声入力） |
+| `VoiceSettingsPanel` | 音声設定（VOICEVOX / Gemini TTS / Web Speech API + Web Speech API音声入力） |
 | `DebugSettingsPanel` | デバッグ設定（デバッグキー、JSONモード、Raw Text表示、設定Import/Export） |
 
 ### DebugTools (`Scripts/DebugTools/`)
@@ -212,7 +212,7 @@ Category: common / talk / emote / interact
 - [x] 睡眠システム（夢タイマー・自動起床）
 - [x] 退屈システム（BoredomController）
 - [x] Vision（キャラクター視点カメラ + WebCam + ScreenCapture）
-- [x] 音声合成（VOICEVOX連携）
+- [x] 音声合成（VOICEVOX / Gemini TTS / Web Speech API、エンジン切替対応）
 - [x] 音声入力（Web Speech API + VAD）
 - [x] 本番UI（設定パネル群、マイクボタン）
 - [x] Cronスケジューラー（定期LLMリクエスト）
