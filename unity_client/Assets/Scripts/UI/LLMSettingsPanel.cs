@@ -195,6 +195,12 @@ namespace CyanNook.UI
             _availableApiTypes.Add(LLMApiType.WebLLM);
 #endif
 
+            // APIキー入力欄のマスク表示
+            if (apiKeyInputField != null)
+            {
+                apiKeyInputField.contentType = TMP_InputField.ContentType.Password;
+            }
+
             // ドロップダウンオプション初期化（OnEnable()のLoadConfigToUI()より先に実行する必要がある）
             if (apiTypeDropdown != null)
             {
