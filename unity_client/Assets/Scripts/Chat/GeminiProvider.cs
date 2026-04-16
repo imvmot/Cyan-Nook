@@ -42,7 +42,7 @@ namespace CyanNook.Chat
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
-                SetHeaders(request, config.apiKey);
+                SetHeaders(request, config.ResolveApiKey());
                 request.timeout = (int)config.timeout;
 
                 yield return request.SendWebRequest();
@@ -101,7 +101,7 @@ namespace CyanNook.Chat
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = streamHandler;
-                SetHeaders(request, config.apiKey);
+                SetHeaders(request, config.ResolveApiKey());
                 request.timeout = (int)config.timeout;
 
                 yield return request.SendWebRequest();
@@ -127,7 +127,7 @@ namespace CyanNook.Chat
 
             using (var request = UnityWebRequest.Get(testUrl))
             {
-                SetHeaders(request, config.apiKey);
+                SetHeaders(request, config.ResolveApiKey());
                 request.timeout = (int)config.timeout;
 
                 yield return request.SendWebRequest();

@@ -399,18 +399,60 @@ namespace CyanNook.UI
         // TTSエンジン選択
         // ─────────────────────────────────────
 
+        // ドロップダウンindex ↔ TTSEngineType の間接マッピング
+        private List<TTSEngineType> _availableTtsEngines;
+
         private void InitializeTTSEngineDropdown()
         {
+            // 利用可能TTSエンジンリストを構築
+            _availableTtsEngines = new List<TTSEngineType>();
+#if UNITYROOM_BUILD
+            _availableTtsEngines.Add(TTSEngineType.WebSpeechAPI);
+            _availableTtsEngines.Add(TTSEngineType.GeminiTTS);
+#else
+            _availableTtsEngines.Add(TTSEngineType.WebSpeechAPI);
+            _availableTtsEngines.Add(TTSEngineType.VOICEVOX);
+            _availableTtsEngines.Add(TTSEngineType.GeminiTTS);
+#endif
+
             if (ttsEngineDropdown != null)
             {
                 ttsEngineDropdown.ClearOptions();
-                ttsEngineDropdown.AddOptions(new List<string>
+                var labels = new List<string>();
+                foreach (var engine in _availableTtsEngines)
                 {
-                    "Web Speech API",
-                    "VOICEVOX",
-                    "Gemini TTS"
-                });
+                    labels.Add(GetTtsEngineLabel(engine));
+                }
+                ttsEngineDropdown.AddOptions(labels);
                 ttsEngineDropdown.onValueChanged.AddListener(OnTTSEngineChanged);
+            }
+        }
+
+        private TTSEngineType GetTtsEngineFromDropdownIndex(int index)
+        {
+            if (_availableTtsEngines != null && index >= 0 && index < _availableTtsEngines.Count)
+                return _availableTtsEngines[index];
+            return TTSEngineType.WebSpeechAPI;
+        }
+
+        private int GetTtsDropdownIndexFromEngine(TTSEngineType engine)
+        {
+            if (_availableTtsEngines != null)
+            {
+                int idx = _availableTtsEngines.IndexOf(engine);
+                if (idx >= 0) return idx;
+            }
+            return 0;
+        }
+
+        private static string GetTtsEngineLabel(TTSEngineType engine)
+        {
+            switch (engine)
+            {
+                case TTSEngineType.WebSpeechAPI: return "Web Speech API";
+                case TTSEngineType.VOICEVOX: return "VOICEVOX";
+                case TTSEngineType.GeminiTTS: return "Gemini TTS";
+                default: return engine.ToString();
             }
         }
 
@@ -418,13 +460,13 @@ namespace CyanNook.UI
         {
             if (ttsEngineDropdown != null && voiceSynthesisController != null)
             {
-                ttsEngineDropdown.value = (int)voiceSynthesisController.CurrentEngine;
+                ttsEngineDropdown.value = GetTtsDropdownIndexFromEngine(voiceSynthesisController.CurrentEngine);
             }
         }
 
         private void OnTTSEngineChanged(int index)
         {
-            var engine = (TTSEngineType)index;
+            var engine = GetTtsEngineFromDropdownIndex(index);
 
             if (voiceSynthesisController != null)
             {
@@ -449,7 +491,7 @@ namespace CyanNook.UI
         private void UpdateTTSEngineUI()
         {
             int idx = ttsEngineDropdown != null ? ttsEngineDropdown.value : 0;
-            var engine = (TTSEngineType)idx;
+            var engine = GetTtsEngineFromDropdownIndex(idx);
 
             if (webSpeechSettingsSection != null)
                 webSpeechSettingsSection.SetActive(engine == TTSEngineType.WebSpeechAPI);
