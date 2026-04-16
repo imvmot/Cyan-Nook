@@ -22,7 +22,7 @@ namespace CyanNook.Core
         public string geminiModelName = "gemini-2.5-flash";
 
         [Tooltip("デフォルトのGemini APIエンドポイント")]
-        public string geminiEndpoint = "https://generativelanguage.googleapis.com";
+        public string geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta";
 
         /// <summary>
         /// Resources フォルダからロードする。アセットが存在しなければ null。
