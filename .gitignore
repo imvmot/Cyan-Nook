@@ -6,3 +6,7 @@
 
 # Unityroomアップロード用（ビルドから生成）
 /unityroom/
+
+# Unityroom版ビルド用シークレット（APIキー等）
+unity_client/Assets/Resources/UnityroomConfig.asset
+unity_client/Assets/Resources/UnityroomConfig.asset.meta

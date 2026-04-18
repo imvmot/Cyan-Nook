@@ -40,6 +40,13 @@ namespace CyanNook.Timeline
         private bool _isActive;
         public bool IsActive => _isActive;
 
+        // 現在の加算ボーンリスト（StartOverride時に保持、StopOverride時にクリア）
+        private List<HumanBodyBones> _currentAdditiveBones;
+        /// <summary>
+        /// 現在の加算ボーンリスト（AdditiveCancelClipから参照される）
+        /// </summary>
+        public IReadOnlyList<HumanBodyBones> CurrentAdditiveBones => _currentAdditiveBones;
+
         // Awakeで全Humanoidボーンの参照をキャッシュ
         private Dictionary<HumanBodyBones, Transform> _boneTransformCache;
 
@@ -116,6 +123,7 @@ namespace CyanNook.Timeline
 
             _restoreBones = restoreList.ToArray();
             _restoreCount = restoreList.Count;
+            _currentAdditiveBones = new List<HumanBodyBones>(additiveBones);
             _isActive = true;
 
             Debug.Log($"[AdditiveOverrideHelper] StartOverride: additiveBones={additiveBones.Count}, restoreBones={_restoreCount}");
@@ -125,21 +133,30 @@ namespace CyanNook.Timeline
         /// 加算ボーンオーバーライドを停止。
         /// 以降のLateUpdateでの復元処理を行わない。
         /// </summary>
-        public void StopOverride()
+        /// <param name="invalidateCleanPose">
+        /// trueの場合、IBのクリーンポーズキャッシュを無効化してv₀=0フォールバックを強制する。
+        /// AdditiveCancelClip経由で停止する場合は false を指定し、
+        /// 現在の加算込みポーズをIBの「補間元」として流用する。
+        /// </param>
+        public void StopOverride(bool invalidateCleanPose = true)
         {
             if (!_isActive) return;
 
             _isActive = false;
             _restoreBones = null;
             _restoreCount = 0;
+            _currentAdditiveBones = null;
 
-            // AO動作中、IBのクリーンポーズキャッシュにはAO復元前のポーズ
-            // （Thinking/Emoteの全身ポーズ）が記録されている。
-            // AO停止後の次回IB開始時にこの不連続が偽v₀として検出されるため、
-            // _prevCleanPoseを無効化してv₀=0フォールバックを強制する。
-            inertialBlendHelper?.InvalidatePrevCleanPose();
+            if (invalidateCleanPose)
+            {
+                // AO動作中、IBのクリーンポーズキャッシュにはAO復元前のポーズ
+                // （Thinking/Emoteの全身ポーズ）が記録されている。
+                // AO停止後の次回IB開始時にこの不連続が偽v₀として検出されるため、
+                // _prevCleanPoseを無効化してv₀=0フォールバックを強制する。
+                inertialBlendHelper?.InvalidatePrevCleanPose();
+            }
 
-            Debug.Log("[AdditiveOverrideHelper] StopOverride");
+            Debug.Log($"[AdditiveOverrideHelper] StopOverride (invalidateCleanPose={invalidateCleanPose})");
         }
 
         /// <summary>
@@ -149,7 +166,23 @@ namespace CyanNook.Timeline
         private void LateUpdate()
         {
             if (!_isActive || _restoreBones == null) return;
+            ApplyRestore();
+        }
 
+        /// <summary>
+        /// 復元処理を即時実行する（LateUpdateを待たずに手動で呼ぶ用）。
+        /// AdditiveCancel経由でSnapshotCurrentPoseAsCleanする前に呼ぶと、
+        /// 「実際に画面に見えていたポーズ（下半身スナップショット＋上半身加算）」を
+        /// IBの補間元として正しくキャプチャできる。
+        /// </summary>
+        public void ApplyRestoreNow()
+        {
+            if (!_isActive || _restoreBones == null) return;
+            ApplyRestore();
+        }
+
+        private void ApplyRestore()
+        {
             for (int i = 0; i < _restoreCount; i++)
             {
                 _restoreBones[i].transform.localPosition = _restoreBones[i].localPosition;

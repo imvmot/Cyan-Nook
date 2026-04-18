@@ -42,7 +42,7 @@ namespace CyanNook.Chat
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
-                SetHeaders(request, config.apiKey);
+                SetHeaders(request, config.ResolveApiKey());
                 request.timeout = (int)config.timeout;
 
                 yield return request.SendWebRequest();
@@ -54,17 +54,15 @@ namespace CyanNook.Chat
                     {
                         var response = JsonUtility.FromJson<GeminiResponse>(responseText);
 
-                        if (response.candidates == null || response.candidates.Length == 0 ||
-                            response.candidates[0].content == null ||
-                            response.candidates[0].content.parts == null ||
-                            response.candidates[0].content.parts.Length == 0 ||
-                            string.IsNullOrEmpty(response.candidates[0].content.parts[0].text))
+                        // thought=false の part からテキストを収集（Gemma 4 thinking対応）
+                        string resultText = ExtractNonThoughtText(response);
+                        if (string.IsNullOrEmpty(resultText))
                         {
                             onError?.Invoke("Empty response from Gemini");
                         }
                         else
                         {
-                            onSuccess?.Invoke(response.candidates[0].content.parts[0].text.Trim());
+                            onSuccess?.Invoke(resultText.Trim());
                         }
                     }
                     catch (Exception e)
@@ -101,7 +99,7 @@ namespace CyanNook.Chat
             {
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = streamHandler;
-                SetHeaders(request, config.apiKey);
+                SetHeaders(request, config.ResolveApiKey());
                 request.timeout = (int)config.timeout;
 
                 yield return request.SendWebRequest();
@@ -127,7 +125,7 @@ namespace CyanNook.Chat
 
             using (var request = UnityWebRequest.Get(testUrl))
             {
-                SetHeaders(request, config.apiKey);
+                SetHeaders(request, config.ResolveApiKey());
                 request.timeout = (int)config.timeout;
 
                 yield return request.SendWebRequest();
@@ -263,6 +261,41 @@ namespace CyanNook.Chat
             return sb.ToString();
         }
 
+        /// <summary>
+        /// レスポンスから thought=false のテキストのみを抽出（Gemma 4 thinking対応）。
+        /// thought=true の part は内部推論なのでスキップする。
+        /// 全 part が thought=true の場合（Gemma 4）は全テキストにフォールバックする。
+        /// </summary>
+        private static string ExtractNonThoughtText(GeminiResponse response)
+        {
+            if (response?.candidates == null || response.candidates.Length == 0) return null;
+            var content = response.candidates[0].content;
+            if (content?.parts == null || content.parts.Length == 0) return null;
+
+            var nonThought = new StringBuilder();
+            var allText = new StringBuilder();
+            foreach (var part in content.parts)
+            {
+                if (!string.IsNullOrEmpty(part.text))
+                {
+                    allText.Append(part.text);
+                    if (!part.thought)
+                    {
+                        nonThought.Append(part.text);
+                    }
+                }
+            }
+
+            // non-thought part があればそちらを優先、なければ全テキスト（Gemma 4 フォールバック）
+            if (nonThought.Length > 0) return nonThought.ToString();
+            if (allText.Length > 0)
+            {
+                Debug.Log("[GeminiProvider] All parts are thought=true, falling back to full text");
+                return allText.ToString();
+            }
+            return null;
+        }
+
         private static string EscapeJsonString(string value)
         {
             if (string.IsNullOrEmpty(value)) return "";
@@ -293,6 +326,11 @@ namespace CyanNook.Chat
         private readonly Decoder _utf8Decoder;
         private readonly StreamSeparatorProcessor _processor;
         private readonly StringBuilder _lineBuffer = new StringBuilder();
+
+        // Gemma 4 thought フォールバック: 全 part が thought=true の場合に
+        // ストリーム完了時に thought テキストを通常テキストとして処理する
+        private readonly StringBuilder _thoughtBuffer = new StringBuilder();
+        private bool _hasNonThoughtContent;
 
         public GeminiSseStreamHandler(byte[] preallocatedBuffer,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
@@ -337,6 +375,15 @@ namespace CyanNook.Chat
                 _utf8Decoder.GetChars(new byte[0], 0, 0, chars, 0, true);
                 _lineBuffer.Append(new string(chars));
                 ProcessSseLines();
+            }
+
+            // Gemma 4 フォールバック: 全 part が thought=true だった場合、
+            // thought バッファを通常テキストとして処理する。
+            // これによりレスポンスが空になる問題を回避する。
+            if (!_hasNonThoughtContent && _thoughtBuffer.Length > 0)
+            {
+                Debug.Log($"[GeminiSseStreamHandler] All parts were thought=true, flushing {_thoughtBuffer.Length} chars as regular text");
+                _processor.ProcessChunk(_thoughtBuffer.ToString());
             }
 
             _processor.Complete();
@@ -384,11 +431,24 @@ namespace CyanNook.Chat
                 var chunk = JsonUtility.FromJson<GeminiResponse>(jsonData);
                 if (chunk.candidates != null && chunk.candidates.Length > 0 &&
                     chunk.candidates[0].content != null &&
-                    chunk.candidates[0].content.parts != null &&
-                    chunk.candidates[0].content.parts.Length > 0 &&
-                    !string.IsNullOrEmpty(chunk.candidates[0].content.parts[0].text))
+                    chunk.candidates[0].content.parts != null)
                 {
-                    _processor.ProcessChunk(chunk.candidates[0].content.parts[0].text);
+                    foreach (var part in chunk.candidates[0].content.parts)
+                    {
+                        if (string.IsNullOrEmpty(part.text)) continue;
+
+                        if (!part.thought)
+                        {
+                            // 通常テキスト → 即時処理
+                            _hasNonThoughtContent = true;
+                            _processor.ProcessChunk(part.text);
+                        }
+                        else
+                        {
+                            // thought part → バッファに蓄積（フォールバック用）
+                            _thoughtBuffer.Append(part.text);
+                        }
+                    }
                 }
             }
             catch (Exception e)
@@ -429,5 +489,8 @@ namespace CyanNook.Chat
     internal class GeminiPart
     {
         public string text;
+        // Gemma 4等のthinkingモデルでは、thinking部分にthought=trueが付与される。
+        // thought=true の part は内部推論であり、ユーザー向け出力ではないためスキップする。
+        public bool thought;
     }
 }

@@ -1,5 +1,6 @@
 using UnityEngine;
 using System;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -171,6 +172,60 @@ namespace CyanNook.Chat
             if (apiType == LLMApiType.WebLLM)
                 return true;
             return !string.IsNullOrEmpty(apiEndpoint) && !string.IsNullOrEmpty(modelName);
+        }
+
+        /// <summary>
+        /// 実効APIキーを取得する。
+        /// ユーザーが自分のキーを設定していればそちらを優先。
+        /// 空の場合、UNITYROOM_BUILDではUnityroomConfigのデフォルトキーにフォールバック。
+        /// UIには空欄で表示されるが、API呼び出し時にはデフォルトキーが使われる。
+        /// </summary>
+        public string ResolveApiKey()
+        {
+            if (!string.IsNullOrEmpty(apiKey)) return apiKey;
+
+#if UNITYROOM_BUILD
+            if (apiType == LLMApiType.Gemini)
+            {
+                var unityroomConfig = UnityroomConfig.Load();
+                if (unityroomConfig != null && unityroomConfig.HasDefaultApiKey)
+                {
+                    return unityroomConfig.geminiApiKey;
+                }
+            }
+#endif
+
+            return apiKey;
+        }
+
+        /// <summary>
+        /// unityroom版のデフォルトGemini設定を作成（apiKeyは空 → ResolveApiKeyでフォールバック）
+        /// </summary>
+        public static LLMConfig GetUnityroomDefault()
+        {
+            var unityroomConfig = UnityroomConfig.Load();
+            string endpoint = unityroomConfig != null && !string.IsNullOrEmpty(unityroomConfig.geminiEndpoint)
+                ? unityroomConfig.geminiEndpoint
+                : GetDefaultEndpoint(LLMApiType.Gemini);
+            string model = unityroomConfig != null && !string.IsNullOrEmpty(unityroomConfig.geminiModelName)
+                ? unityroomConfig.geminiModelName
+                : "gemini-2.5-flash";
+
+            return new LLMConfig
+            {
+                apiType = LLMApiType.Gemini,
+                apiEndpoint = endpoint,
+                modelName = model,
+                temperature = 0.7f,
+                topP = 0.9f,
+                topK = 40,
+                numPredict = 512,
+                numCtx = 4096,
+                repeatPenalty = 1.1f,
+                think = false,
+                timeout = 120f,
+                apiKey = "" // UIには空欄。実行時にResolveApiKeyでデフォルトキーにフォールバック
+            };
         }
     }
 

@@ -205,6 +205,18 @@ namespace CyanNook.Character
             if (!sleepRestored)
             {
                 // LLM未設定チェック: 初回起動時はEntryを保留し、ポップアップ表示
+#if UNITYROOM_BUILD
+                // unityroom版: デフォルトGemini設定で自動構成（FirstRunControllerスキップ）
+                if (!LLMConfigManager.HasSavedConfig())
+                {
+                    var defaultConfig = LLMConfig.GetUnityroomDefault();
+                    if (chatManager != null && chatManager.llmClient != null)
+                    {
+                        chatManager.llmClient.SaveAndApplyConfig(defaultConfig);
+                        Debug.Log("[CharacterSetup] Unityroom: auto-configured Gemini as default LLM");
+                    }
+                }
+#endif
                 if (firstRunController != null && !LLMConfigManager.HasSavedConfig())
                 {
                     _entryPending = true;

@@ -43,6 +43,21 @@ namespace CyanNook.Character
         private CharacterState _currentState = CharacterState.Idle;
         public CharacterState CurrentState => _currentState;
 
+        [Header("Thinking Exit")]
+        [SerializeField, Range(0f, 2f)]
+        [Tooltip("Thinking終了後、次のアクション/emote実行までの待機秒数。0で無効。" +
+                 "sit中に加算thinkが解除される際のIB重複による揺れものポップを防ぐ。")]
+        private float _thinkExitDelay = 0.3f;
+
+        // Thinking終了タイミング（animationController.OnThinkingExitedで記録）
+        private float _thinkExitTime = float.NegativeInfinity;
+
+        // Think終了 grace期間中に deferされた action/emote
+        // FlushAfterThinkExit コルーチンが単一で両方処理し、emote→actionの順で発火する
+        private LLMResponseData _deferredAction;
+        private string _deferredEmote;
+        private Coroutine _thinkExitFlushCoroutine;
+
         // 逐次反映の待ち合わせ用
         private TargetData _pendingTarget;
         private string _pendingAction;
@@ -65,6 +80,26 @@ namespace CyanNook.Character
                 // フィールド逐次反映
                 chatManager.OnStreamFieldApplied += HandleStreamField;
             }
+
+            if (animationController != null)
+            {
+                animationController.OnThinkingExited += HandleThinkingExited;
+            }
+        }
+
+        private void HandleThinkingExited()
+        {
+            _thinkExitTime = Time.time;
+        }
+
+        /// <summary>
+        /// Thinking終了直後の grace期間中か判定。
+        /// この期間中はIsThinkingActive=falseでも action/emote を defer して
+        /// IB発火タイミングを sit_ed 等から時間方向に分離する。
+        /// </summary>
+        private bool IsInThinkExitGrace()
+        {
+            return (Time.time - _thinkExitTime) < _thinkExitDelay;
         }
 
         private void Update()
@@ -79,6 +114,22 @@ namespace CyanNook.Character
                 chatManager.OnChatResponseReceived -= HandleChatResponse;
                 chatManager.OnStateChanged -= HandleChatStateChanged;
                 chatManager.OnStreamFieldApplied -= HandleStreamField;
+            }
+
+            if (animationController != null)
+            {
+                animationController.OnThinkingExited -= HandleThinkingExited;
+            }
+
+            if (_thinkExitFlushCoroutine != null)
+            {
+                StopCoroutine(_thinkExitFlushCoroutine);
+                _thinkExitFlushCoroutine = null;
+            }
+            if (_pendingEmoteCoroutine != null)
+            {
+                StopCoroutine(_pendingEmoteCoroutine);
+                _pendingEmoteCoroutine = null;
             }
         }
 
@@ -313,6 +364,8 @@ namespace CyanNook.Character
         /// <summary>
         /// targetとactionが両方揃っている場合にアクションを実行
         /// actionが先に届いた場合はtargetを待つ（targetが届いた時に再呼出される）
+        /// Thinking中、またはThinking終了直後のgrace期間中の場合は統合コルーチンで
+        /// 遅延実行し、IB発火タイミングを sit_ed 等から時間方向に分離する。
         /// </summary>
         private void TryExecutePendingAction()
         {
@@ -325,14 +378,70 @@ namespace CyanNook.Character
                 target = _pendingTarget
             };
 
-            if (!response.IsIgnore)
-            {
-                ProcessActionFromField(response);
-            }
-
-            // 使用済みクリア
+            // 使用済みクリア（遅延実行する場合はローカル変数にキャプチャ済み）
             _pendingAction = null;
             _pendingTarget = null;
+
+            if (response.IsIgnore) return;
+
+            // Thinking中、またはThinking終了直後のgrace期間中はdefer
+            // （emoteによるForceStopThinkingでIsThinkingActiveが即座にfalseになっても
+            //  grace期間でキャッチして emote と同じタイミングで発火させる）
+            if (animationController != null &&
+                (animationController.IsThinkingActive || IsInThinkExitGrace()))
+            {
+                Debug.Log($"[CharacterController] Deferring action until think exit grace completes ({_thinkExitDelay:F2}s)");
+                _deferredAction = response;
+                StartThinkExitFlushIfNeeded();
+                return;
+            }
+
+            ProcessActionFromField(response);
+        }
+
+        /// <summary>
+        /// Think終了後のdeferred action/emote を順序同期で発火させる統合コルーチンを起動。
+        /// 既に動作中なら何もしない（action/emoteそれぞれが一度だけ起動を試みる）。
+        /// </summary>
+        private void StartThinkExitFlushIfNeeded()
+        {
+            if (_thinkExitFlushCoroutine == null)
+            {
+                _thinkExitFlushCoroutine = StartCoroutine(FlushAfterThinkExit());
+            }
+        }
+
+        /// <summary>
+        /// Thinking終了＋grace期間経過を待ち、deferred emote → action の順に発火する。
+        /// emoteを先に発火することで、後続のactionが既存のExitLoopWithCallback経由で
+        /// Emote状態を ForceStopEmoteToEnd で正しくクリーンアップできる。
+        /// </summary>
+        private IEnumerator FlushAfterThinkExit()
+        {
+            // Thinking完全終了＋grace期間経過を待機
+            while (animationController != null &&
+                   (animationController.IsThinkingActive || IsInThinkExitGrace()))
+            {
+                yield return null;
+            }
+
+            // deferredを取り出してクリア
+            string emote = _deferredEmote;
+            LLMResponseData action = _deferredAction;
+            _deferredEmote = null;
+            _deferredAction = null;
+            _thinkExitFlushCoroutine = null;
+
+            // 順序: emote → action（actionがExitLoopWithCallbackでEmoteを正規に停止できるように）
+            if (!string.IsNullOrEmpty(emote) && animationController != null)
+            {
+                PlayEmoteIfPossible(emote);
+            }
+
+            if (action != null && animationController != null)
+            {
+                ProcessActionFromField(action);
+            }
         }
 
         /// <summary>
@@ -816,7 +925,7 @@ namespace CyanNook.Character
         /// <summary>
         /// emote を処理（再生可能であれば再生、完了後に自動復帰）
         /// </summary>
-        // Thinking完了待ちEmoteコルーチン
+        // Walking待ちEmoteコルーチン（Thinking待ちは _thinkExitFlushCoroutine を使用）
         private Coroutine _pendingEmoteCoroutine;
 
         // 歩行後に再生するemote（emoteが移動開始前に到着した場合用）
@@ -828,16 +937,13 @@ namespace CyanNook.Character
 
             string emoteAnimationId = $"emote_{emote}";
 
-            // Thinking中（ed再生中含む）の場合はThinking完了後にemoteを再生
-            if (animationController.IsThinkingActive)
+            // Thinking中、またはThinking終了直後のgrace期間中は統合コルーチンでdefer
+            // （ForceStopThinkingでIsThinkingActiveが即座にfalseになってもgrace期間で捕捉）
+            if (animationController.IsThinkingActive || IsInThinkExitGrace())
             {
-                Debug.Log($"[CharacterController] Deferring emote until thinking completes: {emoteAnimationId}");
-                // 既存の待機コルーチンがあればキャンセル
-                if (_pendingEmoteCoroutine != null)
-                {
-                    StopCoroutine(_pendingEmoteCoroutine);
-                }
-                _pendingEmoteCoroutine = StartCoroutine(PlayEmoteAfterThinking(emoteAnimationId));
+                Debug.Log($"[CharacterController] Deferring emote until think exit grace completes: {emoteAnimationId}");
+                _deferredEmote = emoteAnimationId;
+                StartThinkExitFlushIfNeeded();
                 return;
             }
 
@@ -875,22 +981,6 @@ namespace CyanNook.Character
                 StopCoroutine(_pendingEmoteCoroutine);
             }
             _pendingEmoteCoroutine = StartCoroutine(PlayEmoteAfterWalk(emote));
-        }
-
-        private IEnumerator PlayEmoteAfterThinking(string emoteAnimationId)
-        {
-            // Thinkingが完了するまで待機
-            while (animationController != null && animationController.IsThinkingActive)
-            {
-                yield return null;
-            }
-
-            _pendingEmoteCoroutine = null;
-
-            if (animationController != null)
-            {
-                PlayEmoteIfPossible(emoteAnimationId);
-            }
         }
 
         private IEnumerator PlayEmoteAfterWalk(string emoteAnimationId)

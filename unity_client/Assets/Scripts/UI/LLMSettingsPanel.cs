@@ -174,20 +174,88 @@ namespace CyanNook.UI
         private bool _isCameraPreviewInitialized = false;
         private Coroutine _cameraPreviewRetryCoroutine = null;
 
+        // ドロップダウンindex ↔ LLMApiType の間接マッピング
+        // UNITYROOM_BUILD では対応プロバイダのみ表示する
+        private System.Collections.Generic.List<LLMApiType> _availableApiTypes;
+
         private void Awake()
         {
+            // 利用可能プロバイダリストを構築
+            _availableApiTypes = new System.Collections.Generic.List<LLMApiType>();
+#if UNITYROOM_BUILD
+            _availableApiTypes.Add(LLMApiType.Gemini);
+            _availableApiTypes.Add(LLMApiType.WebLLM);
+#else
+            _availableApiTypes.Add(LLMApiType.Ollama);
+            _availableApiTypes.Add(LLMApiType.LMStudio);
+            _availableApiTypes.Add(LLMApiType.Dify);
+            _availableApiTypes.Add(LLMApiType.OpenAI);
+            _availableApiTypes.Add(LLMApiType.Claude);
+            _availableApiTypes.Add(LLMApiType.Gemini);
+            _availableApiTypes.Add(LLMApiType.WebLLM);
+#endif
+
+            // APIキー入力欄のマスク表示
+            if (apiKeyInputField != null)
+            {
+                apiKeyInputField.contentType = TMP_InputField.ContentType.Password;
+            }
+
             // ドロップダウンオプション初期化（OnEnable()のLoadConfigToUI()より先に実行する必要がある）
             if (apiTypeDropdown != null)
             {
                 apiTypeDropdown.ClearOptions();
-                apiTypeDropdown.AddOptions(new System.Collections.Generic.List<string>
+                var labels = new System.Collections.Generic.List<string>();
+                foreach (var apiType in _availableApiTypes)
                 {
-                    "Ollama", "LM Studio", "Dify", "OpenAI", "Claude", "Gemini", "WebLLM (Browser)"
-                });
+                    labels.Add(GetApiTypeLabel(apiType));
+                }
+                apiTypeDropdown.AddOptions(labels);
             }
 
             // OnEnable()より先に保存済み設定を復元
             LoadSavedSettings();
+        }
+
+        /// <summary>
+        /// ドロップダウンindexから対応するLLMApiTypeを取得
+        /// </summary>
+        private LLMApiType GetApiTypeFromDropdownIndex(int index)
+        {
+            if (_availableApiTypes != null && index >= 0 && index < _availableApiTypes.Count)
+                return _availableApiTypes[index];
+            return LLMApiType.Gemini; // フォールバック
+        }
+
+        /// <summary>
+        /// LLMApiTypeからドロップダウンindexを取得（見つからなければ0）
+        /// </summary>
+        private int GetDropdownIndexFromApiType(LLMApiType apiType)
+        {
+            if (_availableApiTypes != null)
+            {
+                int idx = _availableApiTypes.IndexOf(apiType);
+                if (idx >= 0) return idx;
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// LLMApiType → ドロップダウン表示ラベル
+        /// </summary>
+        private static string GetApiTypeLabel(LLMApiType apiType)
+        {
+            switch (apiType)
+            {
+                case LLMApiType.Ollama: return "Ollama";
+                case LLMApiType.LMStudio: return "LM Studio";
+                case LLMApiType.Dify: return "Dify";
+                case LLMApiType.OpenAI: return "OpenAI";
+                case LLMApiType.Claude: return "Claude";
+                case LLMApiType.Gemini: return "Gemini";
+                case LLMApiType.WebLLM: return "WebLLM (Browser)";
+                default: return apiType.ToString();
+            }
         }
 
         private void OnEnable()
@@ -328,7 +396,7 @@ namespace CyanNook.UI
             var config = llmClient.CurrentConfig ?? LLMConfig.GetDefault();
 
             if (apiTypeDropdown != null)
-                apiTypeDropdown.value = (int)config.apiType;
+                apiTypeDropdown.value = GetDropdownIndexFromApiType(config.apiType);
             if (endpointInputField != null)
                 endpointInputField.text = config.apiEndpoint;
             if (modelNameInputField != null)
@@ -434,7 +502,7 @@ namespace CyanNook.UI
             var defaults = LLMConfig.GetDefault();
             var config = new LLMConfig
             {
-                apiType = apiTypeDropdown != null ? (LLMApiType)apiTypeDropdown.value : LLMApiType.Ollama,
+                apiType = apiTypeDropdown != null ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini,
                 apiEndpoint = endpointInputField != null ? endpointInputField.text : "",
                 modelName = modelNameInputField != null ? modelNameInputField.text : "",
                 apiKey = apiKeyInputField != null ? apiKeyInputField.text : "",
@@ -534,7 +602,7 @@ namespace CyanNook.UI
             var testDefaults = LLMConfig.GetDefault();
             llmClient.ApplyConfig(new LLMConfig
             {
-                apiType = apiTypeDropdown != null ? (LLMApiType)apiTypeDropdown.value : LLMApiType.Ollama,
+                apiType = apiTypeDropdown != null ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini,
                 apiEndpoint = endpointInputField != null ? endpointInputField.text : "",
                 modelName = modelNameInputField != null ? modelNameInputField.text : "",
                 apiKey = apiKeyInputField != null ? apiKeyInputField.text : "",
