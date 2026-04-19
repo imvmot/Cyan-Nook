@@ -6635,10 +6635,33 @@ Assets/
 | Extract Clips for Selected Character | 選択キャラクターのClipを抽出 |
 | Create Timelines for Character | Timeline + TimelineBindingDataを生成 |
 | Rebake All VRM Expression Curves | 全TimelineのVrmExpressionClipカーブを一括再Bake |
+| Transition Viewer | アニメーション遷移フロー可視化ウィンドウ（閲覧専用） |
+| Create Default Transition Rules (chr001) | chr001用の初期遷移ルールアセット生成 |
 
 #### Clip抽出のGUID維持
 
 FBXからAnimationClipを抽出する際、既存の.animファイルがある場合は `EditorUtility.CopySerialized()` で中身だけを上書きし、アセットのGUIDを維持する。これによりTimeline上のAnimationPlayableAssetのクリップ参照が壊れない。既存ファイルがない場合（初回抽出）は `AssetDatabase.CreateAsset()` で新規作成する。
+
+#### Transition Viewer
+
+Timeline駆動のアニメーション遷移は `TalkController` / `InteractionController` / `SleepController` / `ChatManager` / `CharacterController` 等のコード駆動のため、データ上には状態→状態のエッジ情報が存在しない。コードを読まずに全体のフローを把握できるよう、**手書きのScriptableObject + IMGUI階層リスト**で閲覧専用の可視化ツールを提供する。
+
+**データ源**:
+- `Scripts/Character/TransitionRuleData.cs` — `List<TransitionRuleEntry>` を持つScriptableObject。各エントリは `category` / `fromState+fromAnimationId` / `toState+toAnimationId` / `orchestrator` / `trigger` / `notes` を保持
+- `Assets/Animations/chr001/chr001_TransitionRules.asset` — Phase 1 調査で確定した主要17遷移を初期登録済み（メニューから再生成可能）
+- デザイナーは Unity Inspector で直接エントリを追加・編集できる
+
+**ウィンドウ機能** (`Editor/TransitionViewerWindow.cs`):
+- カテゴリ > 状態(AnimationID) > 出力遷移 の3階層 foldout
+- `TimelineBindingData` を併用指定すると、状態行の **Ping TL** ボタンで対応 Timeline を Project ビューで選択可能
+- Orchestrator プルダウンフィルタ、自由文字列検索
+- **Show Incoming** トグルで「入ってくる遷移」側に表示を反転（どこから来るかが見たいケース）
+- 遷移行クリックで `notes` フィールドをログ出力（`Debug.Log`）
+
+**責務分離**:
+- `TimelineBindingData` は **state ↔ clip/timeline** マッピング（ランタイム駆動に使用）
+- `TransitionRuleData` は **state → state** エッジ記述（ランタイム未使用、Editor閲覧専用）
+- ランタイムコードは `TransitionRuleData` を一切参照しない（ビルドには含まれるが軽量）
 
 ### Scene Tools (CyanNook)
 
