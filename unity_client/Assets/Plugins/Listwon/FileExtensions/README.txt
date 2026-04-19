@@ -1,1 +1,0 @@
-Unity File Extensions plugin will start working immediately after importing to your project. You do not need to take any further action.

@@ -10,3 +10,6 @@
 # Unityroom版ビルド用シークレット（APIキー等）
 unity_client/Assets/Resources/UnityroomConfig.asset
 unity_client/Assets/Resources/UnityroomConfig.asset.meta
+
+# 3rdパーティEditor拡張（Unity Asset Store EULA、本リポのMITには含まれない）
+unity_client/Assets/Plugins/Listwon/
