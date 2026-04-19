@@ -1,8 +1,0 @@
-{
-    "name": "Listwon-FileExtensions",
-    "references": [],
-    "includePlatforms": [
-        "Editor"
-    ],
-    "excludePlatforms": []
-}
