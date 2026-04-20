@@ -1536,6 +1536,22 @@ namespace CyanNook.Character
             if (director != null)
             {
                 director.extrapolationMode = DirectorWrapMode.Hold;
+
+                // 加算thinking中のジャンプではIBの補間元ポーズが壊れやすい。
+                // director.time 変更後の Evaluate() 内で InertialBlendTrack の ProcessFrame が発火し、
+                // StartInertialBlend() が呼ばれるが、その時点で _lastCleanPose は前フレームの
+                // LateUpdate で保存された「加算thinkingループポーズ」のままで、かつAOの復元も
+                // まだ走っていないため、v₀=0・x₀=0 に縮退して end_phase ポーズへ即スナップする。
+                // その結果、SpringBoneの親ボーンが1F位置ジャンプし髪がホップする。
+                // ForceCompleteAdditiveTimelineWithBlend と同じ前処理で「見えていたポーズ」を
+                // clean として確定し、_prevCleanPose を無効化してv₀=0フォールバックを強制する。
+                if (_isThinkingActive && additiveOverrideHelper != null && additiveOverrideHelper.IsActive)
+                {
+                    additiveOverrideHelper.ApplyRestoreNow();
+                    inertialBlendHelper?.SnapshotCurrentPoseAsClean();
+                    inertialBlendHelper?.InvalidatePrevCleanPose();
+                }
+
                 director.time = _endStartTime;
 
                 // ジャンプ後も再生を継続

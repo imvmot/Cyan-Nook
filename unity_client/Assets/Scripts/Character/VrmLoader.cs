@@ -484,6 +484,8 @@ namespace CyanNook.Character
                 additiveHelper.animator = animator;
                 additiveHelper.inertialBlendHelper = inertialHelper;
                 animationController.additiveOverrideHelper = additiveHelper;
+                // PrePassにAO参照を渡し、SpringBone前にAO復元を実行できるようにする
+                prePass.additiveOverrideHelper = additiveHelper;
                 Debug.Log("[VrmLoader] AdditiveOverrideHelper added to VRM instance");
 
             }
