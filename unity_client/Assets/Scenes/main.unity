@@ -57404,7 +57404,7 @@ MonoBehaviour:
   firstRunController: {fileID: 179285283}
   llmSettingsPanel: {fileID: 1685261953}
   debugKeyController: {fileID: 1637253019}
-  lookAtCameraOnLoad: 0
+  lookAtCameraOnLoad: 1
   applyTestExpression: 0
 --- !u!114 &1752575842
 MonoBehaviour:
