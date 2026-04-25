@@ -953,6 +953,8 @@ MoveSpeedTrack  [speed curves...]
 - 3つのSTクリップは同じ開始時間・同じ長さ
 - Walk_LPEDは**トラックリストの一番下**に配置（最高優先度、LP/EDが確実にSTを上書き）
 - TurnL_ST / TurnR_ST / Walk_ST のクリップは**Post-Extrapolation: None**に設定
+- Walk_LPED の walk01_lp / walk01_ed クリップは**Pre-Extrapolation: None**に設定
+  - **重要**: Pre-Extrapolation を Loop/Hold にすると、walk01_lp が director.time 0〜1.333s の区間にもループ展開で出力され、Walk_LPED が下位トラック優先で walk01_st を上書きしてしまう。結果として ST 区間で walk01_lp のポーズが見える不具合になる
 - エディタ上でのmuteは**使用しない**（`SetGenericBinding(track, null)` でバインド解除する方式）
 
 ##### トラック名によるバインド制御
@@ -4824,8 +4826,10 @@ NavigationController.UpdateFinalTurning() → 回転完了
 
 **例外（walk_edスキップ）:**
 - **Talk到着**: 到着コールバック → PlayState(Talk) → walk_edをPlayState内クリーンアップで中断
-- **emote予約あり**: PlayEmoteAfterWalkコルーチンがIsInEndPhase検出 → ReturnToIdle()で中断 → emote再生
 - **StopMoving/CancelMovement**: 強制停止 → ReturnToIdle()直接呼び出し（walk_edなし）
+
+**emote予約あり時はwalk_edを完了させる**:
+PlayEmoteAfterWalkコルーチンはwalk_edを中断しない。walk_ed → OnWalkEndPhaseComplete → ReturnToIdleで自然にIdleへ遷移したのち、IdleのEmotePlayableClipが再生位置に到達した時点でPlayEmoteWithReturnを発火する。emoteを優先してwalk_edを切り捨てると歩行終端のポーズが見えなくなり不自然なため、walk_edは必ず再生する。
 
 **中断時クリーンアップ**: PlayState()/PlayTimeline()の先頭で_isWalkEndPhaseActiveを確認し、OnEndPhaseComplete購読を解除。
 
@@ -6417,8 +6421,7 @@ HandleChatResponse（レスポンス境界）:
 2. CanPlayEmote() が true になるまでポーリング（最大3秒）
    ※ Idle/TalkIdleタイムラインのEmotePlayableClipが再生位置に到達するまで待つ
    2a. 新しいナビゲーションが開始された場合はキャンセル
-   2b. Walk終了フェーズ（walk_ed）再生中の場合 → ReturnToIdle()でスキップしてIdle遷移
-       ※ emoteが予約されている場合はwalk_edを待たずに即座に遷移する
+   2b. walk_ed（終了フェーズ）は中断せず最後まで再生させる。完了後OnWalkEndPhaseComplete→ReturnToIdleで自動的にIdleに遷移し、IdleのEmotePlayableClipが活性化した時点でemoteを発火する
 3. タイムアウト時はログ出力してスキップ
 ```
 
@@ -6548,8 +6551,8 @@ animationController.OnCancelRegionReached += OnAnimCancelRegionReached;
 | InLoop(CancelRegionあり) | ExitLoopWithCallback | Ending→None | ed再生 → CancelRegion到達 → OnCancelRegionReached → 直接callback実行（Idle経由なし） |
 | InLoop(CancelRegionあり) | ExitLoopWithCallback(skipCancelRegion: true) | Ending→None | ed全体を再生（CancelRegion無視） → OnEndPhaseComplete → callback実行。Sleep起床用 |
 | InLoop | ExecuteCancel | None | 即時遷移先再生（未使用） |
-| Walk lp中 | StopWalkWithEndPhase（到着） | → walk_ed → Idle | ed再生 → OnWalkEndPhaseComplete → ReturnToIdle |
-| Walk lp中 | StopWalkWithEndPhase + Talk/emote | → 即時遷移（walk_edスキップ） | PlayState/ReturnToIdleがwalk_edを中断 |
+| Walk lp中 | StopWalkWithEndPhase（到着） | → walk_ed → Idle | ed再生 → OnWalkEndPhaseComplete → ReturnToIdle。emote予約ありでもwalk_edを完了させてからIdleのEmotePlayableClipでemote発火 |
+| Walk lp中 | StopWalkWithEndPhase + Talk | → 即時遷移（walk_edスキップ） | PlayState(Talk)がwalk_edを中断（Talkでは姿勢が変わるため） |
 | Walk lp中 | StopMoving/CancelMovement | → Idle（walk_edなし） | 強制停止、ReturnToIdle()直接呼び出し |
 | Walk lp中 | ExecuteCancel | → 指定Timeline | 即時遷移 |
 | Interact + Emote/Thinking | ExitLoopWithCallback | → ForceStop → ed → callback | Thinking/Emote停止→Interact復帰→ed再生→コールバック |

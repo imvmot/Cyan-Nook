@@ -1034,17 +1034,10 @@ namespace CyanNook.Character
                     yield break;
                 }
 
-                // Walk終了フェーズ（walk_ed）再生中ならスキップしてIdleに遷移
-                // emoteが予約されている場合はwalk_edを待たずに即座に遷移する
-                if (animationController != null && animationController.IsInEndPhase)
-                {
-                    animationController.ReturnToIdle();
-                    Debug.Log($"[CharacterController] Skipped walk end phase for pending emote: {emoteAnimationId}");
-                    elapsed += Time.deltaTime;
-                    yield return null;
-                    continue;
-                }
-
+                // walk_ed（終了フェーズ）は中断せず最後まで再生させる。
+                // walk_ed完了後にOnWalkEndPhaseCompleteがReturnToIdleを呼び、
+                // IdleタイムラインのEmotePlayableClipがCanPlayEmote()=trueにすると
+                // 下のチェックでemoteが発火する。
                 if (animationController != null && animationController.CanPlayEmote())
                 {
                     animationController.PlayEmoteWithReturn(emoteAnimationId);
