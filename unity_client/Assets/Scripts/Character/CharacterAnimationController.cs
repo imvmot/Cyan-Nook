@@ -272,16 +272,20 @@ namespace CyanNook.Character
                 }
             }
 
-            if (director == null || !_hasLoopRegion) return;
+            if (director == null) return;
 
-            double currentTime = director.time;
-
-            // CancelRegion到達チェック（ループ中・ed中どちらでも有効）
+            // CancelRegion到達チェック（LoopRegionの有無にかかわらず有効）。
+            // LoopRegion ガードの前に置く必要がある: entry01等LoopRegion無しの
+            // Timelineに置かれたActionCancelClipも反映させるため。
             if (_shouldCancelAtRegion && CanCancel)
             {
                 FireCancelRegionReached();
                 return;
             }
+
+            if (!_hasLoopRegion) return;
+
+            double currentTime = director.time;
 
             // LoopStart到達の検出
             if (!_isInLoop && !_isEnding && currentTime >= _loopStartTime)

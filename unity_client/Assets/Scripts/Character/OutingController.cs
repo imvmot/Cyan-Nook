@@ -71,6 +71,9 @@ namespace CyanNook.Character
         // 連動中の家具アニメーション
         private FurnitureAnimationController _entryFurnitureAnimController;
 
+        // Entry早期完了リクエスト済みか（ActionCancelClipでの早期完了用）
+        private bool _earlyCompleteRequested;
+
         /// <summary>外出中かどうか</summary>
         public bool IsOutside => _isOutside;
 
@@ -210,6 +213,7 @@ namespace CyanNook.Character
 
             _onEntryComplete = onComplete;
             _isPlayingEntry = true;
+            _earlyCompleteRequested = false;
 
             // ドア家具を検索
             FurnitureInstance doorFurniture = null;
@@ -299,6 +303,41 @@ namespace CyanNook.Character
             }
         }
 
+        /// <summary>
+        /// Entryの早期完了をリクエスト（Entry中にLLMレスポンスがキューされた時にChatManagerから呼ばれる）。
+        /// Entry TimelineにActionCancelClipがあれば、そのCancelRegion到達時点で
+        /// OnEntryAnimationCompleteを発火する。CancelRegionが無い場合は通常通り
+        /// InteractionEndClipまで待つ（既存挙動と同じ）。
+        /// </summary>
+        public void RequestEarlyEntryComplete()
+        {
+            if (!_isPlayingEntry) return;
+            if (_earlyCompleteRequested) return;
+            if (animationController == null) return;
+            if (!animationController.HasCancelRegions) return;
+
+            _earlyCompleteRequested = true;
+            animationController.OnCancelRegionReached += OnCancelRegionReached_HandleEarlyComplete;
+            animationController.RequestCancelAtRegion();
+            Debug.Log("[OutingController] RequestEarlyEntryComplete: subscribed to CancelRegionReached");
+        }
+
+        /// <summary>
+        /// CancelRegion到達 → Entry早期完了
+        /// </summary>
+        private void OnCancelRegionReached_HandleEarlyComplete()
+        {
+            if (animationController != null)
+            {
+                animationController.OnCancelRegionReached -= OnCancelRegionReached_HandleEarlyComplete;
+            }
+
+            if (!_isPlayingEntry) return;
+
+            Debug.Log("[OutingController] Entry early-complete via CancelRegion");
+            OnEntryAnimationComplete();
+        }
+
         // ===================================================================
         // 内部メソッド
         // ===================================================================
@@ -316,6 +355,7 @@ namespace CyanNook.Character
             if (animationController != null)
             {
                 animationController.OnInteractionEndReached -= OnEntryAnimationComplete;
+                animationController.OnCancelRegionReached -= OnCancelRegionReached_HandleEarlyComplete;
             }
 
             // 家具アニメーション停止

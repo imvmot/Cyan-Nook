@@ -1062,10 +1062,13 @@ namespace CyanNook.Chat
             // Entry再生中: レスポンスをキューに入れ、Entry完了後の
             // FlushEntryQueuedResponse（OnEntryAnimationCompleted購読）で発火する。
             // 通常Entry / Cron帰宅 共通。
+            // Entry TimelineにActionCancelClipがあれば、CancelRegion到達時点で
+            // 早期完了させて応答発火を前倒しする。
             else if (outingController != null && outingController.IsPlayingEntry)
             {
                 _entryQueuedResponse = response;
                 Debug.Log($"[ChatManager] Entry: response queued during entry animation");
+                outingController.RequestEarlyEntryComplete();
             }
             else
             {
