@@ -83,6 +83,12 @@ namespace CyanNook.Character
         /// <summary>入室時のプロンプトメッセージ</summary>
         public string EntryPromptMessage => entryPromptMessage;
 
+        /// <summary>
+        /// Entryアニメーション完了時に発火（per-callコールバック実行後）。
+        /// ChatManager等が、Entry中にキューしたLLMレスポンスを発火させる用途で購読する。
+        /// </summary>
+        public event System.Action OnEntryAnimationCompleted;
+
         private void Start()
         {
             LoadSettings();
@@ -377,6 +383,8 @@ namespace CyanNook.Character
             var callback = _onEntryComplete;
             _onEntryComplete = null;
             callback?.Invoke();
+
+            OnEntryAnimationCompleted?.Invoke();
         }
 
         /// <summary>
