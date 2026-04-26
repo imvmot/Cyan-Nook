@@ -77,6 +77,12 @@ namespace CyanNook.Character
         [SerializeField]
         private bool _useRun = false;
 
+        // 今回のナビゲーションでWalk Timelineが再生されたか
+        // false の場合、UpdateFinalTurning 完了時に StopWalkWithEndPhase ではなく
+        // ReturnToIdle を呼ぶ（Walk Timeline 未バインドのまま walk_ed を要求すると
+        // 直前の Timeline が end phase 完了イベントを発火できず Idle に遷移しない不具合の対策）
+        private bool _walkPlayedThisNavigation = false;
+
         // 前方歩行モード（Wキー歩行等）
         private bool _isForwardWalking;
 
@@ -274,6 +280,7 @@ namespace CyanNook.Character
             _movementTimer = 0f;
             _pathChecked = false;
             _inFinalApproach = false;
+            _walkPlayedThisNavigation = false;
 
             // CharacterRoot（NavMeshAgent所在）の位置を基準に計算
             Vector3 currentPos = transform.position;
@@ -467,6 +474,7 @@ namespace CyanNook.Character
 
             string moveAnim = _useRun ? "common_run01" : "common_walk01";
             animationController?.PlayAnimation(moveAnim);
+            _walkPlayedThisNavigation = true;
         }
 
         /// <summary>
@@ -496,6 +504,7 @@ namespace CyanNook.Character
             string moveAnim = _useRun ? "common_run01" : "common_walk01";
             animationController?.SetTurnMode(turnMode);
             animationController?.PlayAnimation(moveAnim);
+            _walkPlayedThisNavigation = true;
 
             Debug.Log($"[CharacterNavigationController] StartMovingWithTurn: angle={angle:F1}°, mode={turnMode}");
         }
@@ -735,9 +744,18 @@ namespace CyanNook.Character
                 var callback = _onArrivalCallback;
                 _onArrivalCallback = null;
 
-                // Walk終了フェーズ（walk_ed）を再生してからIdleに遷移
-                // LoopRegionがない場合は即座にIdle遷移
-                animationController?.StopWalkWithEndPhase();
+                if (_walkPlayedThisNavigation)
+                {
+                    // Walk終了フェーズ（walk_ed）を再生してからIdleに遷移
+                    // LoopRegionがない場合は即座にIdle遷移
+                    animationController?.StopWalkWithEndPhase();
+                }
+                else
+                {
+                    // Walk Timeline 未再生のケース（既に目標位置近傍に居る場合）。
+                    // walk_ed は流せないので直接 Idle に遷移して直前 Timeline の固定ポーズを解除する。
+                    animationController?.ReturnToIdle();
+                }
 
                 callback?.Invoke();
             }

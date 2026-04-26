@@ -899,6 +899,7 @@ UpdateFinalApproach():
 - 方向ベクトルはY座標を0にしてから正規化（水平面での角度計算の精度確保）
 - **Walk-Turn判定:** `|angle| > turnAnimationThreshold` の場合、`StartMovingWithTurn(angle)` で旋回歩き出しアニメーションを使用（後述）
 - **近距離インタラクション最適化:** 目標との距離がほぼゼロの場合（`direction.sqrMagnitude <= 0.01f`）、インタラクションリクエストであれば歩行タイムラインを経由せず直接 `OnInteractionReady()` を呼ぶ。例: interact_sit中のベッドからinteract_sleepへ遷移する場合、同じ家具位置にWarpされるため歩行が不要。歩行タイムラインを空で開始すると `StopWalkWithEndPhase()` が空振りしてアニメーションが停止する問題を回避する
+- **近距離移動の Walk Timeline スキップ + Idle 直接遷移:** 上記の近距離分岐で**インタラクションでない通常移動**（`MoveTo` 経由の `action=move`/`target=dynamic` 等）の場合は `StartFinalTurning()` で回転のみ実行する。ただしその完了時に従来は無条件で `StopWalkWithEndPhase()` を呼んでおり、Walk Timeline 未バインドのまま walk_ed を要求すると**直前にキャンセルされた Timeline （例: interact_sit01）の end phase 完了イベントが発火せず Idle に遷移できない**不具合があった（再現条件: interact 中にユーザー応答 → action=move → target=dynamic で `extended search` 補正が走り解決位置が現在位置の 0.1m 以内になった場合）。対策として `_walkPlayedThisNavigation` フラグを追加し、`StartMoving()`/`StartMovingWithTurn()` で `true`、`StartNavigation()` 開始時に `false` リセット。`UpdateFinalTurning()` 完了時にフラグが `false` なら `StopWalkWithEndPhase()` ではなく `ReturnToIdle()` を呼ぶ。これにより Walk が実際に再生されたケースのみ walk_ed を流し、未再生ケースでは Idle Timeline を直接バインドして固定ポーズを解除する
 
 **パス有効性チェック:**
 - `pathPending` 解決後に `pathStatus` を確認
