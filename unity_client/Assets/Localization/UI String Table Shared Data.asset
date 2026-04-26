@@ -287,6 +287,34 @@ MonoBehaviour:
     m_Key: llm.rearCamera
     m_Metadata:
       m_Items: []
+  - m_Id: 232303019155456
+    m_Key: ui.min
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232366881628160
+    m_Key: ui.max
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232413044137984
+    m_Key: ui.minutes
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232566845071360
+    m_Key: ui.second
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232647707058176
+    m_Key: ui.testConnection
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233554331033600
+    m_Key: ui.save
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233596534120448
+    m_Key: ui.reload
+    m_Metadata:
+      m_Items: []
   m_Metadata:
     m_Items: []
   m_KeyGenerator:

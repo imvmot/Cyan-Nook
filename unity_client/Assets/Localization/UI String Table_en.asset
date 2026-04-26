@@ -39,7 +39,7 @@ MonoBehaviour:
     m_Metadata:
       m_Items: []
   - m_Id: 1065935167488
-    m_Localized: FOV Min
+    m_Localized: FOV                    Min
     m_Metadata:
       m_Items: []
   - m_Id: 12639089451008
@@ -309,6 +309,34 @@ MonoBehaviour:
       m_Items: []
   - m_Id: 218282001948672
     m_Localized: Rear Camera
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232303019155456
+    m_Localized: Min
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232366881628160
+    m_Localized: Max
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232413044137984
+    m_Localized: min
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232566845071360
+    m_Localized: Sec
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232647707058176
+    m_Localized: Test Connection
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233554331033600
+    m_Localized: Save
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233596534120448
+    m_Localized: Reload
     m_Metadata:
       m_Items: []
   references:
