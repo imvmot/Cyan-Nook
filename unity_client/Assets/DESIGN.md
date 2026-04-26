@@ -4087,8 +4087,68 @@ UIController上のTTSクレジット表示を更新する:
   - `licenseText`: TMP_Text表示先
   - `licenseCloseButton`: パネル閉じるボタン
   - テキストは `Resources/LicenseText.txt` (TextAsset) から読み込み
+- **Locale**: 言語選択プルダウン（日本語/English）
+  - DebugSettingsPanel 内に `TMP_Dropdown` を配置するが、制御は別コンポーネント `LocaleSelector` が担う
+  - 詳細は次節「Localization（UI 言語切替）」参照
 
 **OnEnable()**: パネル表示時に現在の状態を反映
+
+#### Localization（UI 言語切替）
+
+UI ラベルの日本語/英語切替。Unity Localization パッケージ (`com.unity.localization` 1.5) ベース。
+
+**構成:**
+
+| 要素 | 役割 |
+|------|------|
+| `Assets/Localization/Localization Settings.asset` | Project Settings > Localization の Active Settings |
+| Locale: `Japanese (ja)` / `English (en)` | 利用可能な言語 |
+| `UI String Table` | 全UIラベル統合用の単一StringTable（パネル横断で1テーブル運用） |
+| `LocaleSelector` (`Scripts/UI/LocaleSelector.cs`) | 言語選択プルダウン制御 + 永続化 |
+
+**テーブル統合方針:**
+
+設定パネルが複数あるが、`UI String Table` 1枚にまとめて管理。理由:
+- LocalizeStringEvent ごとに Table Reference を切替える煩雑さを回避
+- 「Save」「Reset」など共通文字列の重複を避ける
+- 後から1テーブルに統合するのは LocalizeStringEvent 全件の再設定が必要で大変なため、最初から統合
+
+**翻訳対象外（英語固定）:**
+- VRMファイル名、VOICEVOX話者名等の固有名詞
+- Action enum (`move`, `interact_sit` 等)
+- Editor 拡張のメニュー名（`CyanNook > Animation > ...`）
+- LLM応答本文・チャット履歴
+
+**LocaleSelector:**
+- `Start()` (Coroutine) で `LocalizationSettings.InitializationOperation` を await
+- `LocalizationSettings.AvailableLocales.Locales` を `TMP_Dropdown` に展開
+- 選択変更時に `LocalizationSettings.SelectedLocale` を切替 + `PlayerPrefs["ui_locale"]` に Locale Code (ja/en) を保存
+- 起動時は保存済み Code を優先選択、無ければ Localization Settings の DefaultLocale を使用
+
+**配置上の注意:**
+- LocaleSelector は**設定パネルの外**（常時アクティブな GameObject）に置く必要がある
+- 設定パネルは `SettingsMenuController` がシーン開始時に `SetActive(false)` するため、パネル内部に置くと `Start()` が初回パネルオープンまで呼ばれず、起動時の保存済みLocale復元が遅延する
+- 一方、各テキストの `LocalizeStringEvent` は対象パネル内部に置いてOK（パネルが開いた時に表示されればよい）
+
+**永続化:**
+- `PlayerPrefs["ui_locale"]` (string, Locale Code) は `SettingsExporter.AllSettings` に登録済み
+- 設定 Import/Export にも含まれる
+
+**Assembly Definition 参照:**
+
+`CyanNook.asmdef` の references に以下を追加:
+- `Unity.Localization`
+- `Unity.Addressables` / `Unity.ResourceManager` (Localization 内部依存。`InitializationOperation` の戻り値型 `AsyncOperationHandle<T>` の解決に必要)
+
+**関連ファイル:**
+
+| ファイル | 役割 |
+|---------|------|
+| `Scripts/UI/LocaleSelector.cs` | プルダウン制御 + 永続化 |
+| `Assets/Localization/Localization Settings.asset` | Localization 全体設定 |
+| `Assets/Localization/UI String Table*.asset` | 文字列テーブル本体（ja/en/Shared Data） |
+| `Assets/Localization/Japanese (ja).asset` / `English (en).asset` | Locale 定義 |
+| `Assets/AddressableAssetsData/AssetGroups/Localization-*.asset` | Addressables（Localization 内部利用） |
 
 #### SettingsExporter（設定Import/Export）
 
@@ -4096,7 +4156,7 @@ UIController上のTTSクレジット表示を更新する:
 `DebugSettingsPanel` のボタンから操作する。
 
 **エクスポート:**
-- `AllSettings` 配列に定義された全キー（40項目）をPlayerPrefsから読み取り
+- `AllSettings` 配列に定義された全キー（41項目）をPlayerPrefsから読み取り
 - 整形済みJSON（インデント付き）を生成
 - WebGL: `FileIO.jslib` の `FileIO_Download()` でブラウザダウンロード
 - Editor: `GUIUtility.systemCopyBuffer` でクリップボードにコピー
@@ -4123,6 +4183,7 @@ UIController上のTTSクレジット表示を更新する:
 | Voice VOICEVOX | 5 | `voice_apiUrl`, `voice_speakerId`, `voice_speedScale`, `voice_pitchScale`, `voice_intonationScale` |
 | Voice Gemini TTS | 4 | `gemini_tts_apiKey`, `gemini_tts_model`, `gemini_tts_voiceName`, `gemini_tts_stylePrompt` |
 | Voice Input | 3 | `voice_micEnabled`, `voice_inputLanguage`, `voice_silenceThreshold` |
+| UI | 1 | `ui_locale` (Locale Code: `ja` / `en`) |
 
 ※ ランタイム状態（`sleep_state`, `sleep_wake_time`, `sleep_furniture_id`）と会話履歴（`conversation_history`）はエクスポート対象外
 
