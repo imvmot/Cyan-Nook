@@ -2713,7 +2713,12 @@ Quad に Unlit マテリアルで表示
 - **ブラウザ側からの停止**: ユーザーがブラウザUIで共有を停止した場合、`OnScreenCaptureStopped` コールバックで検知
 - **SendMessageフォールバック**: jslib内の二重非同期コールバック（Promise `.then()` → `loadedmetadata` イベント）内からの `SendMessage` がUnity側に届かない場合があるため、C#側の `Update()` で `ScreenCapture_IsCapturing()` をポーリングして検知する仕組みを併用
 - **モバイル自動フォールバック**: `Application.isMobilePlatform`で検出し、背面カメラ（`WebCamTexture`）に切り替え。
-  LLMSettingsPanelのトグルラベルも自動変更（`screenCaptureMobileLabel`で設定可能、デフォルト: "Rear Camera"）。
+  LLMSettingsPanelのトグルラベルもプラットフォームに応じて切替えるが、**テキスト書き換えではなく GameObject 切替方式**を採用（LocalizeStringEvent によるローカライズを維持するため）。
+  - Inspector で `screenCaptureLabelDesktop` と `screenCaptureLabelMobile` の2つの GameObject を割当て
+  - 各 GameObject に LocalizeStringEvent を設定し、それぞれ別の Localization Key を参照（例: `llm.screenCapture` / `llm.rearCamera`）
+  - `InitializeScreenCaptureToggle()` で `IsMobileMode` に応じて `SetActive` を切替
+  - トグル内ラベルにしたい場合は両 GameObject を Toggle の子として配置する
+
   背面カメラの特定にはMobileCamera.jslibの`enumerateDevices()`を使用。
   カメラ権限未付与時は`getUserMedia(facingMode: ideal: environment)`で権限取得後に再列挙。
   結果はC#側でポーリング取得（iOS WebGLではSendMessageが非同期コールバックから届かないため）。

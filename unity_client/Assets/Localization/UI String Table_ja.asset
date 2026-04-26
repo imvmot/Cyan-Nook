@@ -279,6 +279,14 @@ MonoBehaviour:
       \u52D5\u4F5C\u78BA\u8A8D\u7528\u3067\u3059\n\u30FB\u30E2\u30C7\u30EB:Qwen3-1.7B"
     m_Metadata:
       m_Items: []
+  - m_Id: 213713264041984
+    m_Localized: "\u547C\u3073\u623B\u3059"
+    m_Metadata:
+      m_Items: []
+  - m_Id: 218282001948672
+    m_Localized: "\u80CC\u9762\u30AB\u30E1\u30E9"
+    m_Metadata:
+      m_Items: []
   references:
     version: 2
     RefIds: []
