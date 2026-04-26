@@ -927,7 +927,10 @@ namespace CyanNook.UI
 
         private string GetSampleJson()
         {
-            return @"{
+            // verbatim string はソースファイルの改行(Windowsでは CRLF)をそのまま保持するため、
+            // WebGL の WebGLInput プラグインが HTML input(LF正規化)と同期する際にキャレット位置が
+            // ズレる(初回入力が別位置で行われる)問題が発生する。LF に正規化して TMP へ渡す。
+            return (@"{
   ""emotion"": {
     ""happy"": 0.5,
     ""relaxed"": 0.0,
@@ -940,7 +943,7 @@ namespace CyanNook.UI
   ""target"": { ""type"": ""talk"" },
   ""emote"": ""Neutral"",
   ""message"": ""こんにちは！""
-}";
+}").Replace("\r\n", "\n");
         }
 
         // ─────────────────────────────────────

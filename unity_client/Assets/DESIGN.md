@@ -8901,6 +8901,33 @@ body { overflow: hidden; }
 | テスト音声 | VoiceSettingsPanel.testTextInputField | 必要 |
 | URL/APIキー/数値 | 各設定パネル | 不要（英数字のみ） |
 
+#### 多行テキストを TMP_InputField に代入する際の改行コード注意
+
+**問題**: WebGLビルドでマルチライン文字列(C# verbatim string `@"..."`等)をTMP_InputField.textに代入すると、**初回入力時のみキャレット位置がズレ、別の場所が編集される**症状が出る。2回目以降は正常。
+
+**原因**:
+- C#のverbatim string `@"..."` はソースファイルの改行コードをそのまま保持する。Windowsチェックアウトでは `\r\n` (CRLF)
+- WebGLInput プラグインがTMPテキストをHTML input要素に同期する際、HTML側は改行を `\n` (LF) に正規化する
+- TMP内のキャレット位置 (CRLF基準) と HTML input 内のキャレット位置 (LF基準) がズレる
+- 1行ごとに1文字分のオフセットが累積し、N行目のキャレット位置は (N-1) 文字分ズレる
+- 初回入力後、WebGLInput が HTML 側の正規化済みテキストを TMP に書き戻すため、以降は同期される
+
+**対策**: 多行テキストを `TMP_InputField.text` に代入する前に **必ず LF に正規化**する。
+
+```csharp
+// NG: WebGLでキャレット位置ズレが発生
+chatInputField.text = @"{
+  ""key"": ""value""
+}";
+
+// OK: LF正規化
+chatInputField.text = (@"{
+  ""key"": ""value""
+}").Replace("\r\n", "\n");
+```
+
+**該当箇所**: `UIController.GetSampleJson()` (JSONモード初期テキスト)
+
 ### マルチラインInputField改行対応（MultiLineInputFieldFix）
 
 **問題**: New Input Systemの`*/{Submit}`バインディングがEnterキーをグローバルにSubmitアクションとして消費し、TMP_InputFieldの`MultiLineNewline`設定が正常に機能しない。
