@@ -9283,7 +9283,7 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 208092100}
   m_HandleRect: {fileID: 208092099}
   m_Direction: 2
-  m_Value: 0.6205469
+  m_Value: 0.62054694
   m_Size: 0.07847369
   m_NumberOfSteps: 0
   m_OnValueChanged:
@@ -10620,7 +10620,7 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 827668308}
   m_HandleRect: {fileID: 827668307}
   m_Direction: 2
-  m_Value: 0.9999991
+  m_Value: 1
   m_Size: 0.8259494
   m_NumberOfSteps: 0
   m_OnValueChanged:
@@ -34509,8 +34509,8 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 483205926}
   m_HandleRect: {fileID: 483205925}
   m_Direction: 2
-  m_Value: 1.0000001
-  m_Size: 0.30313593
+  m_Value: 1
+  m_Size: 0.3031359
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -61514,7 +61514,7 @@ MonoBehaviour:
   agent: {fileID: 1752575847}
   walkSpeed: 0.9
   runSpeed: 4
-  rotationSpeed: 180
+  rotationSpeed: 105
   runThreshold: 5
   arrivalThreshold: 0.05
   turnAnimationThreshold: 45
