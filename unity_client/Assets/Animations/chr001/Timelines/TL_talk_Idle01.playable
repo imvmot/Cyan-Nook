@@ -576,8 +576,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: CyanNook::CyanNook.Timeline.LookAtClip
   enableEye: 1
   enableHead: 1
-  headAngleLimitX: 10
-  headAngleLimitY: 10
+  headAngleLimitX: 20
+  headAngleLimitY: 45
   enableChest: 0
   chestAngleLimitX: 5
   chestAngleLimitY: 5

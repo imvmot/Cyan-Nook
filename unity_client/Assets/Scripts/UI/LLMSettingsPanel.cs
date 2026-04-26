@@ -146,11 +146,11 @@ namespace CyanNook.UI
         [Tooltip("画面キャプチャ/カメラ表示切替")]
         public Toggle screenCaptureToggle;
 
-        [Tooltip("PC時のラベルテキスト（null可 = 変更しない）")]
-        public TMP_Text screenCaptureLabelText;
+        [Tooltip("デスクトップ時に表示するラベル GameObject (LocalizeStringEvent でローカライズ可)")]
+        public GameObject screenCaptureLabelDesktop;
 
-        [Tooltip("モバイル時に表示するラベル文字列")]
-        public string screenCaptureMobileLabel = "Rear Camera";
+        [Tooltip("モバイル時に表示するラベル GameObject (LocalizeStringEvent でローカライズ可)")]
+        public GameObject screenCaptureLabelMobile;
 
         [Tooltip("画面キャプチャ/カメラプレビュー表示用RawImage")]
         public RawImage screenCapturePreviewImage;
@@ -899,24 +899,14 @@ namespace CyanNook.UI
             {
                 screenCaptureToggle.isOn = screenCaptureDisplayController != null && screenCaptureDisplayController.IsPlaying;
                 screenCaptureToggle.onValueChanged.AddListener(OnScreenCaptureToggleChanged);
-
-                // モバイルではトグルラベルとテキストを変更
-                if (screenCaptureDisplayController != null && screenCaptureDisplayController.IsMobileMode)
-                {
-                    // トグル内ラベル
-                    var toggleLabel = screenCaptureToggle.GetComponentInChildren<TMP_Text>();
-                    if (toggleLabel != null)
-                    {
-                        toggleLabel.text = screenCaptureMobileLabel;
-                    }
-
-                    // 別途配置されたラベルテキスト
-                    if (screenCaptureLabelText != null)
-                    {
-                        screenCaptureLabelText.text = screenCaptureMobileLabel;
-                    }
-                }
             }
+
+            // モバイル/デスクトップでラベル GameObject を切替（LocalizeStringEvent を維持するため）
+            bool isMobile = screenCaptureDisplayController != null && screenCaptureDisplayController.IsMobileMode;
+            if (screenCaptureLabelDesktop != null)
+                screenCaptureLabelDesktop.SetActive(!isMobile);
+            if (screenCaptureLabelMobile != null)
+                screenCaptureLabelMobile.SetActive(isMobile);
 
             // 既にキャプチャ中の場合はプレビューを表示
             UpdateScreenCapturePreview();

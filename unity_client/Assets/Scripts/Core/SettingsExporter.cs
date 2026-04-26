@@ -119,6 +119,9 @@ namespace CyanNook.Core
             new SettingEntry("voice_micEnabled", PrefType.Int),
             new SettingEntry("voice_inputLanguage", PrefType.String),
             new SettingEntry("voice_silenceThreshold", PrefType.Float),
+
+            // UI
+            new SettingEntry("ui_locale", PrefType.String),
         };
 
         // ===================================================================

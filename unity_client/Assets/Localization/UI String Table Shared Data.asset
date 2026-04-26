@@ -1,0 +1,328 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5b11a58205ec3474ca216360e9fa74a8, type: 3}
+  m_Name: UI String Table Shared Data
+  m_EditorClassIdentifier: Unity.Localization::UnityEngine.Localization.Tables.SharedTableData
+  m_TableCollectionName: UI String Table
+  m_TableCollectionNameGuidString: 252b3ea69913c1a4cb7411538aad0c59
+  m_Entries:
+  - m_Id: 324478689280
+    m_Key: avatar.animSet
+    m_Metadata:
+      m_Items: []
+  - m_Id: 378048339968
+    m_Key: avatar.cameraHeight
+    m_Metadata:
+      m_Items: []
+  - m_Id: 792143585280
+    m_Key: avatar.characterPrompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 893909983232
+    m_Key: avatar.responseFormatPrompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 980019044352
+    m_Key: avatar.cameraLookAt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 1065935167488
+    m_Key: avatar.fovMin
+    m_Metadata:
+      m_Items: []
+  - m_Id: 12639089451008
+    m_Key: avatar.boredRate
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13853856358400
+    m_Key: avatar.happyFactor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13903898599424
+    m_Key: avatar.relaxedFactor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13924807204864
+    m_Key: avatar.angryFactor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13946818912256
+    m_Key: avatar.sadFactor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13963310915584
+    m_Key: avatar.surprisedFactor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 16933343715328
+    m_Key: llm.apiType
+    m_Metadata:
+      m_Items: []
+  - m_Id: 16984577138688
+    m_Key: llm.apiKey
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17007427706880
+    m_Key: llm.modelName
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17031352016896
+    m_Key: llm.maxHistory
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17096200151040
+    m_Key: llm.useVision
+    m_Metadata:
+      m_Items: []
+  - m_Id: 19917507125248
+    m_Key: llm.preview
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17130912210944
+    m_Key: llm.webCamera
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17154068963328
+    m_Key: llm.screenCapture
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17214592770048
+    m_Key: llm.difyText
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21200867680256
+    m_Key: llm.cronScheduler
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21247202156544
+    m_Key: llm.cronAutoReload
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21969868152832
+    m_Key: llm.idleChat
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21989669462016
+    m_Key: llm.idleChat Message
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22009613377536
+    m_Key: llm.interval
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22739627794432
+    m_Key: llm.sleepDefaultDuration
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22789988802560
+    m_Key: llm.sleepMinDuration
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22814508703744
+    m_Key: llm.sleepMaxDuration
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22838927941632
+    m_Key: llm.dreamInterval
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22881474961408
+    m_Key: llm.dreamPrompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22904015151104
+    m_Key: llm.wakeUpMessage
+    m_Metadata:
+      m_Items: []
+  - m_Id: 27817206079488
+    m_Key: llm.outingInterval
+    m_Metadata:
+      m_Items: []
+  - m_Id: 27841772118016
+    m_Key: llm.outingPrompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 27857978908672
+    m_Key: llm.entryPrompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 177651904929792
+    m_Key: audio.ttsUse
+    m_Metadata:
+      m_Items: []
+  - m_Id: 177673698533376
+    m_Key: audio.ttsEngine
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178846232993792
+    m_Key: audio.voicevoxSpeaker
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178864901840896
+    m_Key: audio.voicevoxSpeed
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178889874726912
+    m_Key: audio.voicevoxPitch
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178911844491264
+    m_Key: audio.voicevoxIntonation
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178958673895424
+    m_Key: 'audio.voiceTest
+
+'
+    m_Metadata:
+      m_Items: []
+  - m_Id: 183450987388928
+    m_Key: audio.webSpeachSpeaker
+    m_Metadata:
+      m_Items: []
+  - m_Id: 183509598593024
+    m_Key: audio.webSpeachRate
+    m_Metadata:
+      m_Items: []
+  - m_Id: 183565265395712
+    m_Key: audio.webSpeachPitch
+    m_Metadata:
+      m_Items: []
+  - m_Id: 185453276815360
+    m_Key: audio.geminittsModel
+    m_Metadata:
+      m_Items: []
+  - m_Id: 185550232346624
+    m_Key: audio.geminittsVoice
+    m_Metadata:
+      m_Items: []
+  - m_Id: 185573301018624
+    m_Key: audio.geminittsStylePrompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 187634000322560
+    m_Key: audio.voiceInput
+    m_Metadata:
+      m_Items: []
+  - m_Id: 187661800169472
+    m_Key: audio.voiceinputEchoPrevention
+    m_Metadata:
+      m_Items: []
+  - m_Id: 189316306296832
+    m_Key: audio.voiceinputSilenceThrehold
+    m_Metadata:
+      m_Items: []
+  - m_Id: 189215743664128
+    m_Key: 'language
+
+'
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203386149396480
+    m_Key: debug.key
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203464297668608
+    m_Key: debug.jsonMode
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203515015192576
+    m_Key: debug.llmRawText
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203578709893120
+    m_Key: debug.tImelineDebug
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203647030910976
+    m_Key: debug.statusOverlay
+    m_Metadata:
+      m_Items: []
+  - m_Id: 209618088222720
+    m_Key: debug.settingsJson
+    m_Metadata:
+      m_Items: []
+  - m_Id: 209996317974528
+    m_Key: debug.license
+    m_Metadata:
+      m_Items: []
+  - m_Id: 210306356731904
+    m_Key: export
+    m_Metadata:
+      m_Items: []
+  - m_Id: 210444559048704
+    m_Key: import
+    m_Metadata:
+      m_Items: []
+  - m_Id: 210826421067776
+    m_Key: debug.exportLog
+    m_Metadata:
+      m_Items: []
+  - m_Id: 211041148461056
+    m_Key: ui.copy
+    m_Metadata:
+      m_Items: []
+  - m_Id: 211100783075328
+    m_Key: ui.paste
+    m_Metadata:
+      m_Items: []
+  - m_Id: 212041632571392
+    m_Key: firstRun.text
+    m_Metadata:
+      m_Items: []
+  - m_Id: 213713264041984
+    m_Key: ui.comeHome
+    m_Metadata:
+      m_Items: []
+  - m_Id: 218282001948672
+    m_Key: llm.rearCamera
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232303019155456
+    m_Key: ui.min
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232366881628160
+    m_Key: ui.max
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232413044137984
+    m_Key: ui.minutes
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232566845071360
+    m_Key: ui.second
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232647707058176
+    m_Key: ui.testConnection
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233554331033600
+    m_Key: ui.save
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233596534120448
+    m_Key: ui.reload
+    m_Metadata:
+      m_Items: []
+  m_Metadata:
+    m_Items: []
+  m_KeyGenerator:
+    rid: 1830501622536732672
+  references:
+    version: 2
+    RefIds:
+    - rid: 1830501622536732672
+      type: {class: DistributedUIDGenerator, ns: UnityEngine.Localization.Tables, asm: Unity.Localization}
+      data:
+        m_CustomEpoch: 1777126789060

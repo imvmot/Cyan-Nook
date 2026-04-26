@@ -80,8 +80,9 @@ Cyan-Nook/
 | Class | Description |
 |-------|-------------|
 | `EmotionData` | happy, relaxed, angry, sad, surprised (0.0-1.0) |
-| `AnimationStateType` | Idle, Walk, Run, Talk, Emote, Interact |
+| `AnimationStateType` | Idle, Walk, Run, Talk, Emote, Interact, Thinking, Custom |
 | `TimelineBindingData` | ステート↔Timeline↔Clipマッピング (ScriptableObject) |
+| `TransitionRuleData` | 遷移フロー閲覧用の手書きルール集 (ScriptableObject、ランタイム未使用) |
 
 ### Camera Control (`Scripts/Camera/`, namespace: `CyanNook.CameraControl`)
 
@@ -147,6 +148,8 @@ Category: common / talk / emote / interact
 - **Extract All Animation Clips** - 全FBXからClip抽出
 - **Extract Clips for Selected Character** - 選択キャラクターのClip抽出
 - **Create Timelines for Character** - Timeline + TimelineBindingData生成
+- **Transition Viewer** - アニメーション遷移フロー可視化ウィンドウ（閲覧専用）
+- **Create Default Transition Rules (chr001)** - chr001用の初期遷移ルール生成
 
 ### CyanNook
 - **Setup VRM Test Scene** - テストシーン自動構築

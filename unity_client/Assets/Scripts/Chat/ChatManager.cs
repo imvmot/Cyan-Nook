@@ -94,7 +94,10 @@ namespace CyanNook.Chat
 
         // Cron帰宅リクエスト中フラグ（Entry再生中のThinking抑制・レスポンスキュー用）
         private bool _isCronEntryRequest;
-        private LLMResponseData _cronEntryQueuedResponse;
+
+        // Entry再生中に到着したLLMレスポンスを保持（Cron帰宅・通常Entry共用）。
+        // OutingController.OnEntryAnimationCompletedで排出される。
+        private LLMResponseData _entryQueuedResponse;
 
         /// <summary>
         /// sleep/outing中はVision画像キャプチャを抑制
@@ -188,7 +191,25 @@ namespace CyanNook.Chat
                 llmClient.OnStreamParseError += HandleStreamParseError;
             }
 
+            if (outingController != null)
+            {
+                outingController.OnEntryAnimationCompleted += FlushEntryQueuedResponse;
+            }
+
             LoadHistory();
+        }
+
+        /// <summary>
+        /// Entry再生中にキューしたLLMレスポンスを発火する（OutingController.OnEntryAnimationCompleted購読）。
+        /// 通常Entry / Cron帰宅 共通の経路。
+        /// </summary>
+        private void FlushEntryQueuedResponse()
+        {
+            if (_entryQueuedResponse == null) return;
+            var response = _entryQueuedResponse;
+            _entryQueuedResponse = null;
+            Debug.Log("[ChatManager] Entry complete: dispatching queued response");
+            OnChatResponseReceived?.Invoke(response);
         }
 
         private void HandleRequestStarted()
@@ -260,6 +281,11 @@ namespace CyanNook.Chat
                 llmClient.OnStreamTextReceived -= HandleStreamText;
                 llmClient.OnStreamFieldReceived -= HandleStreamField;
                 llmClient.OnStreamParseError -= HandleStreamParseError;
+            }
+
+            if (outingController != null)
+            {
+                outingController.OnEntryAnimationCompleted -= FlushEntryQueuedResponse;
             }
         }
 
@@ -534,7 +560,7 @@ namespace CyanNook.Chat
 
             Debug.Log("[ChatManager] Cron entry request, initiating entry with parallel LLM request");
             _isCronEntryRequest = true;
-            _cronEntryQueuedResponse = null;
+            _entryQueuedResponse = null;
 
             // 保留中のoutingリクエストを中断
             if (_currentState == ChatState.WaitingForResponse && _isAutoRequest)
@@ -559,18 +585,12 @@ namespace CyanNook.Chat
                 : cronPrompt;
 
             // Entry再生開始（通常のentryPromptは抑制）
+            // キュー排出はOnEntryAnimationCompleted購読のFlushEntryQueuedResponseに任せる。
+            // ここでは応答未着の場合のThinking開始のみハンドル。
             outingController.PlayEntry(() =>
             {
-                // Entry完了後: キューにレスポンスがあれば直接処理、なければThinking開始
                 _isCronEntryRequest = false;
-                if (_cronEntryQueuedResponse != null)
-                {
-                    Debug.Log("[ChatManager] Cron entry: response already received, dispatching");
-                    var response = _cronEntryQueuedResponse;
-                    _cronEntryQueuedResponse = null;
-                    OnChatResponseReceived?.Invoke(response);
-                }
-                else
+                if (_entryQueuedResponse == null)
                 {
                     Debug.Log("[ChatManager] Cron entry: no response yet, starting Thinking");
                     if (talkController != null)
@@ -1039,12 +1059,16 @@ namespace CyanNook.Chat
             {
                 sleepController.QueueWakeUpResponse(response);
             }
-            // Cron帰宅リクエスト中: Entry再生中はレスポンスをキューに入れる
-            // Entry完了後にコールバックで処理される
-            else if (_isCronEntryRequest && outingController != null && outingController.IsPlayingEntry)
+            // Entry再生中: レスポンスをキューに入れ、Entry完了後の
+            // FlushEntryQueuedResponse（OnEntryAnimationCompleted購読）で発火する。
+            // 通常Entry / Cron帰宅 共通。
+            // Entry TimelineにActionCancelClipがあれば、CancelRegion到達時点で
+            // 早期完了させて応答発火を前倒しする。
+            else if (outingController != null && outingController.IsPlayingEntry)
             {
-                _cronEntryQueuedResponse = response;
-                Debug.Log($"[ChatManager] Cron entry: response queued during entry animation");
+                _entryQueuedResponse = response;
+                Debug.Log($"[ChatManager] Entry: response queued during entry animation");
+                outingController.RequestEarlyEntryComplete();
             }
             else
             {

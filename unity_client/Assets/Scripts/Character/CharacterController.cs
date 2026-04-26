@@ -63,6 +63,11 @@ namespace CyanNook.Character
         private string _pendingAction;
         private bool _hasIncrementalFields;
 
+        // Entry再生中にストリーミングフィールドを破棄したかどうか。
+        // trueの間、Entry完了後に届く後続フィールドも逐次反映せずブロック処理に委ねる
+        // （フィールドが時系列で半分破棄／半分逐次反映される straddle 状態を防止）
+        private bool _streamFieldsDroppedDuringEntry;
+
         // LookAt動的再評価用
         private TargetType _lookAtTargetType;
         private string _lookAtParam; // Talk/Named: targetName, Interact: action名
@@ -248,6 +253,8 @@ namespace CyanNook.Character
             switch (state)
             {
                 case ChatState.WaitingForResponse:
+                    // 新規リクエスト開始 → Entry時の破棄フラグをリセット（ガード前に必ず実施）
+                    _streamFieldsDroppedDuringEntry = false;
                     // 起床ed再生中はInteracting状態を維持（Thinking遷移しない）
                     if (sleepController != null && sleepController.IsWakingUp)
                     {
@@ -308,8 +315,17 @@ namespace CyanNook.Character
                 return;
             }
 
-            // Entry再生中: 全フィールドを無視（entryタイムラインの上書き防止）
+            // Entry再生中: 全フィールドを無視（entryタイムラインの上書き防止）。
+            // 破棄したことを記録し、後続フィールドも逐次反映させない（straddle回避）
             if (outingController != null && outingController.IsPlayingEntry)
+            {
+                _streamFieldsDroppedDuringEntry = true;
+                return;
+            }
+
+            // Entry中に破棄した分があれば、Entry完了後の後続フィールドも逐次反映せず
+            // 最終のHandleChatResponse（ChatManagerがキュー排出）でブロック処理させる
+            if (_streamFieldsDroppedDuringEntry)
             {
                 return;
             }
@@ -1018,17 +1034,10 @@ namespace CyanNook.Character
                     yield break;
                 }
 
-                // Walk終了フェーズ（walk_ed）再生中ならスキップしてIdleに遷移
-                // emoteが予約されている場合はwalk_edを待たずに即座に遷移する
-                if (animationController != null && animationController.IsInEndPhase)
-                {
-                    animationController.ReturnToIdle();
-                    Debug.Log($"[CharacterController] Skipped walk end phase for pending emote: {emoteAnimationId}");
-                    elapsed += Time.deltaTime;
-                    yield return null;
-                    continue;
-                }
-
+                // walk_ed（終了フェーズ）は中断せず最後まで再生させる。
+                // walk_ed完了後にOnWalkEndPhaseCompleteがReturnToIdleを呼び、
+                // IdleタイムラインのEmotePlayableClipがCanPlayEmote()=trueにすると
+                // 下のチェックでemoteが発火する。
                 if (animationController != null && animationController.CanPlayEmote())
                 {
                     animationController.PlayEmoteWithReturn(emoteAnimationId);

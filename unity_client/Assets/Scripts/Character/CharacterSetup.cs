@@ -191,6 +191,15 @@ namespace CyanNook.Character
                 Debug.Log("[CharacterSetup] OutingController references set");
             }
 
+            // カメラを見る設定（Entry開始より前に行う必要がある:
+            // EntryのLookAtClipが_currentTargetType=Noneだと有効化されないため）
+            if (lookAtCameraOnLoad && lookAtController != null && _mainCamera != null)
+            {
+                lookAtController.SetPlayerTarget(_mainCamera.transform);
+                lookAtController.LookAtPlayer();
+                Debug.Log("[CharacterSetup] LookAt camera enabled");
+            }
+
             // Sleep状態の復元チェック → 復元成功時はIdle/Entry開始をスキップ
             bool sleepRestored = false;
             if (sleepController != null && sleepController.ShouldStartAsSleep())
@@ -250,14 +259,6 @@ namespace CyanNook.Character
             {
                 dynamicCameraController.targetCharacter = vrmInstance.transform;
                 Debug.Log("[CharacterSetup] DynamicCameraController target set to VRM instance");
-            }
-
-            // カメラを見る設定
-            if (lookAtCameraOnLoad && lookAtController != null && _mainCamera != null)
-            {
-                lookAtController.SetPlayerTarget(_mainCamera.transform);
-                lookAtController.LookAtPlayer();
-                Debug.Log("[CharacterSetup] LookAt camera enabled");
             }
 
             // テスト表情

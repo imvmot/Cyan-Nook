@@ -1,0 +1,344 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e9620f8c34305754d8cc9a7e49e852d9, type: 3}
+  m_Name: UI String Table_en
+  m_EditorClassIdentifier: Unity.Localization::UnityEngine.Localization.Tables.StringTable
+  m_LocaleId:
+    m_Code: en
+  m_SharedData: {fileID: 11400000, guid: 252b3ea69913c1a4cb7411538aad0c59, type: 2}
+  m_Metadata:
+    m_Items: []
+  m_TableData:
+  - m_Id: 378048339968
+    m_Localized: 'Camera Height '
+    m_Metadata:
+      m_Items: []
+  - m_Id: 324478689280
+    m_Localized: Anim Set
+    m_Metadata:
+      m_Items: []
+  - m_Id: 792143585280
+    m_Localized: Character Prompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 893909983232
+    m_Localized: Response Format Prompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 980019044352
+    m_Localized: Camera LookAt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 1065935167488
+    m_Localized: FOV                    Min
+    m_Metadata:
+      m_Items: []
+  - m_Id: 12639089451008
+    m_Localized: Bored Rate
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13853856358400
+    m_Localized: Happy Factor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13903898599424
+    m_Localized: Relaxed Factor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13924807204864
+    m_Localized: Angry Factor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13946818912256
+    m_Localized: Sad Factor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 13963310915584
+    m_Localized: Surprised Factor
+    m_Metadata:
+      m_Items: []
+  - m_Id: 16933343715328
+    m_Localized: API Type
+    m_Metadata:
+      m_Items: []
+  - m_Id: 16984577138688
+    m_Localized: API Key
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17007427706880
+    m_Localized: Model Name
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17031352016896
+    m_Localized: Max History
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17096200151040
+    m_Localized: Use Vision
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17130912210944
+    m_Localized: Web Camera
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17154068963328
+    m_Localized: Screen Capture
+    m_Metadata:
+      m_Items: []
+  - m_Id: 17214592770048
+    m_Localized: 'When using Dify:
+
+      - Configure the system prompt in the Dify
+      app
+
+      - Conversation history is managed automatically by Dify
+
+      -
+      The following variables are sent as inputs (see manual for details)
+
+      {{bored}},{{current_datetime}},{{current_pose}},
+
+      {{current_emotion}},{{spatial_context}},{{available_furniture}},
+
+      {{available_room_targets}}'
+    m_Metadata:
+      m_Items: []
+  - m_Id: 19917507125248
+    m_Localized: Preview
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21200867680256
+    m_Localized: Scheduler Json
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21247202156544
+    m_Localized: AutoReload
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21969868152832
+    m_Localized: Idle Chat
+    m_Metadata:
+      m_Items: []
+  - m_Id: 21989669462016
+    m_Localized: Idle Chat Message
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22009613377536
+    m_Localized: Interval
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22739627794432
+    m_Localized: Sleep Default Dur
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22789988802560
+    m_Localized: Min Duration
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22814508703744
+    m_Localized: Max Duration
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22838927941632
+    m_Localized: Dream Interval
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22881474961408
+    m_Localized: Dream Prompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 22904015151104
+    m_Localized: Wake Up Message
+    m_Metadata:
+      m_Items: []
+  - m_Id: 27817206079488
+    m_Localized: Outing Interval
+    m_Metadata:
+      m_Items: []
+  - m_Id: 27841772118016
+    m_Localized: Outing Prompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 27857978908672
+    m_Localized: Entry Prompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 177651904929792
+    m_Localized: TTS Use
+    m_Metadata:
+      m_Items: []
+  - m_Id: 177673698533376
+    m_Localized: TTS Engine
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178846232993792
+    m_Localized: Speaker
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178864901840896
+    m_Localized: Speed
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178889874726912
+    m_Localized: Pitch
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178911844491264
+    m_Localized: Intonation
+    m_Metadata:
+      m_Items: []
+  - m_Id: 178958673895424
+    m_Localized: 'Voice Test
+
+'
+    m_Metadata:
+      m_Items: []
+  - m_Id: 183450987388928
+    m_Localized: Speaker
+    m_Metadata:
+      m_Items: []
+  - m_Id: 183509598593024
+    m_Localized: Rate
+    m_Metadata:
+      m_Items: []
+  - m_Id: 183565265395712
+    m_Localized: Pitch
+    m_Metadata:
+      m_Items: []
+  - m_Id: 185453276815360
+    m_Localized: Model
+    m_Metadata:
+      m_Items: []
+  - m_Id: 185550232346624
+    m_Localized: Voice
+    m_Metadata:
+      m_Items: []
+  - m_Id: 185573301018624
+    m_Localized: Style Prompt
+    m_Metadata:
+      m_Items: []
+  - m_Id: 187634000322560
+    m_Localized: Voice Input
+    m_Metadata:
+      m_Items: []
+  - m_Id: 187661800169472
+    m_Localized: Echo Prevention
+    m_Metadata:
+      m_Items: []
+  - m_Id: 189215743664128
+    m_Localized: 'Language
+
+'
+    m_Metadata:
+      m_Items: []
+  - m_Id: 189316306296832
+    m_Localized: SilenceThrehold
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203386149396480
+    m_Localized: Debug Key
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203464297668608
+    m_Localized: Json Mode
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203515015192576
+    m_Localized: LLM Raw Text
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203578709893120
+    m_Localized: TImeline Debug
+    m_Metadata:
+      m_Items: []
+  - m_Id: 203647030910976
+    m_Localized: Status Overlay
+    m_Metadata:
+      m_Items: []
+  - m_Id: 209618088222720
+    m_Localized: Settings Json
+    m_Metadata:
+      m_Items: []
+  - m_Id: 209996317974528
+    m_Localized: License
+    m_Metadata:
+      m_Items: []
+  - m_Id: 210306356731904
+    m_Localized: Export
+    m_Metadata:
+      m_Items: []
+  - m_Id: 210444559048704
+    m_Localized: Import
+    m_Metadata:
+      m_Items: []
+  - m_Id: 210826421067776
+    m_Localized: Export Log
+    m_Metadata:
+      m_Items: []
+  - m_Id: 211041148461056
+    m_Localized: Copy
+    m_Metadata:
+      m_Items: []
+  - m_Id: 211100783075328
+    m_Localized: "Paste\t"
+    m_Metadata:
+      m_Items: []
+  - m_Id: 212041632571392
+    m_Localized: 'Try Browser AI
+
+      - No setup required
+
+      - Low performance
+      - for testing only
+
+      - Model: Qwen3-1.7B'
+    m_Metadata:
+      m_Items: []
+  - m_Id: 213713264041984
+    m_Localized: Come Home
+    m_Metadata:
+      m_Items: []
+  - m_Id: 218282001948672
+    m_Localized: Rear Camera
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232303019155456
+    m_Localized: Min
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232366881628160
+    m_Localized: Max
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232413044137984
+    m_Localized: min
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232566845071360
+    m_Localized: Sec
+    m_Metadata:
+      m_Items: []
+  - m_Id: 232647707058176
+    m_Localized: Test Connection
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233554331033600
+    m_Localized: Save
+    m_Metadata:
+      m_Items: []
+  - m_Id: 233596534120448
+    m_Localized: Reload
+    m_Metadata:
+      m_Items: []
+  references:
+    version: 2
+    RefIds: []
