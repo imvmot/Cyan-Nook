@@ -151,6 +151,9 @@ Category: common / talk / emote / interact
 - **Transition Viewer** - アニメーション遷移フロー可視化ウィンドウ（閲覧専用）
 - **Create Default Transition Rules (chr001)** - chr001用の初期遷移ルール生成
 
+### CyanNook > Localization
+- **Bake Japanese to Active Scene TMPs** - アクティブシーンの LocalizeStringEvent から日本語訳を解決し TMP_Text にベイク（unityroom版は Localization が機能しないため日本語固定表示の事前焼き付け用。プレハブインスタンスはシーンオーバーライドとして焼き付け）
+
 ### CyanNook
 - **Setup VRM Test Scene** - テストシーン自動構築
 

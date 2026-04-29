@@ -4146,11 +4146,43 @@ UI ラベルの日本語/英語切替。Unity Localization パッケージ (`com
 - `Unity.Localization`
 - `Unity.Addressables` / `Unity.ResourceManager` (Localization 内部依存。`InitializationOperation` の戻り値型 `AsyncOperationHandle<T>` の解決に必要)
 
+**unityroom版での無効化と日本語固定:**
+
+unityroom (https://unityroom.com) は **`settings.json` という名前のファイル配信を 404 でブロックする独自仕様**を持つ（サーバー設定ファイル名のブラックリスト推測。`.json` 拡張子全般や `cron/*.json` は配信OK、`settings.json` という名前のみ対象）。Unity Addressables 2.x は `RuntimePath + "/settings.json"` をハードコードしているため、unityroom版では Addressables 初期化が失敗 → `LocalizationSettings.AvailableLocales.Locales.Count == 0` となり Localization が完全に機能しなくなる。
+
+unityroom は **`Build` フォルダ4ファイル + `StreamingAssets` のみアップロード可能**で `index.html` は差し替えられないため、JS インターセプター方式の書き換えも不可。Addressables の public API ではランタイムから settings.json パスを差し替える正規手段が無い（`AddressablesImpl.InitializeAsync(string)` は internal、PlayerPrefs オーバーライドは `#if UNITY_EDITOR` 内のみ）。
+
+そのため unityroom 版は **Localization を諦め、日本語固定**とする方針。GitHub版は通常通り言語切替対応。
+
+**実装:**
+
+- `LocaleSelector.cs` の `Start()` 冒頭に `#if UNITYROOM_BUILD` ガードを追加し、言語選択UIを `SetActive(false)` 化:
+  - `containerToHideOnUnityroom` (GameObject) に「言語選択行」の親（ラベル+ドロップダウンを含む）を指定すると、その親が非表示
+  - 未指定の場合は `localeDropdown.gameObject` のみを非表示
+  - **LocaleSelector 自身の `gameObject` は非表示にしない** — LocaleSelector はルート Canvas（UIController / ChatManager / LLMClient / SleepController 等が同居）に attach されているため、自身の GameObject を `SetActive(false)` するとゲーム全体が止まる
+- `LocalizationBakeToTMP.cs` (Editor 拡張): メニュー `CyanNook > Localization > Bake Japanese to Active Scene TMPs`
+  - 現在開いているシーンの全 `LocalizeStringEvent` を巡回し、Japanese String Table の値を対象 `TMP_Text.text` に上書き保存
+  - シーン内のプレハブインスタンスは**シーンオーバーライド**として焼き付け（プレハブアセット本体は変更しない）
+  - unityroom版では `LocalizeStringEvent` が runtime に発火しないが、TMP_Text のシリアライズ値（=焼き付けた日本語）がそのまま表示される
+  - 全シーン処理は当初試したが、Addressables テストパッケージシーンへのアクセス権限エラー＋TMPプレハブ Awake 警告ノイズで断念し、アクティブシーン専用に限定
+
+**運用フロー（unityroom版リリース時）:**
+
+1. `CyanNook > Build > Switch to Unityroom Build` (UNITYROOM_BUILD ON)
+2. main シーンを開く
+3. `CyanNook > Localization > Bake Japanese to Active Scene TMPs` 実行（全 TMP に日本語焼き付け）
+4. WebGL ビルド → `prepare_unityroom.bat` → unityroom にアップロード
+
+ベイク済みTMPは GitHub版でも runtime で `LocalizeStringEvent` が上書きするため、両ビルドで使い回し可能。
+
+**切り分け診断:** unityroom 版のみで `[LocaleSelector] No available locales configured.` が出る、かつ `https://os-worker.unityroom.com/.../streaming_assets/aa/settings.json` だけが 404、同階層の `catalog.bin` `catalog.hash` `WebGL/*.bundle` は 200 で取れることを確認すれば本症状。
+
 **関連ファイル:**
 
 | ファイル | 役割 |
 |---------|------|
-| `Scripts/UI/LocaleSelector.cs` | プルダウン制御 + 永続化 |
+| `Scripts/UI/LocaleSelector.cs` | プルダウン制御 + 永続化 + UNITYROOM_BUILD 非表示ガード |
+| `Editor/LocalizationBakeToTMP.cs` | unityroom版用 日本語ベイク Editor ツール |
 | `Assets/Localization/Localization Settings.asset` | Localization 全体設定 |
 | `Assets/Localization/UI String Table*.asset` | 文字列テーブル本体（ja/en/Shared Data） |
 | `Assets/Localization/Japanese (ja).asset` / `English (en).asset` | Locale 定義 |

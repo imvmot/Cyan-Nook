@@ -17,10 +17,29 @@ namespace CyanNook.UI
         [Tooltip("言語選択プルダウン（TMP_Dropdown）")]
         public TMP_Dropdown localeDropdown;
 
+        [Tooltip("unityroom版で非表示にするコンテナ（言語選択行のラベル+ドロップダウンを含む親など）。未設定なら localeDropdown のGameObjectのみを非アクティブ化")]
+        public GameObject containerToHideOnUnityroom;
+
         private bool _suppressCallback;
 
         private IEnumerator Start()
         {
+#if UNITYROOM_BUILD
+            // unityroomは "settings.json" 配信ブロックで Localization が初期化できないため、
+            // 日本語固定運用とし言語選択UIを非表示にする。
+            // このコンポーネントが他のUI/ロジックと同居するルートGameObjectに付いている場合
+            // gameObject を無効化すると同居コンポーネントも止まってしまうため、
+            // containerToHideOnUnityroom か localeDropdown のGameObjectだけを対象にする。
+            GameObject hideTarget = null;
+            if (containerToHideOnUnityroom != null)
+                hideTarget = containerToHideOnUnityroom;
+            else if (localeDropdown != null)
+                hideTarget = localeDropdown.gameObject;
+
+            if (hideTarget != null)
+                hideTarget.SetActive(false);
+            yield break;
+#else
             yield return LocalizationSettings.InitializationOperation;
 
             var locales = LocalizationSettings.AvailableLocales.Locales;
@@ -60,6 +79,7 @@ namespace CyanNook.UI
             _suppressCallback = false;
 
             localeDropdown.onValueChanged.AddListener(OnDropdownChanged);
+#endif
         }
 
         private void OnDestroy()
