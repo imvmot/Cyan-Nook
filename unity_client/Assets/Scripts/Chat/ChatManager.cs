@@ -99,6 +99,11 @@ namespace CyanNook.Chat
         // OutingController.OnEntryAnimationCompletedで排出される。
         private LLMResponseData _entryQueuedResponse;
 
+        // 初回Entry（起動時の入室演出）が完了したか。
+        // 完了前はVRMロード中/Entry再生中でキャラクター側が未準備のため、
+        // 外部アクションフィードの適用を抑制する（ApplyExternalResponseで使用）。
+        private bool _hasInitialEntryCompleted;
+
         /// <summary>
         /// sleep/outing中はVision画像キャプチャを抑制
         /// （睡眠中に部屋が見える・外出中はUnity背景のみで無意味なため）
@@ -205,6 +210,9 @@ namespace CyanNook.Chat
         /// </summary>
         private void FlushEntryQueuedResponse()
         {
+            // 初回Entry完了を記録（外部アクションフィードの適用開始ゲート）
+            _hasInitialEntryCompleted = true;
+
             if (_entryQueuedResponse == null) return;
             var response = _entryQueuedResponse;
             _entryQueuedResponse = null;
@@ -1075,6 +1083,95 @@ namespace CyanNook.Chat
                 OnChatResponseReceived?.Invoke(response);
             }
             OnMessageReceived?.Invoke(response.FullMessage);
+        }
+
+        // ===================================================================
+        // 外部アクションフィード（受動制御）用の応答注入
+        // ===================================================================
+
+        /// <summary>
+        /// 外部アクションフィードから受信した完成済み応答を適用する。
+        /// LLMへリクエストは送らず、通常のブロッキング応答と同じ確定処理
+        /// （会話履歴・感情・退屈度・TTS・UI表示・CharacterControllerルーティング）を通す。
+        /// これによりアニメ・emote・視線・口パク・メッセージ表示・音声が一気通貫で駆動される。
+        /// 外部フィードは「その場でアクションを見せる」用途のため、
+        /// 進行中リクエスト（応答待ち/Thinking）・睡眠中・外出中はスキップする（falseを返す）。
+        /// ※ ChatState は Idle/WaitingForResponse/Error の3値のみで睡眠中・外出中を表現しないため、
+        ///    SleepController.IsSleeping / OutingController.IsOutside を明示的にチェックする必要がある。
+        /// </summary>
+        /// <param name="response">適用するLLMResponseData（LLMResponseData.FromJsonでパース済みを想定）</param>
+        /// <returns>適用した場合true、ビジー等でスキップした場合false</returns>
+        public bool ApplyExternalResponse(LLMResponseData response)
+        {
+            if (response == null)
+            {
+                Debug.LogWarning("[ChatManager] ApplyExternalResponse: response is null");
+                return false;
+            }
+
+            // 進行中のリクエスト（応答待ち）がある場合は適用しない
+            // （HandleLLMResponseがSetState(Idle)＋イベント発火するため、実リクエストと競合する）
+            if (_currentState != ChatState.Idle)
+            {
+                Debug.Log($"[ChatManager] ApplyExternalResponse skipped (state={_currentState})");
+                return false;
+            }
+
+            // Thinking演出中（起床ed/Entry再生中はIdleでも_isThinkingActive=trueのことがある）はスキップ。
+            // HandleLLMResponseはThinkingを止めないため、割り込むと考え中演出が残る恐れがある。
+            if (_isThinkingActive)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (thinking active)");
+                return false;
+            }
+
+            // 睡眠中・外出中はスキップ。_currentStateはこれらの状態でもIdleに戻っているため
+            // 別コントローラーのフラグで明示的に判定する必要がある。
+            if (sleepController != null && sleepController.IsSleeping)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (sleeping)");
+                return false;
+            }
+            if (outingController != null && outingController.IsOutside)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (outside)");
+                return false;
+            }
+
+            // Entry（入室演出）再生中はスキップ。
+            // Entry中はNavMeshAgentが無効化されており、move等を適用すると
+            // ナビゲーションが無効なAgentに対して走り出してしまう。
+            if (outingController != null && outingController.IsPlayingEntry)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (entry playing)");
+                return false;
+            }
+
+            // 起動時の初回Entry完了前はスキップ。
+            // 起動直後はVRMロード〜入室演出の準備中で、この間に適用すると
+            // PlayableDirector未割当のままナビゲーション開始→Entry開始でAgent無効化→
+            // 「"Move" can only be called on an active agent」エラー連発＋瞬間移動が発生する。
+            if (outingController != null && !_hasInitialEntryCompleted)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (initial entry not completed)");
+                return false;
+            }
+
+            // null/空フィールドにデフォルト補填（手動構築されたresponseへの安全策。
+            // FromJson経由なら既に補填済みだがFillDefaultsは冪等なので害はない）
+            response.FillDefaults();
+
+            // リクエスト種別フラグを全てクリアし、通常のブロッキング応答として確定処理へ流す
+            _isAutoRequest = false;
+            _isStreamingRequest = false;
+            _isWakeUpRequest = false;
+            _isCronEntryRequest = false;
+            _incrementalFieldsApplied = false;
+            _parseErrorHandled = false;
+
+            Debug.Log($"[ChatManager] Applying external feed response: action={response.action}, message={response.message}");
+            HandleLLMResponse(response);
+            return true;
         }
 
         /// <summary>

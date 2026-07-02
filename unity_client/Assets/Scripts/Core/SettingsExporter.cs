@@ -80,6 +80,11 @@ namespace CyanNook.Core
             new SettingEntry("cronSchedulerEnabled", PrefType.Int),
             new SettingEntry("cronAutoReloadInterval", PrefType.Float),
 
+            // External Action Feed（外部アクションフィード / 受動制御）
+            new SettingEntry("feed_enabled", PrefType.Int),
+            new SettingEntry("feed_actionUrl", PrefType.String),
+            new SettingEntry("feed_subscribeInterval", PrefType.Float),
+
             // Sleep
             new SettingEntry("sleep_defaultDuration", PrefType.Int),
             new SettingEntry("sleep_minDuration", PrefType.Int),
