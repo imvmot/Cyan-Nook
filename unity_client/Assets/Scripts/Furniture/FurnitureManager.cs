@@ -277,15 +277,18 @@ namespace CyanNook.Furniture
             var instances = GetAllFurnitureInstances();
             var lines = new List<string>();
 
+            // occupied状態は spatial_context JSON 側に "occupied": true/false で含まれている。
+            // ここで (使用中) マーカーを出すと、座る/立つたびに available_furniture 文字列が変わり、
+            // プロンプトの mid-position で divergence が発生して LLM 側のプロンプトキャッシュが
+            // 大きく割れる。occupied 情報は spatial_context (末尾配置) のみに集約する。
             foreach (var instance in instances)
             {
-                string status = instance.isOccupied ? " (使用中)" : "";
                 string displayName = instance.typeData?.displayName ?? instance.TypeId;
                 string actions = instance.typeData?.availableActions != null
                     ? string.Join("/", instance.typeData.availableActions)
                     : "";
 
-                lines.Add($"  - {instance.instanceId} ({displayName}) [{actions}]{status}");
+                lines.Add($"  - {instance.instanceId} ({displayName}) [{actions}]");
             }
 
             return string.Join("\n", lines);
