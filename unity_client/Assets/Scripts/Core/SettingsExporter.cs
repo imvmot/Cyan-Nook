@@ -1,12 +1,15 @@
 using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using CyanNook.Chat;
 
 namespace CyanNook.Core
 {
     /// <summary>
     /// 全設定のJSON形式エクスポート・インポート
     /// PlayerPrefsの全設定キーを一括管理
+    /// APIキー（llm_config内のapiKey / gemini_tts_apiKey）はエクスポートに含めない
+    /// （設定ファイル共有時の漏洩防止。インポート時はローカルの既存キーを引き継ぐ）
     /// </summary>
     public class SettingsExporter : MonoBehaviour
     {
@@ -157,6 +160,9 @@ namespace CyanNook.Core
             {
                 if (!PlayerPrefs.HasKey(entry.key)) continue;
 
+                // APIキーはエクスポートしない（ファイル共有時の漏洩防止）
+                if (entry.key == "gemini_tts_apiKey") continue;
+
                 // カテゴリコメント（JSONにはコメントがないためスキップ、カテゴリ区切りは空行で）
                 string category = entry.key.Split('_')[0];
                 if (category != currentCategory)
@@ -164,10 +170,13 @@ namespace CyanNook.Core
                     currentCategory = category;
                 }
 
+                string value = entry.key == "llm_config"
+                    ? EscapeJsonString(StripApiKeyFromLlmConfig(PlayerPrefs.GetString(entry.key)))
+                    : GetValueAsJsonString(entry);
+
                 if (!first) sb.AppendLine(",");
                 first = false;
 
-                string value = GetValueAsJsonString(entry);
                 sb.Append($"  \"{entry.key}\": {value}");
             }
 
@@ -191,7 +200,7 @@ namespace CyanNook.Core
 #else
             // エディタ/スタンドアロン: クリップボードにコピー
             GUIUtility.systemCopyBuffer = json;
-            // JSON全文はAPIキーを含むためログに出さない
+            // JSON全文はキャラクタープロンプト等の個人設定を含むためログに出さない
             Debug.Log($"[SettingsExporter] Exported to clipboard ({json.Length} chars)");
 #endif
         }
@@ -288,6 +297,18 @@ namespace CyanNook.Core
                         string strVal = UnescapeJsonString(value);
                         if (strVal != null)
                         {
+                            // エクスポートファイルにはAPIキーが含まれない（漏洩防止で除外）ため、
+                            // 空キーでローカルの既存キーを消さないよう引き継ぐ
+                            if (entry.key == "llm_config")
+                            {
+                                strVal = MergeExistingApiKeyIntoLlmConfig(strVal);
+                                if (strVal == null) break; // パース不能 → 既存設定を保護して書き込まない
+                            }
+                            else if (entry.key == "gemini_tts_apiKey" && string.IsNullOrEmpty(strVal))
+                            {
+                                break;
+                            }
+
                             PlayerPrefs.SetString(entry.key, strVal);
                             count++;
                         }
@@ -309,6 +330,66 @@ namespace CyanNook.Core
 
             PlayerPrefs.Save();
             return count;
+        }
+
+        // ===================================================================
+        // APIキー除外・引き継ぎ
+        // ===================================================================
+
+        /// <summary>
+        /// llm_config JSONからapiKeyを除去する（エクスポート用）
+        /// パースできない場合は安全側に倒して内容ごと出力しない（nullを返す）
+        /// </summary>
+        private static string StripApiKeyFromLlmConfig(string configJson)
+        {
+            if (string.IsNullOrEmpty(configJson)) return null;
+
+            try
+            {
+                var config = JsonUtility.FromJson<LLMConfig>(configJson);
+                if (config == null) return null;
+                config.apiKey = "";
+                return JsonUtility.ToJson(config);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// インポートしたllm_configのapiKeyが空の場合、ローカルに保存済みの
+        /// 既存キーを引き継ぐ（新形式エクスポートはキーを含まないため）
+        /// apiType/apiEndpointの両方が一致する場合のみ引き継ぐ。
+        /// エンドポイント一致を要求するのは、細工された設定ファイル
+        /// （同一apiType + 攻撃者のエンドポイント）でローカルキーが
+        /// 攻撃者サーバーへ送信されるのを防ぐため。
+        /// パース不能なllm_configはnullを返し、書き込み自体をスキップさせる
+        /// （既存の正常な設定とキーを壊れたデータで上書きしない）
+        /// </summary>
+        private static string MergeExistingApiKeyIntoLlmConfig(string importedJson)
+        {
+            try
+            {
+                var imported = JsonUtility.FromJson<LLMConfig>(importedJson);
+                if (imported == null) return null;
+                if (!string.IsNullOrEmpty(imported.apiKey)) return importedJson;
+
+                string existingJson = PlayerPrefs.GetString("llm_config", "");
+                if (string.IsNullOrEmpty(existingJson)) return importedJson;
+
+                var existing = JsonUtility.FromJson<LLMConfig>(existingJson);
+                if (existing == null || string.IsNullOrEmpty(existing.apiKey)) return importedJson;
+                if (existing.apiType != imported.apiType) return importedJson;
+                if (existing.apiEndpoint != imported.apiEndpoint) return importedJson;
+
+                imported.apiKey = existing.apiKey;
+                return JsonUtility.ToJson(imported);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         // ===================================================================
