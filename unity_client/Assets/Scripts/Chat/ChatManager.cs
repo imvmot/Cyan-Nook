@@ -1,5 +1,6 @@
 using UnityEngine;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -62,6 +63,10 @@ namespace CyanNook.Chat
         [Header("Streaming")]
         [Tooltip("ストリーミングモードを使用する")]
         public bool useStreaming = false;
+
+        [Header("Error Recovery")]
+        [Tooltip("LLMエラー後にIdle状態へ自動復帰するまでの秒数。復帰しないとIdleChat/Cron/夢/外出メッセージ等の自律動作が全停止する")]
+        public float errorRecoveryDelay = 3f;
 
         [Header("Vision")]
         [Tooltip("キャラクターカメラの画像をリクエストに含める")]
@@ -171,6 +176,9 @@ namespace CyanNook.Chat
         private bool _incrementalFieldsApplied;
         private bool _isThinkingActive;
         private bool _parseErrorHandled;
+
+        // Error状態からIdleへ自動復帰するコルーチン（HandleLLMErrorで開始）
+        private Coroutine _errorRecoveryCoroutine;
 
         // Difyモード判定（Dify時はconversation_idで履歴管理、inputs で動的変数送信）
         private bool IsDifyMode => llmClient?.CurrentConfig?.apiType == LLMApiType.Dify;
@@ -348,7 +356,7 @@ namespace CyanNook.Chat
                         Debug.Log("[ChatManager] Wake-up: response already received, dispatching to CharacterController");
                         OnChatResponseReceived?.Invoke(queuedResponse);
                     }
-                    else
+                    else if (_currentState == ChatState.WaitingForResponse)
                     {
                         Debug.Log("[ChatManager] Wake-up: no response yet, starting Thinking");
                         if (talkController != null)
@@ -356,6 +364,11 @@ namespace CyanNook.Chat
                             talkController.StartThinking();
                             _isThinkingActive = true;
                         }
+                    }
+                    else
+                    {
+                        // リクエストが既にエラー等で終了している → 応答は来ないためThinkingを開始しない
+                        Debug.Log("[ChatManager] Wake-up: request no longer in flight, skipping Thinking");
                     }
                 });
 
@@ -519,7 +532,7 @@ namespace CyanNook.Chat
                     Debug.Log("[ChatManager] Cron wake-up: response already received, dispatching");
                     OnChatResponseReceived?.Invoke(queuedResponse);
                 }
-                else
+                else if (_currentState == ChatState.WaitingForResponse)
                 {
                     Debug.Log("[ChatManager] Cron wake-up: no response yet, starting Thinking");
                     if (talkController != null)
@@ -527,6 +540,11 @@ namespace CyanNook.Chat
                         talkController.StartThinking();
                         _isThinkingActive = true;
                     }
+                }
+                else
+                {
+                    // リクエストが既にエラー等で終了している → 応答は来ないためThinkingを開始しない
+                    Debug.Log("[ChatManager] Cron wake-up: request no longer in flight, skipping Thinking");
                 }
             });
 
@@ -600,11 +618,19 @@ namespace CyanNook.Chat
                 _isCronEntryRequest = false;
                 if (_entryQueuedResponse == null)
                 {
-                    Debug.Log("[ChatManager] Cron entry: no response yet, starting Thinking");
-                    if (talkController != null)
+                    // リクエストが既にエラー等で終了している場合は応答が来ないためThinkingを開始しない
+                    if (_currentState == ChatState.WaitingForResponse)
                     {
-                        talkController.StartThinking();
-                        _isThinkingActive = true;
+                        Debug.Log("[ChatManager] Cron entry: no response yet, starting Thinking");
+                        if (talkController != null)
+                        {
+                            talkController.StartThinking();
+                            _isThinkingActive = true;
+                        }
+                    }
+                    else
+                    {
+                        Debug.Log("[ChatManager] Cron entry: request no longer in flight, skipping Thinking");
                     }
                 }
             }, skipBlend: false, suppressEntryPrompt: true);
@@ -1210,11 +1236,55 @@ namespace CyanNook.Chat
 
         /// <summary>
         /// LLMエラーを処理
+        /// Errorのまま放置するとIdleChat/Cron/夢/外出メッセージ等の自律動作が
+        /// 全停止するため、リクエスト種別フラグをリセットし数秒後にIdleへ自動復帰する
         /// </summary>
         private void HandleLLMError(string error)
         {
+            // リクエスト種別フラグをリセット
+            // （残留すると次回リクエストがauto扱いになり、Thinking遷移や履歴追加が壊れる）
+            // 注意: _isWakeUpRequest / _isCronEntryRequest はここでリセットしない。
+            // OnErrorの直後に発火するHandleRequestCompletedがsuppressStreamingTTS判定で
+            // これらを参照しており、先にリセットするとTTSのストリーミング状態が閉じられず
+            // 次応答への断片混入やSTT再開ブロックが起きる。
+            // この2つはed完了/Entry完了コールバックで必ずfalseに戻る。
+            _isAutoRequest = false;
+            _isStreamingRequest = false;
+            _incrementalFieldsApplied = false;
+            _parseErrorHandled = false;
+
             SetState(ChatState.Error);
             OnError?.Invoke(error);
+
+            if (_errorRecoveryCoroutine != null)
+            {
+                StopCoroutine(_errorRecoveryCoroutine);
+            }
+            _errorRecoveryCoroutine = StartCoroutine(RecoverFromErrorAfterDelay());
+        }
+
+        /// <summary>
+        /// Error状態から一定時間後にIdleへ復帰する
+        /// エラー表示中に新しいリクエストが始まっていた場合は何もしない
+        /// </summary>
+        private IEnumerator RecoverFromErrorAfterDelay()
+        {
+            yield return new WaitForSeconds(errorRecoveryDelay);
+            _errorRecoveryCoroutine = null;
+
+            if (_currentState != ChatState.Error) yield break;
+
+            // Thinking解除の保険
+            // （通常はHandleRequestCompletedで解除済みだが、起床ed/Entry完了コールバックが
+            // エラー後にThinkingを開始してしまった場合はここで回収する）
+            if (_isThinkingActive && talkController != null)
+            {
+                talkController.StopThinking();
+                _isThinkingActive = false;
+            }
+
+            Debug.Log("[ChatManager] Recovered from Error state to Idle");
+            SetState(ChatState.Idle);
         }
 
         /// <summary>

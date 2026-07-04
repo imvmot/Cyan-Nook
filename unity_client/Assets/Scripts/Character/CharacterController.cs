@@ -289,6 +289,11 @@ namespace CyanNook.Character
 
                 case ChatState.Error:
                     expressionController?.SetEmotion(new EmotionData { sad = 0.5f });
+                    // エラー時は成功応答時のNotifyTextDisplayCompleteが呼ばれないため、
+                    // ここで通知しないとOnResponseStartedで停止したdecay/holdタイマーが
+                    // 再開されず、悲しい表情が次の成功応答まで固定されてしまう
+                    expressionController?.NotifyTextDisplayComplete();
+                    animationController?.NotifyTextDisplayComplete();
                     break;
             }
         }
