@@ -112,6 +112,7 @@ namespace CyanNook.Core
             // Voice - TTS
             new SettingEntry("voice_ttsEnabled", PrefType.Int),
             new SettingEntry("voice_ttsEngine", PrefType.Int),
+            new SettingEntry("voice_echoPrevention", PrefType.Int),
 
             // Voice - WebSpeech
             new SettingEntry("voice_webSpeechVoiceURI", PrefType.String),

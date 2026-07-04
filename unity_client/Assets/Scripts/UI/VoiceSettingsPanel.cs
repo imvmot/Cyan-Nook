@@ -351,7 +351,7 @@ namespace CyanNook.UI
         {
             if (ttsEnabledToggle != null && voiceSynthesisController != null)
             {
-                ttsEnabledToggle.isOn = voiceSynthesisController.enabled;
+                ttsEnabledToggle.isOn = voiceSynthesisController.ttsEnabled;
             }
         }
 
