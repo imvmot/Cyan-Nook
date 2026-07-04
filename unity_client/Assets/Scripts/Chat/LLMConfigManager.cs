@@ -26,7 +26,8 @@ namespace CyanNook.Chat
             string json = JsonUtility.ToJson(config);
             PlayerPrefs.SetString(CONFIG_KEY, json);
             PlayerPrefs.Save();
-            Debug.Log($"[LLMConfigManager] Config saved: {json}");
+            // JSON全文はapiKeyを含むためログに出さない（F12コンソール/Player.logからの漏洩防止）
+            Debug.Log($"[LLMConfigManager] Config saved: apiType={config.apiType}, endpoint={config.apiEndpoint}, model={config.modelName}");
         }
 
         /// <summary>

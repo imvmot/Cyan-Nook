@@ -191,7 +191,8 @@ namespace CyanNook.Core
 #else
             // エディタ/スタンドアロン: クリップボードにコピー
             GUIUtility.systemCopyBuffer = json;
-            Debug.Log($"[SettingsExporter] Exported to clipboard:\n{json}");
+            // JSON全文はAPIキーを含むためログに出さない
+            Debug.Log($"[SettingsExporter] Exported to clipboard ({json.Length} chars)");
 #endif
         }
 
