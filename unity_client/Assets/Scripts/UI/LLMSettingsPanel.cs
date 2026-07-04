@@ -481,7 +481,9 @@ namespace CyanNook.UI
 
         private void OnApiTypeChanged(int index)
         {
-            var newApiType = (LLMApiType)index;
+            // indexの直接キャストは不可（UNITYROOM_BUILDではドロップダウンの選択肢が
+            // [Gemini, WebLLM] のみで、enum値とindexがずれる）
+            var newApiType = GetApiTypeFromDropdownIndex(index);
             UpdateApiKeyVisibility(newApiType);
 
             // エンドポイントが別のAPIタイプのデフォルト値の場合、新しいデフォルトに自動切替
