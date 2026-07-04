@@ -117,6 +117,15 @@ namespace CyanNook.UI
         [Tooltip("購読間隔（秒、0で無効）")]
         public TMP_InputField feedIntervalInputField;
 
+        [Tooltip("context JSON公開URL")]
+        public TMP_InputField feedContextUrlInputField;
+
+        [Tooltip("カメラ画像公開URL")]
+        public TMP_InputField feedCameraUrlInputField;
+
+        [Tooltip("公開間隔（秒、0で無効）")]
+        public TMP_InputField feedPublishIntervalInputField;
+
         [Tooltip("解説ページを開くボタン")]
         public Button feedHelpButton;
 
@@ -388,6 +397,12 @@ namespace CyanNook.UI
                 feedActionUrlInputField.onEndEdit.RemoveListener(OnFeedActionUrlChanged);
             if (feedIntervalInputField != null)
                 feedIntervalInputField.onEndEdit.RemoveListener(OnFeedIntervalChanged);
+            if (feedContextUrlInputField != null)
+                feedContextUrlInputField.onEndEdit.RemoveListener(OnFeedContextUrlChanged);
+            if (feedCameraUrlInputField != null)
+                feedCameraUrlInputField.onEndEdit.RemoveListener(OnFeedCameraUrlChanged);
+            if (feedPublishIntervalInputField != null)
+                feedPublishIntervalInputField.onEndEdit.RemoveListener(OnFeedPublishIntervalChanged);
             if (feedHelpButton != null)
                 feedHelpButton.onClick.RemoveListener(OnFeedHelpClicked);
             if (cronSchedulerToggle != null)
@@ -1215,6 +1230,18 @@ namespace CyanNook.UI
             {
                 feedIntervalInputField.onEndEdit.AddListener(OnFeedIntervalChanged);
             }
+            if (feedContextUrlInputField != null)
+            {
+                feedContextUrlInputField.onEndEdit.AddListener(OnFeedContextUrlChanged);
+            }
+            if (feedCameraUrlInputField != null)
+            {
+                feedCameraUrlInputField.onEndEdit.AddListener(OnFeedCameraUrlChanged);
+            }
+            if (feedPublishIntervalInputField != null)
+            {
+                feedPublishIntervalInputField.onEndEdit.AddListener(OnFeedPublishIntervalChanged);
+            }
             if (feedHelpButton != null)
             {
                 feedHelpButton.onClick.AddListener(OnFeedHelpClicked);
@@ -1244,6 +1271,21 @@ namespace CyanNook.UI
             if (feedIntervalInputField != null && externalActionFeedController != null)
             {
                 feedIntervalInputField.text = externalActionFeedController.subscribeInterval.ToString("F0");
+            }
+
+            if (feedContextUrlInputField != null && externalActionFeedController != null)
+            {
+                feedContextUrlInputField.text = externalActionFeedController.contextPublishUrl;
+            }
+
+            if (feedCameraUrlInputField != null && externalActionFeedController != null)
+            {
+                feedCameraUrlInputField.text = externalActionFeedController.cameraPublishUrl;
+            }
+
+            if (feedPublishIntervalInputField != null && externalActionFeedController != null)
+            {
+                feedPublishIntervalInputField.text = externalActionFeedController.publishInterval.ToString("F0");
             }
         }
 
@@ -1276,6 +1318,30 @@ namespace CyanNook.UI
             {
                 externalActionFeedController.SetSubscribeInterval(seconds);
                 Debug.Log($"[LLMSettingsPanel] Feed subscribe interval: {(seconds > 0f ? $"{seconds}s" : "OFF")}");
+            }
+        }
+
+        private void OnFeedContextUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetContextPublishUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed context URL updated");
+        }
+
+        private void OnFeedCameraUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetCameraPublishUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed camera URL updated");
+        }
+
+        private void OnFeedPublishIntervalChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            if (float.TryParse(value, out float seconds))
+            {
+                externalActionFeedController.SetPublishInterval(seconds);
+                Debug.Log($"[LLMSettingsPanel] Feed publish interval: {(seconds > 0f ? $"{seconds}s" : "OFF")}");
             }
         }
 

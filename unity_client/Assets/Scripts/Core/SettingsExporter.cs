@@ -89,6 +89,9 @@ namespace CyanNook.Core
             new SettingEntry("feed_enabled", PrefType.Int),
             new SettingEntry("feed_actionUrl", PrefType.String),
             new SettingEntry("feed_subscribeInterval", PrefType.Float),
+            new SettingEntry("feed_contextUrl", PrefType.String),
+            new SettingEntry("feed_cameraUrl", PrefType.String),
+            new SettingEntry("feed_publishInterval", PrefType.Float),
 
             // Sleep
             new SettingEntry("sleep_defaultDuration", PrefType.Int),
