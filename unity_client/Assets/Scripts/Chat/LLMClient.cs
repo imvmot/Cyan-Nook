@@ -118,6 +118,22 @@ namespace CyanNook.Chat
 
             if (typeChanged || _provider == null)
             {
+                // リクエスト実行中にプロバイダーを差し替えると、以後のAbortRequestが
+                // 新プロバイダーを対象にしてしまい旧リクエストの購読・生成が回収不能に
+                // なるため、差し替え前に中断する。OnErrorを発火してChatManager側の
+                // 状態復帰（Error→数秒後Idle自動復帰）に乗せる。
+                // ※同一APIタイプのままの設定変更（エンドポイント等）はここを通らず続行
+                if (_isProcessing)
+                {
+                    Debug.LogWarning("[LLMClient] Aborting in-flight request due to API type change");
+                    AbortRequest();
+                    OnError?.Invoke("Request aborted: API type changed\nAPIタイプ変更のためリクエストを中断しました");
+                    // StopCoroutineで殺したコルーチンはOnRequestCompletedを発火できない。
+                    // 通常エラー時と同じ「OnError→OnRequestCompleted」の順序を再現し、
+                    // Thinking解除・ストリーミングTTSのクローズを正規ルートで走らせる
+                    OnRequestCompleted?.Invoke();
+                }
+
                 _provider = CreateProvider(config.apiType);
                 Debug.Log($"[LLMClient] Provider created: {config.apiType}");
             }
@@ -374,6 +390,15 @@ namespace CyanNook.Chat
                 _currentCoroutine = null;
                 Debug.Log("[LLMClient] Request aborted");
             }
+
+            // WebLLM: StopCoroutineだけではブラウザ側の生成が続き、Bridgeイベントの
+            // 購読も残るため、次リクエストへのチャンク二重配信や中断済み生成の
+            // Complete通知の誤処理が起きる。生成中断+購読解除を明示的に行う
+            if (_provider is WebLLMProvider webLlmProvider)
+            {
+                webLlmProvider.Abort();
+            }
+
             _isProcessing = false;
         }
 

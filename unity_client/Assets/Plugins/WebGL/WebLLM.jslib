@@ -18,6 +18,12 @@ mergeInto(LibraryManager.library, {
         totalBytes: 0,
         abortController: null,
         jsonSchema: null,
+        // リクエスト世代カウンター。
+        // interruptGenerate()は非同期（フラグを立てるだけ）で、中断した旧生成の
+        // 完了通知やisGenerating書き戻しが新リクエストの開始後に遅れて実行される。
+        // 各リクエストは開始時のIDを保持し、通知前にIDが最新か確認することで
+        // 旧生成からのSendMessage誤配信と状態の上書きを防ぐ
+        requestId: 0,
         // 生成パラメータ
         temperature: 0.7,
         topP: 0.9,
@@ -218,6 +224,8 @@ mergeInto(LibraryManager.library, {
         var systemPrompt = UTF8ToString(systemPromptStr);
         var userMessage = UTF8ToString(userMessageStr);
         state.isGenerating = true;
+        state.requestId++;
+        var myId = state.requestId;
 
         // Qwen3: Thinkingモード無効化（/no_thinkをシステムプロンプト末尾に追加）
         var fullSystemPrompt = systemPrompt + '\n/no_think';
@@ -242,12 +250,17 @@ mergeInto(LibraryManager.library, {
         }
 
         state.engine.chat.completions.create(request).then(function(reply) {
+            // 中断済み（旧世代）の場合は通知しない
+            // interruptGenerate後のPromiseは中断時点までの途中テキストでresolveするため、
+            // ここを通すと中途半端なテキストが新リクエストの回答として誤配信される
+            if (myId !== state.requestId) return;
             state.isGenerating = false;
             var content = reply.choices[0].message.content || '';
             // <think>タグが含まれている場合は除去
             content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
             SendMessage(state.callbackObject, 'OnWebLLMResponse', content);
         }).catch(function(error) {
+            if (myId !== state.requestId) return;
             state.isGenerating = false;
             console.error('[WebLLM] Request failed:', error);
             SendMessage(state.callbackObject, 'OnWebLLMError', 'Request failed: ' + error.message);
@@ -276,6 +289,8 @@ mergeInto(LibraryManager.library, {
         var systemPrompt = UTF8ToString(systemPromptStr);
         var userMessage = UTF8ToString(userMessageStr);
         state.isGenerating = true;
+        state.requestId++;
+        var myId = state.requestId;
 
         // Qwen3: Thinkingモード無効化
         var fullSystemPrompt = systemPrompt + '\n/no_think';
@@ -308,6 +323,12 @@ mergeInto(LibraryManager.library, {
             try {
                 var chunks = await state.engine.chat.completions.create(request);
                 for await (var chunk of chunks) {
+                    // 中断済み（旧世代）ならチャンクを通知せず読み捨てる。
+                    // ここでreturnしてイテレーションを途中離脱すると、web-llm内部の
+                    // エンジンロックがジェネレーター未消費のまま解放されず、
+                    // 次リクエストのcreate()が永遠にロック待ちで固まる。
+                    // 中断済みの生成はすぐ終わるため、最後まで回して自然終了させる
+                    if (myId !== state.requestId) continue;
                     if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta) {
                         var content = chunk.choices[0].delta.content;
                         if (content) {
@@ -330,9 +351,11 @@ mergeInto(LibraryManager.library, {
                         }
                     }
                 }
+                if (myId !== state.requestId) return;
                 state.isGenerating = false;
                 SendMessage(state.callbackObject, 'OnWebLLMStreamComplete', '');
             } catch(error) {
+                if (myId !== state.requestId) return;
                 state.isGenerating = false;
                 console.error('[WebLLM] Streaming failed:', error);
                 SendMessage(state.callbackObject, 'OnWebLLMError', 'Streaming failed: ' + error.message);
@@ -345,6 +368,8 @@ mergeInto(LibraryManager.library, {
      */
     WebLLM_Abort: function() {
         var state = WebLLMState;
+        // 世代を進め、実行中の生成からの通知（チャンク/完了/エラー）を無効化する
+        state.requestId++;
         if (state.engine && state.isGenerating) {
             state.engine.interruptGenerate();
             state.isGenerating = false;
