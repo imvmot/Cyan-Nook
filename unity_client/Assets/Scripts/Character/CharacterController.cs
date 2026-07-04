@@ -72,6 +72,10 @@ namespace CyanNook.Character
         private TargetType _lookAtTargetType;
         private string _lookAtParam; // Talk/Named: targetName, Interact: action名
 
+        // Interact: 応答時に1回解決したLookAt対象の家具
+        // （毎フレームのGetNearestAvailableFurniture検索はしない）
+        private FurnitureInstance _lookAtFurniture;
+
         // Sleep用: interact_sleep時のsleep_duration一時保持
         private int _pendingSleepDuration;
 
@@ -848,6 +852,7 @@ namespace CyanNook.Character
         private void SetLookAtContext(TargetType targetType, TargetData target)
         {
             _lookAtTargetType = targetType;
+            _lookAtFurniture = null;
 
             switch (targetType)
             {
@@ -857,6 +862,7 @@ namespace CyanNook.Character
 
                 case TargetType.Interact:
                     _lookAtParam = target.GetInteractAction();
+                    _lookAtFurniture = ResolveLookAtFurniture(_lookAtParam);
                     break;
 
                 case TargetType.Dynamic:
@@ -917,25 +923,52 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// 家具のlookAtPointを動的に再評価（距離判定を毎フレーム実行）
+        /// LookAt対象の家具を解決する（応答時に1回だけ呼ぶ）
+        /// インタラクト中の家具はisOccupiedで検索から除外されるため、
+        /// 同種アクションなら自分が使用中の家具を優先する
+        /// （座った瞬間に視線が他の家具へ逸れるのを防ぐ）
+        /// </summary>
+        private FurnitureInstance ResolveLookAtFurniture(string furnitureAction)
+        {
+            if (interactionController != null &&
+                interactionController.CurrentFurniture != null &&
+                interactionController.CurrentAction == furnitureAction)
+            {
+                return interactionController.CurrentFurniture;
+            }
+
+            return furnitureManager != null
+                ? furnitureManager.GetNearestAvailableFurniture(transform.position, furnitureAction)
+                : null;
+        }
+
+        /// <summary>
+        /// 家具のlookAtPointを動的に再評価（ポイントの距離判定のみ毎フレーム実行）
+        /// 家具自体の検索は応答時に1回だけ行う（毎フレームのGetNearestAvailableFurnitureは
+        /// ラムダのクロージャ確保が積もりWebGL のGCスパイク源になるため）
         /// </summary>
         private void UpdateLookAtFurniture(string furnitureAction)
         {
-            if (furnitureManager == null) return;
-
-            var furniture = furnitureManager.GetNearestAvailableFurniture(transform.position, furnitureAction);
-            if (furniture != null)
+            // インタラクション開始後は実際に使用中の家具へ追従する
+            // （応答時の解決結果とProcessActionの家具選択が異なる場合の補正）
+            if (interactionController != null &&
+                interactionController.CurrentFurniture != null &&
+                interactionController.CurrentAction == furnitureAction)
             {
-                var lookAtPoint = furniture.GetNearestLookAtPoint(transform.position);
-                if (lookAtPoint != null)
-                {
-                    lookAtController.LookAtTransform(lookAtPoint);
-                }
-                else
-                {
-                    // lookAtMaxDistance外 → LookAt解除
-                    lookAtController.LookForward();
-                }
+                _lookAtFurniture = interactionController.CurrentFurniture;
+            }
+
+            if (_lookAtFurniture == null) return;
+
+            var lookAtPoint = _lookAtFurniture.GetNearestLookAtPoint(transform.position);
+            if (lookAtPoint != null)
+            {
+                lookAtController.LookAtTransform(lookAtPoint);
+            }
+            else
+            {
+                // lookAtMaxDistance外 → LookAt解除
+                lookAtController.LookForward();
             }
         }
 
