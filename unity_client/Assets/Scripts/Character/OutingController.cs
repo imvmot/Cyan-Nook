@@ -62,6 +62,9 @@ namespace CyanNook.Character
 
         private float _messageTimer;
 
+        // 定期実行マスター（PeriodicExecutionSettings）の状態。外出中メッセージ送信のゲート
+        private bool _periodicEnabled;
+
         // Entry再生中フラグ
         private bool _isPlayingEntry;
 
@@ -100,6 +103,12 @@ namespace CyanNook.Character
         private void Update()
         {
             if (!_isOutside) return;
+
+            // 定期実行マスターOFF、またはinterval 0以下は外出中メッセージを送らない。
+            // 注意: 外出からの帰還はLLMが外出中メッセージへの応答でinteract_entryを
+            // 選ぶことで発生するため、これを止めるとCronのcancelSleepOrOutingか
+            // アプリ再起動（外出状態は非永続化）までキャラは戻らない
+            if (!_periodicEnabled || outingMessageInterval <= 0f) return;
 
             // 定期メッセージタイマー
             _messageTimer -= Time.deltaTime;
@@ -444,6 +453,10 @@ namespace CyanNook.Character
         /// </summary>
         private System.Collections.IEnumerator SendOutingPromptWhenReady()
         {
+            // 定期実行マスターOFF、またはinterval 0以下は初回Outing Promptも送らない
+            // （自動LLMリクエストを全て止めるというマスターの意味に合わせる）
+            if (!_periodicEnabled || outingMessageInterval <= 0f) yield break;
+
             float timeout = 10f;
             float elapsed = 0f;
             while (chatManager.CurrentState != ChatState.Idle && elapsed < timeout)
@@ -514,6 +527,9 @@ namespace CyanNook.Character
 
         private void LoadSettings()
         {
+            // 定期実行マスター（外出中メッセージ送信のゲート）
+            _periodicEnabled = CyanNook.Core.PeriodicExecutionSettings.IsEnabled();
+
             if (PlayerPrefs.HasKey(PrefKey_OutingInterval))
                 outingMessageInterval = PlayerPrefs.GetFloat(PrefKey_OutingInterval);
             if (PlayerPrefs.HasKey(PrefKey_OutingPrompt))
@@ -522,11 +538,29 @@ namespace CyanNook.Character
                 entryPromptMessage = PlayerPrefs.GetString(PrefKey_EntryPrompt);
         }
 
+        /// <summary>
+        /// 外出中メッセージ間隔を設定（分）。0で個別無効
+        /// </summary>
         public void SetOutingMessageInterval(float minutes)
         {
-            outingMessageInterval = Mathf.Max(1f, minutes);
+            outingMessageInterval = Mathf.Max(0f, minutes);
+
+            // 外出中ならタイマーを新しい値で再セット（0→正値に戻した瞬間の即時発火を防ぐ）
+            if (_isOutside && outingMessageInterval > 0f)
+            {
+                _messageTimer = outingMessageInterval * 60f;
+            }
+
             PlayerPrefs.SetFloat(PrefKey_OutingInterval, outingMessageInterval);
             PlayerPrefs.Save();
+        }
+
+        /// <summary>
+        /// 定期実行マスターのON/OFFを反映（設定UIから呼ばれる。保存はPeriodicExecutionSettings側）
+        /// </summary>
+        public void SetPeriodicEnabled(bool enabled)
+        {
+            _periodicEnabled = enabled;
         }
 
         public void SetOutingPromptMessage(string message)

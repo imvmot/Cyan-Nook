@@ -70,6 +70,9 @@ namespace CyanNook.Character
         private string _sleepFurnitureId;
         private bool _pendingDreamMessage;
 
+        // 定期実行マスター（PeriodicExecutionSettings）の状態。夢メッセージ送信のゲート
+        private bool _periodicEnabled;
+
         // Wake-up完了時のコールバック
         private Action _onWakeUpComplete;
 
@@ -121,6 +124,10 @@ namespace CyanNook.Character
                 ExitSleep(null);
                 return;
             }
+
+            // 定期実行マスターOFF、またはinterval 0以下は夢メッセージを送らない
+            // （起床タイマーは上で処理済みなので睡眠自体は正常に終了する）
+            if (!_periodicEnabled || dreamInterval <= 0f) return;
 
             // 保留中のDream Promptをリトライ
             if (_pendingDreamMessage)
@@ -445,6 +452,10 @@ namespace CyanNook.Character
         {
             if (chatManager == null) return;
 
+            // 定期実行マスターOFF、またはinterval 0以下は送信しない
+            // （EnterSleepからの初回送信もここでまとめてゲートする）
+            if (!_periodicEnabled || dreamInterval <= 0f) return;
+
             if (chatManager.CurrentState != ChatState.Idle)
             {
                 _pendingDreamMessage = true;
@@ -480,6 +491,9 @@ namespace CyanNook.Character
 
         private void LoadSettings()
         {
+            // 定期実行マスター（夢メッセージ送信のゲート）
+            _periodicEnabled = CyanNook.Core.PeriodicExecutionSettings.IsEnabled();
+
             if (PlayerPrefs.HasKey(PrefKey_DefaultDuration))
                 defaultSleepDuration = PlayerPrefs.GetInt(PrefKey_DefaultDuration);
             if (PlayerPrefs.HasKey(PrefKey_MinDuration))
@@ -495,13 +509,28 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// 夢メッセージ間隔を設定（分）
+        /// 夢メッセージ間隔を設定（分）。0で個別無効
         /// </summary>
         public void SetDreamInterval(float minutes)
         {
-            dreamInterval = Mathf.Max(1f, minutes);
+            dreamInterval = Mathf.Max(0f, minutes);
+
+            // 睡眠中ならタイマーを新しい値で再セット（0→正値に戻した瞬間の即時発火を防ぐ）
+            if (_isSleeping && dreamInterval > 0f)
+            {
+                _dreamTimer = dreamInterval * 60f;
+            }
+
             PlayerPrefs.SetFloat(PrefKey_DreamInterval, dreamInterval);
             PlayerPrefs.Save();
+        }
+
+        /// <summary>
+        /// 定期実行マスターのON/OFFを反映（設定UIから呼ばれる。保存はPeriodicExecutionSettings側）
+        /// </summary>
+        public void SetPeriodicEnabled(bool enabled)
+        {
+            _periodicEnabled = enabled;
         }
 
         /// <summary>

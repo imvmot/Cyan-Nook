@@ -36,6 +36,7 @@ namespace CyanNook.UI
         public SleepController sleepController;
         public OutingController outingController;
         public FirstRunController firstRunController;
+        public ExternalActionFeedController externalActionFeedController;
 
         [Header("UI - API Config")]
         [Tooltip("AI Service選択（Ollama, LM Studio, Dify, OpenAI）")]
@@ -89,15 +90,38 @@ namespace CyanNook.UI
         [Tooltip("カメラプレビュー表示切替トグル")]
         public Toggle cameraPreviewToggle;
 
-        [Header("UI - IdleChat")]
-        [Tooltip("自律リクエストON/OFF")]
-        public Toggle idleChatToggle;
+        [Header("UI - Periodic Execution（定期実行）")]
+        [Tooltip("定期実行（IdleChat/SleepChat/Outing）マスターON/OFF")]
+        public Toggle periodicToggle;
 
-        [Tooltip("クールダウン秒数")]
+        [Tooltip("定期実行の詳細設定グループ（ON時のみ表示。IdleChat/Sleep/Outingセクションの親）")]
+        public GameObject periodicDetailsGroup;
+
+        [Header("UI - IdleChat")]
+        [Tooltip("クールダウン秒数（0で個別無効）")]
         public TMP_InputField cooldownInputField;
 
         [Tooltip("自律リクエストメッセージ")]
         public TMP_InputField idleChatMessageInputField;
+
+        [Header("UI - External Action Feed（外部アクションフィード）")]
+        [Tooltip("外部アクションフィードON/OFF")]
+        public Toggle feedToggle;
+
+        [Tooltip("フィードの詳細設定グループ（ON時のみ表示）")]
+        public GameObject feedDetailsGroup;
+
+        [Tooltip("応答JSON購読URL")]
+        public TMP_InputField feedActionUrlInputField;
+
+        [Tooltip("購読間隔（秒、0で無効）")]
+        public TMP_InputField feedIntervalInputField;
+
+        [Tooltip("解説ページを開くボタン")]
+        public Button feedHelpButton;
+
+        [Tooltip("解説ページのURL")]
+        public string feedHelpUrl = "";
 
         [Header("UI - Cron Scheduler")]
         [Tooltip("CronスケジューラーON/OFF")]
@@ -262,10 +286,12 @@ namespace CyanNook.UI
         {
             // パネルが表示されるたびに現在の設定を反映
             LoadConfigToUI();
+            LoadPeriodicToUI();
             LoadIdleChatToUI();
             LoadCronSchedulerToUI();
             LoadSleepToUI();
             LoadOutingToUI();
+            LoadFeedToUI();
             LoadVisionToUI();
 
             // カメラプレビューの初期化（パネル初回表示時にも実行）
@@ -300,11 +326,17 @@ namespace CyanNook.UI
             // Screen Capture
             InitializeScreenCaptureToggle();
 
+            // 定期実行マスター
+            InitializePeriodicSettings();
+
             // IdleChat
             InitializeIdleChatSettings();
 
             // Cron Scheduler
             InitializeCronSchedulerToggle();
+
+            // 外部アクションフィード
+            InitializeFeedSettings();
 
             // Sleep
             InitializeSleepSettings();
@@ -348,8 +380,16 @@ namespace CyanNook.UI
                 webCamToggle.onValueChanged.RemoveListener(OnWebCamToggleChanged);
             if (screenCaptureToggle != null)
                 screenCaptureToggle.onValueChanged.RemoveListener(OnScreenCaptureToggleChanged);
-            if (idleChatToggle != null)
-                idleChatToggle.onValueChanged.RemoveListener(OnIdleChatToggleChanged);
+            if (periodicToggle != null)
+                periodicToggle.onValueChanged.RemoveListener(OnPeriodicToggleChanged);
+            if (feedToggle != null)
+                feedToggle.onValueChanged.RemoveListener(OnFeedToggleChanged);
+            if (feedActionUrlInputField != null)
+                feedActionUrlInputField.onEndEdit.RemoveListener(OnFeedActionUrlChanged);
+            if (feedIntervalInputField != null)
+                feedIntervalInputField.onEndEdit.RemoveListener(OnFeedIntervalChanged);
+            if (feedHelpButton != null)
+                feedHelpButton.onClick.RemoveListener(OnFeedHelpClicked);
             if (cronSchedulerToggle != null)
                 cronSchedulerToggle.onValueChanged.RemoveListener(OnCronSchedulerToggleChanged);
             if (cronReloadButton != null)
@@ -1000,13 +1040,70 @@ namespace CyanNook.UI
         // IdleChat設定
         // ─────────────────────────────────────
 
-        private void InitializeIdleChatSettings()
+        // ─────────────────────────────────────
+        // 定期実行マスター（IdleChat/SleepChat/Outing 一括ON/OFF）
+        // ─────────────────────────────────────
+
+        private void InitializePeriodicSettings()
         {
-            if (idleChatToggle != null)
+            if (periodicToggle != null)
             {
-                idleChatToggle.onValueChanged.AddListener(OnIdleChatToggleChanged);
+                periodicToggle.onValueChanged.AddListener(OnPeriodicToggleChanged);
+            }
+        }
+
+        private void LoadPeriodicToUI()
+        {
+            bool enabled = PeriodicExecutionSettings.IsEnabled();
+
+            if (periodicToggle != null)
+            {
+                // 表示への反映のみ（onValueChangedを発火させない）
+                periodicToggle.SetIsOnWithoutNotify(enabled);
             }
 
+            // トグルが未割当でも詳細グループの表示状態は同期する
+            if (periodicDetailsGroup != null)
+            {
+                periodicDetailsGroup.SetActive(enabled);
+            }
+        }
+
+        private void OnPeriodicToggleChanged(bool isOn)
+        {
+            // 保存（共有マスターキー）
+            PeriodicExecutionSettings.SetEnabled(isOn);
+
+            // 参照未割当のコントローラーには反映されない（再起動時のLoadSettingsで反映される）
+            if (idleChatController == null || sleepController == null || outingController == null)
+            {
+                Debug.LogWarning("[LLMSettingsPanel] Periodic toggle: unassigned controller reference(s), " +
+                    "change applies to them after restart only");
+            }
+
+            // 3コントローラーへランタイム反映
+            if (idleChatController != null)
+            {
+                idleChatController.SetEnabled(isOn);
+            }
+            sleepController?.SetPeriodicEnabled(isOn);
+            outingController?.SetPeriodicEnabled(isOn);
+
+            // 詳細設定グループの表示切替
+            if (periodicDetailsGroup != null)
+            {
+                periodicDetailsGroup.SetActive(isOn);
+            }
+
+            Debug.Log($"[LLMSettingsPanel] Periodic execution: {(isOn ? "ON" : "OFF")}");
+        }
+
+        // ─────────────────────────────────────
+        // IdleChat設定
+        // ─────────────────────────────────────
+
+        private void InitializeIdleChatSettings()
+        {
             if (cooldownInputField != null)
             {
                 cooldownInputField.onEndEdit.AddListener(OnCooldownChanged);
@@ -1015,11 +1112,6 @@ namespace CyanNook.UI
 
         private void LoadIdleChatToUI()
         {
-            if (idleChatToggle != null)
-            {
-                idleChatToggle.isOn = idleChatController != null && idleChatController.autoRequestEnabled;
-            }
-
             if (cooldownInputField != null)
             {
                 cooldownInputField.text = idleChatController != null
@@ -1030,13 +1122,6 @@ namespace CyanNook.UI
             {
                 idleChatMessageInputField.text = idleChatController.idlePromptMessage;
             }
-        }
-
-        private void OnIdleChatToggleChanged(bool isOn)
-        {
-            if (idleChatController == null) return;
-            idleChatController.SetEnabled(isOn);
-            Debug.Log($"[LLMSettingsPanel] IdleChat: {(isOn ? "ON" : "OFF")}");
         }
 
         private void OnCooldownChanged(string value)
@@ -1110,6 +1195,94 @@ namespace CyanNook.UI
                 cronScheduler.SetAutoReloadInterval(minutes);
                 Debug.Log($"[LLMSettingsPanel] CronScheduler auto-reload: {(minutes > 0f ? $"{minutes}min" : "OFF")}");
             }
+        }
+
+        // ─────────────────────────────────────
+        // 外部アクションフィード（受動制御・上級者向け）
+        // ─────────────────────────────────────
+
+        private void InitializeFeedSettings()
+        {
+            if (feedToggle != null)
+            {
+                feedToggle.onValueChanged.AddListener(OnFeedToggleChanged);
+            }
+            if (feedActionUrlInputField != null)
+            {
+                feedActionUrlInputField.onEndEdit.AddListener(OnFeedActionUrlChanged);
+            }
+            if (feedIntervalInputField != null)
+            {
+                feedIntervalInputField.onEndEdit.AddListener(OnFeedIntervalChanged);
+            }
+            if (feedHelpButton != null)
+            {
+                feedHelpButton.onClick.AddListener(OnFeedHelpClicked);
+            }
+        }
+
+        private void LoadFeedToUI()
+        {
+            bool enabled = externalActionFeedController != null && externalActionFeedController.feedEnabled;
+
+            if (feedToggle != null)
+            {
+                // 表示への反映のみ（onValueChangedを発火させない）
+                feedToggle.SetIsOnWithoutNotify(enabled);
+            }
+
+            if (feedDetailsGroup != null)
+            {
+                feedDetailsGroup.SetActive(enabled);
+            }
+
+            if (feedActionUrlInputField != null && externalActionFeedController != null)
+            {
+                feedActionUrlInputField.text = externalActionFeedController.actionSubscribeUrl;
+            }
+
+            if (feedIntervalInputField != null && externalActionFeedController != null)
+            {
+                feedIntervalInputField.text = externalActionFeedController.subscribeInterval.ToString("F0");
+            }
+        }
+
+        private void OnFeedToggleChanged(bool isOn)
+        {
+            if (externalActionFeedController != null)
+            {
+                externalActionFeedController.SetEnabled(isOn);
+            }
+
+            if (feedDetailsGroup != null)
+            {
+                feedDetailsGroup.SetActive(isOn);
+            }
+
+            Debug.Log($"[LLMSettingsPanel] External action feed: {(isOn ? "ON" : "OFF")}");
+        }
+
+        private void OnFeedActionUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetActionSubscribeUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed action URL updated");
+        }
+
+        private void OnFeedIntervalChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            if (float.TryParse(value, out float seconds))
+            {
+                externalActionFeedController.SetSubscribeInterval(seconds);
+                Debug.Log($"[LLMSettingsPanel] Feed subscribe interval: {(seconds > 0f ? $"{seconds}s" : "OFF")}");
+            }
+        }
+
+        private void OnFeedHelpClicked()
+        {
+            if (string.IsNullOrEmpty(feedHelpUrl)) return;
+            Application.OpenURL(feedHelpUrl);
         }
 
         // ─────────────────────────────────────

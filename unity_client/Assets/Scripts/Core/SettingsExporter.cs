@@ -71,7 +71,12 @@ namespace CyanNook.Core
             new SettingEntry("llm_webCam", PrefType.Int),
             new SettingEntry("llm_screenCapture", PrefType.Int),
 
+            // 定期実行マスター（IdleChat/SleepChat/Outing 一括ON/OFF）
+            new SettingEntry("periodic_enabled", PrefType.Int),
+
             // IdleChat
+            // idleChatEnabled は periodic_enabled に統合済みだが、
+            // 旧エクスポートファイルのインポート互換（移行フォールバック）のため残す
             new SettingEntry("idleChatEnabled", PrefType.Int),
             new SettingEntry("idleChatCooldown", PrefType.Float),
             new SettingEntry("idleChat_message", PrefType.String),
@@ -283,6 +288,18 @@ namespace CyanNook.Core
                             count++;
                         }
                         break;
+                }
+            }
+
+            // 旧バージョンのエクスポート（idleChatEnabledのみ、periodic_enabledなし）の移行:
+            // ローカルに既存のperiodic_enabledが残っているとPeriodicExecutionSettingsの
+            // フォールバックが効かず旧設定のON/OFFが無視されるため、明示的に引き継ぐ
+            if (ExtractJsonValue(json, "periodic_enabled") == null)
+            {
+                string legacyEnabled = ExtractJsonValue(json, "idleChatEnabled");
+                if (legacyEnabled != null && int.TryParse(legacyEnabled, out int legacyVal))
+                {
+                    PlayerPrefs.SetInt("periodic_enabled", legacyVal);
                 }
             }
 

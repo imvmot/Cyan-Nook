@@ -12,7 +12,7 @@ namespace CyanNook.Chat
     public class IdleChatController : MonoBehaviour
     {
         // PlayerPrefsキー
-        private const string PrefKey_Enabled = "idleChatEnabled";
+        // ON/OFFは定期実行マスター（PeriodicExecutionSettings）に統合済み
         private const string PrefKey_Cooldown = "idleChatCooldown";
         private const string PrefKey_Message = "idleChat_message";
 
@@ -95,6 +95,9 @@ namespace CyanNook.Chat
         {
             if (_isPaused || !autoRequestEnabled || chatManager == null) return;
 
+            // interval 0以下 = この機能のみ個別に無効（定期実行マスターONのまま）
+            if (cooldownDuration <= 0f) return;
+
             if (_state == IdleChatState.Cooldown)
             {
                 _timer -= Time.deltaTime;
@@ -167,11 +170,18 @@ namespace CyanNook.Chat
         }
 
         /// <summary>
-        /// クールダウン時間を設定
+        /// クールダウン時間を設定。0で個別無効
         /// </summary>
         public void SetCooldownDuration(float seconds)
         {
-            cooldownDuration = Mathf.Max(1f, seconds);
+            cooldownDuration = Mathf.Max(0f, seconds);
+
+            // タイマーを新しい値で再セット（0→正値に戻した瞬間の即時発火を防ぐ）
+            if (autoRequestEnabled && cooldownDuration > 0f)
+            {
+                StartCooldown();
+            }
+
             SaveSettings();
         }
 
@@ -252,7 +262,8 @@ namespace CyanNook.Chat
 
         private void SaveSettings()
         {
-            PlayerPrefs.SetInt(PrefKey_Enabled, autoRequestEnabled ? 1 : 0);
+            // ON/OFFは定期実行マスターとして保存（Sleep/Outingと共有）
+            PeriodicExecutionSettings.SetEnabled(autoRequestEnabled);
             PlayerPrefs.SetFloat(PrefKey_Cooldown, cooldownDuration);
             PlayerPrefs.SetString(PrefKey_Message, idlePromptMessage);
             PlayerPrefs.Save();
@@ -260,10 +271,9 @@ namespace CyanNook.Chat
 
         private void LoadSettings()
         {
-            if (PlayerPrefs.HasKey(PrefKey_Enabled))
-            {
-                autoRequestEnabled = PlayerPrefs.GetInt(PrefKey_Enabled) == 1;
-            }
+            // ON/OFFは定期実行マスターから読み込む（旧idleChatEnabledからの移行も内部で処理）
+            autoRequestEnabled = PeriodicExecutionSettings.IsEnabled();
+
             if (PlayerPrefs.HasKey(PrefKey_Cooldown))
             {
                 cooldownDuration = PlayerPrefs.GetFloat(PrefKey_Cooldown);
