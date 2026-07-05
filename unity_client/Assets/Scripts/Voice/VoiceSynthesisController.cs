@@ -159,58 +159,18 @@ namespace CyanNook.Voice
 
         /// <summary>
         /// テキストを即座に音声合成・再生（Blocking Response用）
+        /// 実処理はストリーミングと共通のSynthesizeAndEnqueueに委譲する
+        /// （これにより_pendingSynthesisCountの追跡もストリーミングと揃い、
+        /// 合成中のSTT再開判定が正しく効く）
         /// </summary>
-        public async void SynthesizeAndPlay(string text)
+        public void SynthesizeAndPlay(string text)
         {
             if (!ttsEnabled || string.IsNullOrEmpty(text))
             {
                 return;
             }
 
-            try
-            {
-                if (ttsEngineType == TTSEngineType.VOICEVOX)
-                {
-                    if (voicevoxClient == null) return;
-
-                    int gen = _stopGeneration;
-                    var (clip, moraTimeline) = await voicevoxClient.SynthesizeAsync(text);
-
-                    // Stop()済み: 停止後の後追い再生を防ぐ
-                    if (gen != _stopGeneration) return;
-                    if (clip != null)
-                    {
-                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline });
-                        Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX (blocking): {text.Substring(0, Mathf.Min(20, text.Length))}...");
-                    }
-                }
-                else if (ttsEngineType == TTSEngineType.GeminiTTS)
-                {
-                    if (geminiTtsClient == null) return;
-
-                    int gen = _stopGeneration;
-                    var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
-
-                    if (gen != _stopGeneration) return;
-                    if (clip != null)
-                    {
-                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = null });
-                        Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS (blocking): {text.Substring(0, Mathf.Min(20, text.Length))}...");
-                    }
-                }
-                else // WebSpeechAPI
-                {
-                    if (webSpeechSynthesis == null) return;
-
-                    _currentWebSpeechText = text;
-                    webSpeechSynthesis.Enqueue(text);
-                    Debug.Log($"[VoiceSynthesisController] Enqueued WebSpeech (blocking): {text.Substring(0, Mathf.Min(20, text.Length))}...");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[VoiceSynthesisController] SynthesizeAndPlay failed: {ex.Message}");
-            }
+            _ = SynthesizeAndEnqueue(text);
         }
 
         /// <summary>
@@ -410,61 +370,82 @@ namespace CyanNook.Voice
         // ─────────────────────────────────────
 
         /// <summary>
-        /// 音声合成してキューに追加（エンジン分岐）
+        /// 音声合成してキューに追加（エンジン分岐、Blocking/ストリーミング共通）
+        /// 呼び出し元はTaskを破棄する（_ = ...）ため、例外はここで処理する
         /// </summary>
         private async Task SynthesizeAndEnqueue(string text)
         {
-            if (ttsEngineType == TTSEngineType.VOICEVOX)
+            int gen = _stopGeneration;
+            bool counted = false;
+
+            try
             {
-                if (voicevoxClient == null) return;
-
-                _pendingSynthesisCount++;
-                int gen = _stopGeneration;
-                var (clip, moraTimeline) = await voicevoxClient.SynthesizeAsync(text);
-
-                // Stop()済み: 結果を捨てる（カウンタはStopで0リセット済みのためデクリメントしない）
-                if (gen != _stopGeneration) return;
-                _pendingSynthesisCount--;
-
-                if (clip != null)
+                if (ttsEngineType == TTSEngineType.VOICEVOX)
                 {
-                    _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline });
-                    Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX (streaming): {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
+                    if (voicevoxClient == null) return;
+
+                    _pendingSynthesisCount++;
+                    counted = true;
+                    var (clip, moraTimeline) = await voicevoxClient.SynthesizeAsync(text);
+
+                    // Stop()済み: 結果を捨てる（カウンタはStopで0リセット済みのためデクリメントしない）
+                    if (gen != _stopGeneration) return;
+                    _pendingSynthesisCount--;
+                    counted = false;
+
+                    if (clip != null)
+                    {
+                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline });
+                        Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX: {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
+                    }
+                    else
+                    {
+                        // 合成失敗時: 他に何も残っていなければSTT再開
+                        TryResumeSTT();
+                    }
                 }
-                else
+                else if (ttsEngineType == TTSEngineType.GeminiTTS)
                 {
-                    // 合成失敗時: 他に何も残っていなければSTT再開
-                    TryResumeSTT();
+                    if (geminiTtsClient == null) return;
+
+                    _pendingSynthesisCount++;
+                    counted = true;
+                    var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
+
+                    if (gen != _stopGeneration) return;
+                    _pendingSynthesisCount--;
+                    counted = false;
+
+                    if (clip != null)
+                    {
+                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = null });
+                        Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS: {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
+                    }
+                    else
+                    {
+                        TryResumeSTT();
+                    }
+                }
+                else // WebSpeechAPI
+                {
+                    if (webSpeechSynthesis == null) return;
+
+                    _currentWebSpeechText = text;
+                    webSpeechSynthesis.Enqueue(text);
+                    Debug.Log($"[VoiceSynthesisController] Enqueued WebSpeech: {text.Substring(0, Mathf.Min(20, text.Length))}...");
                 }
             }
-            else if (ttsEngineType == TTSEngineType.GeminiTTS)
+            catch (Exception ex)
             {
-                if (geminiTtsClient == null) return;
-
-                _pendingSynthesisCount++;
-                int gen = _stopGeneration;
-                var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
-
-                if (gen != _stopGeneration) return;
-                _pendingSynthesisCount--;
-
-                if (clip != null)
+                // 例外時のカウンタ回収（Stop()済みなら0リセット済みのため触らない）
+                if (counted && gen == _stopGeneration)
                 {
-                    _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = null });
-                    Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS (streaming): {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
+                    _pendingSynthesisCount--;
                 }
-                else
-                {
-                    TryResumeSTT();
-                }
-            }
-            else // WebSpeechAPI
-            {
-                if (webSpeechSynthesis == null) return;
+                Debug.LogError($"[VoiceSynthesisController] Synthesis failed: {ex.Message}");
 
-                _currentWebSpeechText = text;
-                webSpeechSynthesis.Enqueue(text);
-                Debug.Log($"[VoiceSynthesisController] Enqueued WebSpeech (streaming): {text.Substring(0, Mathf.Min(20, text.Length))}...");
+                // 合成失敗（clip==null）経路と同様、他に何も残っていなければSTTを再開する
+                TryResumeSTT();
             }
         }
 
