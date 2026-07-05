@@ -11,7 +11,7 @@ namespace CyanNook.Core
     public class WebCamDisplayController : MonoBehaviour
     {
         // PlayerPrefsキー
-        private const string PrefKey_WebCamEnabled = "llm_webCam";
+        private const string PrefKey_WebCamEnabled = SettingsKeys.WebCam;
 
         [Header("WebCam Settings")]
         [Tooltip("使用するWebカメラデバイス名（空欄=デフォルトカメラ）")]

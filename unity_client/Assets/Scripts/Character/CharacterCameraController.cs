@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using UniVRM10;
+using CyanNook.Core;
 
 namespace CyanNook.Character
 {
@@ -16,7 +17,7 @@ namespace CyanNook.Character
     public class CharacterCameraController : MonoBehaviour
     {
         // PlayerPrefsキー
-        private const string PrefKey_AlwaysRender = "llm_cameraPreview";
+        private const string PrefKey_AlwaysRender = SettingsKeys.CameraPreview;
 
         [Header("References")]
         [Tooltip("キャラクター視点カメラ")]

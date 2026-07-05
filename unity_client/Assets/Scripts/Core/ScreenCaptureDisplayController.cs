@@ -17,7 +17,7 @@ namespace CyanNook.Core
     public class ScreenCaptureDisplayController : MonoBehaviour
     {
         // PlayerPrefsキー
-        private const string PrefKey_ScreenCaptureEnabled = "llm_screenCapture";
+        private const string PrefKey_ScreenCaptureEnabled = SettingsKeys.ScreenCapture;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]

@@ -70,9 +70,9 @@ namespace CyanNook.Core
             new SettingEntry("llm_config", PrefType.String),
             new SettingEntry("llm_useVision", PrefType.Int),
             new SettingEntry("llm_maxHistory", PrefType.Int),
-            new SettingEntry("llm_cameraPreview", PrefType.Int),
-            new SettingEntry("llm_webCam", PrefType.Int),
-            new SettingEntry("llm_screenCapture", PrefType.Int),
+            new SettingEntry(SettingsKeys.CameraPreview, PrefType.Int),
+            new SettingEntry(SettingsKeys.WebCam, PrefType.Int),
+            new SettingEntry(SettingsKeys.ScreenCapture, PrefType.Int),
 
             // 定期実行マスター（IdleChat/SleepChat/Outing 一括ON/OFF）
             new SettingEntry("periodic_enabled", PrefType.Int),
@@ -82,7 +82,7 @@ namespace CyanNook.Core
             // 旧エクスポートファイルのインポート互換（移行フォールバック）のため残す
             new SettingEntry("idleChatEnabled", PrefType.Int),
             new SettingEntry("idleChatCooldown", PrefType.Float),
-            new SettingEntry("idleChat_message", PrefType.String),
+            new SettingEntry(SettingsKeys.IdleChatMessage, PrefType.String),
 
             // Cron Scheduler
             new SettingEntry("cronSchedulerEnabled", PrefType.Int),

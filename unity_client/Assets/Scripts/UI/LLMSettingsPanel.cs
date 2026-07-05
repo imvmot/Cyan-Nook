@@ -22,10 +22,10 @@ namespace CyanNook.UI
         // PlayerPrefsキー
         private const string PrefKey_UseVision = "llm_useVision";
         private const string PrefKey_MaxHistory = "llm_maxHistory";
-        private const string PrefKey_CameraPreview = "llm_cameraPreview";
-        private const string PrefKey_WebCam = "llm_webCam";
-        private const string PrefKey_ScreenCapture = "llm_screenCapture";
-        private const string PrefKey_IdleChatMessage = "idleChat_message";
+        private const string PrefKey_CameraPreview = SettingsKeys.CameraPreview;
+        private const string PrefKey_WebCam = SettingsKeys.WebCam;
+        private const string PrefKey_ScreenCapture = SettingsKeys.ScreenCapture;
+        private const string PrefKey_IdleChatMessage = SettingsKeys.IdleChatMessage;
 
         [Header("References")]
         public ChatManager chatManager;

@@ -14,7 +14,7 @@ namespace CyanNook.Chat
         // PlayerPrefsキー
         // ON/OFFは定期実行マスター（PeriodicExecutionSettings）に統合済み
         private const string PrefKey_Cooldown = "idleChatCooldown";
-        private const string PrefKey_Message = "idleChat_message";
+        private const string PrefKey_Message = SettingsKeys.IdleChatMessage;
 
         [Header("References")]
         public ChatManager chatManager;
