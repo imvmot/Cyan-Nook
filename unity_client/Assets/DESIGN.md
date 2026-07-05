@@ -2798,9 +2798,9 @@ WaitingForResponse ── LLM処理中（タイマー停止）
 WaitingForResponse（自律リクエスト中）
     ↓ ユーザー入力
 ChatManager.SendChatMessage():
-    ├─ _isAutoRequest == true を確認
+    ├─ _requestKind == RequestKind.Auto を確認
     ├─ LLMClient.AbortRequest() でコルーチン停止
-    ├─ _isAutoRequest = false
+    ├─ _requestKind = RequestKind.None
     ├─ ChatState → Idle
     └─ ユーザーメッセージを通常フローで送信
 ```
@@ -3192,7 +3192,7 @@ sleep_duration は 15, 30, 60, 120, 240 のいずれかを選択してくださ�
 #### Sleep中のLLM応答処理
 
 ```
-LLM応答受信（sleep中、_isWakeUpRequest == false の場合）
+LLM応答受信（sleep中、_requestKind != RequestKind.WakeUp の場合）
 ├─ ストリーミング中:
 │   ├─ HandleStreamHeader → 無視（return）
 │   ├─ HandleStreamText → 無視（return）
@@ -3204,7 +3204,7 @@ LLM応答受信（sleep中、_isWakeUpRequest == false の場合）
 │   ├─ TTS → スキップ
 │   └─ 会話履歴 → 追加しない
 
-※ _isWakeUpRequest == true の場合はsleep中でもストリーミング・応答を通常処理する
+※ _requestKind == RequestKind.WakeUp の場合はsleep中でもストリーミング・応答を通常処理する
 ```
 
 #### 夢メッセージ（Dream Chat）
@@ -3256,7 +3256,7 @@ ExitSleep時には `_pendingDreamMessage` をリセットする。
 │   │   └─ interact_sleep の ed phase 再生（CancelRegionスキップでed全体を再生）
 │   └─ ed完了時 → onEdComplete(queuedResponse) 発火
 ├─④ LLM送信（③と並行して即座に実行、fall-through）
-│   ├─ _isWakeUpRequest = true（Thinking表示・ストリーミング処理の制御フラグ）
+│   ├─ _requestKind = RequestKind.WakeUp（Thinking表示・ストリーミング処理の制御）
 │   ├─ HandleRequestStarted: Thinking開始をスキップ
 │   ├─ HandleStreamHeader/Text/Field: sleep中でもwake-up時は通常通り処理
 │   └─ HandleLLMResponse: ed再生中ならQueueWakeUpResponse、完了済みなら即発火
@@ -3503,7 +3503,7 @@ Entry Timelineに `ActionCancelClip` が配置されていると、ChatManager�
 Entry を早期完了させる。CancelRegion未配置のTimelineでは従来通り `InteractionEndClip` まで再生。
 
 通常Entry / Cron帰宅 共通でこの経路を使用する。
-Cron帰宅時の `_isCronEntryRequest` フラグはThinking抑制等の周辺制御に残存するが、
+Cron帰宅時のリクエスト種別 `RequestKind.CronEntry` はThinking抑制等の周辺制御に残存するが、
 キュー機構自体は両者統一されている。
 
 **NavMeshAgent無効化の理由:**
@@ -3542,7 +3542,7 @@ Sleep中と同様、Outing中はChatManager側でストリーミング・TTS・�
 UI側の表示抑制（UIController.IsOutingActive）に加え、ChatManager内で以下のガードを実施:
 
 ```
-LLM応答受信（Outing中、_isCronEntryRequest == false の場合）
+LLM応答受信（Outing中、_requestKind != RequestKind.CronEntry の場合）
 ├─ ストリーミング中:
 │   ├─ HandleStreamText → 無視（return）
 │   ├─ HandleStreamField → 無視（return）
@@ -3551,7 +3551,7 @@ LLM応答受信（Outing中、_isCronEntryRequest == false の場合）
 │   ├─ TTS → スキップ（ブロッキング応答時の SynthesizeAndPlay も抑制）
 │   └─ UI表示 → 「お出かけ中…」維持（UIController側で抑制）
 
-※ _isCronEntryRequest == true の場合はOuting中でもストリーミング・TTS・応答を通常処理する
+※ _requestKind == RequestKind.CronEntry の場合はOuting中でもストリーミング・TTS・応答を通常処理する
 ```
 
 | 項目 | Outing定期メッセージ | Cron帰宅リクエスト |
@@ -4333,7 +4333,7 @@ Sleep中のメッセージ表示抑制は `CharacterController` 側で処理さ�
 **TTS抑制（ChatManager側）:**
 上記UIController側のメッセージ表示抑制に加え、ChatManager側でSleep/Outing中のTTS（音声合成）を抑制する。
 `HandleStreamText`、`HandleStreamField`、`HandleRequestCompleted`、`HandleLLMResponse` の各ハンドラで、
-Sleep中（`_isWakeUpRequest`を除く）・Outing中（`_isCronEntryRequest`を除く）はTTS関連の処理をスキップする。
+Sleep中（`RequestKind.WakeUp`を除く）・Outing中（`RequestKind.CronEntry`を除く）はTTS関連の処理をスキップする。
 
 #### リクエストボディ表示（UIController）
 
@@ -7964,13 +7964,13 @@ public CyanNook.Voice.VoiceSynthesisController voiceSynthesisController;
 3. **ブロッキング応答時のみ** (`HandleLLMResponse()`):
    ```csharp
    // _isStreamingRequestフラグでストリーミング時の二重合成を防止
-   // Outing中は抑制（_isCronEntryRequest時は通す）
+   // Outing中は抑制（RequestKind.CronEntry時は通す）
    if (!_isStreamingRequest)
        voiceSynthesisController?.SynthesizeAndPlay(response.message);
    ```
 
 **Sleep/Outing中のTTS抑制:**
-上記3箇所すべてで、Sleep中（`_isWakeUpRequest`を除く）およびOuting中（`_isCronEntryRequest`を除く）はTTS処理をスキップする。
+上記3箇所すべてで、Sleep中（`RequestKind.WakeUp`を除く）およびOuting中（`RequestKind.CronEntry`を除く）はTTS処理をスキップする。
 `HandleStreamField` のreaction TTS転送も同様に抑制される。
 
 ### Data Flow
