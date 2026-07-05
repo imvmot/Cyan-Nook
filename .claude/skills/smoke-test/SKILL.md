@@ -45,8 +45,14 @@ Unity MCP でエディタを再生し、UI 操作・スクリーンショット�
 
 ## 4. LLM 対話テスト
 
-- チャット入力欄に text を設定し、送信ボタンの onClick.Invoke() で送信（人間と同じ経路）
-- 応答は「スクリーンショット」「read_console」「ChatManager の状態」で確認
+- 送信は `UIController.SendMessageFromVoice(text)` が人間と同等の経路（入力欄設定+送信処理）
+- **対話テスト中は自律発話を一時停止する**: IdleChatController / BoredomController の
+  `SetPaused(true)`（ランタイムのみ・PlayerPrefs 不変・再生終了で消える）。
+  止めないと自律リクエストが対話に割り込み、表示の読み取りが自分の応答か区別できなくなる
+- **送信前に `ChatManager.IsBusy == false` を確認**（busy 中の送信は黙って弾かれる）
+- 応答待ちはバックグラウンド sleep（20〜40秒）→ IsBusy 確認の繰り返し。
+  ローカル LLM の初回応答はプロンプト再計算で1分近くかかることがある
+- 応答は「スクリーンショット」「read_console」「UIController.messageText」で確認
 - 送信回数は必要最小限に。連投テストが必要な場合は回数をユーザーに事前提示する
 
 ## 5. 終了処理
