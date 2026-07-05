@@ -41,11 +41,6 @@ namespace CyanNook.DebugTools
         private bool _wasGKeyPressed;
         private bool _wasHKeyPressed;
 
-        // デバッグ表示用
-        [Header("Debug")]
-        [SerializeField]
-        private FurnitureInstance _nearestFurniture;
-
         /// <summary>デバッグキーが有効かどうか</summary>
         public bool IsEnabled { get; private set; } = false;
 
@@ -254,9 +249,6 @@ namespace CyanNook.DebugTools
                 TryCancelInteraction();
             }
             _wasHKeyPressed = hKeyCurrentlyPressed;
-
-            // デバッグ：最寄りの家具を更新
-            UpdateNearestFurniture();
         }
 
         private void TryStartInteraction()
@@ -361,12 +353,8 @@ namespace CyanNook.DebugTools
             return nearest;
         }
 
-        private void UpdateNearestFurniture()
-        {
-            var characterTransform = navigationController?.characterTransform;
-            _nearestFurniture = FindNearestFurniture(characterTransform);
-        }
-
+        // Gizmo描画（エディタで選択中のみ実行される）
+        // 家具の全検索はここで行い、ビルド実行時のUpdateには一切コストを残さない
         private void OnDrawGizmosSelected()
         {
             var characterTransform = navigationController?.characterTransform;
@@ -377,10 +365,11 @@ namespace CyanNook.DebugTools
             Gizmos.DrawWireSphere(characterTransform.position, searchRadius);
 
             // 最寄りの家具への線を表示
-            if (_nearestFurniture != null)
+            var nearestFurniture = FindNearestFurniture(characterTransform);
+            if (nearestFurniture != null)
             {
                 Gizmos.color = Color.yellow;
-                Gizmos.DrawLine(characterTransform.position, _nearestFurniture.transform.position);
+                Gizmos.DrawLine(characterTransform.position, nearestFurniture.transform.position);
             }
         }
     }
