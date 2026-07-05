@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -352,7 +353,8 @@ namespace CyanNook.Chat
             // 最後に正常に完了したフィールドの後のカンマ以降を切り取る
             string current = sb.ToString();
 
-            // 未閉じの文字列を閉じる
+            // 未閉じ判定（{ } と [ ] の両方を追跡。配列を数えないと
+            // 配列内のカンマをトップレベルのフィールド区切りと誤認する）
             bool inString = false;
             bool escaped = false;
             int depth = 0;
@@ -382,8 +384,8 @@ namespace CyanNook.Chat
 
                 if (inString) continue;
 
-                if (c == '{') depth++;
-                else if (c == '}') depth--;
+                if (c == '{' || c == '[') depth++;
+                else if (c == '}' || c == ']') depth--;
                 else if (c == ',' && depth == 1)
                 {
                     // トップレベルのカンマ = フィールド区切り
@@ -398,12 +400,12 @@ namespace CyanNook.Chat
                 sb.Append(current, 0, lastCompleteFieldEnd);
             }
 
-            // 閉じ括弧を補完
-            // 改めてdepthを計算
+            // 未閉じの文字列・括弧を検出（開き括弧の種類をスタックで記憶し、
+            // 対応する閉じ括弧を内側から補完する）
             string repaired = sb.ToString();
             inString = false;
             escaped = false;
-            depth = 0;
+            var openBrackets = new Stack<char>();
             for (int i = 0; i < repaired.Length; i++)
             {
                 char c = repaired[i];
@@ -411,14 +413,20 @@ namespace CyanNook.Chat
                 if (c == '\\' && inString) { escaped = true; continue; }
                 if (c == '"') { inString = !inString; continue; }
                 if (inString) continue;
-                if (c == '{') depth++;
-                else if (c == '}') depth--;
+                if (c == '{' || c == '[') openBrackets.Push(c);
+                else if ((c == '}' || c == ']') && openBrackets.Count > 0) openBrackets.Pop();
             }
 
-            // 未閉じの } を補完
-            for (int i = 0; i < depth; i++)
+            // 未閉じの文字列を閉じる（文字列値の途中で切れた場合）
+            if (inString)
             {
-                sb.Append('}');
+                sb.Append('"');
+            }
+
+            // 未閉じの括弧を対応する種類で補完
+            while (openBrackets.Count > 0)
+            {
+                sb.Append(openBrackets.Pop() == '[' ? ']' : '}');
             }
 
             string result = sb.ToString();

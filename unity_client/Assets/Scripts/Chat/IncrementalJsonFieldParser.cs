@@ -23,6 +23,10 @@ namespace CyanNook.Chat
     /// チャンク単位で OnStringValueChunk を発火（ストリーミング表示用）。
     /// JSON全体の } が閉じた時点で OnJsonComplete を発火。
     ///
+    /// 値の型はプリミティブ / 文字列 / オブジェクト {} / 配列 [] に対応
+    /// （配列値は "[...]" の生JSONとして OnFieldParsed に渡される）。
+    /// ストリーミング表示では \uXXXX エスケープもデコードされる。
+    ///
     /// LLMがシングルクォートを出力する場合にも対応:
     ///   'key': 'value' → "key": "value" として正規化しバッファに格納
     /// </summary>
@@ -50,7 +54,7 @@ namespace CyanNook.Chat
 
         // パース状態
         private readonly StringBuilder _buffer = new StringBuilder();
-        private int _depth;             // ブラケット深度（0=JSON外、1=トップレベル、2+=ネスト）
+        private int _depth;             // ブラケット深度（0=JSON外、1=トップレベル、2+=ネスト）。{ } と [ ] の両方を数える
         private bool _inString;         // 文字列リテラル内か
         private char _stringQuoteChar;  // 文字列を開始した引用符（'"' or '\''）
         private bool _escaped;          // エスケープ文字直後か
@@ -64,12 +68,15 @@ namespace CyanNook.Chat
         private bool _waitingForColon;  // キー後のコロン待ちか
         private bool _parsingValue;     // 値のパース中か
         private bool _valueIsString;    // 値が文字列型か
-        private bool _valueIsObject;    // 値がオブジェクト型か
-        private int _valueObjectDepth;  // 値がオブジェクトの場合の開始深度
+        private bool _valueIsComposite; // 値が複合型（オブジェクト {} または配列 []）か
 
         // ストリーミング文字列値用
         private bool _isStreamingField;                                          // 現在ストリーミング中か
         private readonly StringBuilder _stringStreamBuffer = new StringBuilder(); // チャンク内蓄積バッファ
+
+        // \uXXXX エスケープのデコード用（ストリーミング表示のみで使用）
+        private int _unicodeEscapeRemaining;                                      // 収集残りの16進桁数（0=非収集中）
+        private readonly StringBuilder _unicodeHexBuffer = new StringBuilder(4);  // 16進4桁の蓄積
 
         // JSON後の残りテキスト
         private string _remainingText;
@@ -158,10 +165,11 @@ namespace CyanNook.Chat
             _waitingForColon = false;
             _parsingValue = false;
             _valueIsString = false;
-            _valueIsObject = false;
-            _valueObjectDepth = 0;
+            _valueIsComposite = false;
             _isStreamingField = false;
             _stringStreamBuffer.Clear();
+            _unicodeEscapeRemaining = 0;
+            _unicodeHexBuffer.Clear();
             _remainingText = null;
         }
 
@@ -178,6 +186,14 @@ namespace CyanNook.Chat
 
         private void ProcessChar(char c)
         {
+            // ルートJSON開始前（depth 0）は { 以外の文字を無視する。
+            // LLMがJSONの前に前置きテキストを出した場合に、その中の引用符や
+            // ブラケットでパーサー状態が壊れるのを防ぐ（ルートはオブジェクト前提）
+            if (_depth == 0 && c != '{')
+            {
+                return;
+            }
+
             // エスケープ処理
             if (_escaped)
             {
@@ -186,7 +202,18 @@ namespace CyanNook.Chat
                 // ストリーミング中: エスケープシーケンスをデコードして蓄積
                 if (_isStreamingField && _inString)
                 {
-                    _stringStreamBuffer.Append(DecodeEscapeChar(c));
+                    if (c == 'u')
+                    {
+                        // \uXXXX: 続く16進4桁を収集してからデコードする
+                        // （デコードしないと日本語をエスケープ出力するLLMで
+                        // "u3042" のような生テキストが表示されてしまう）
+                        _unicodeEscapeRemaining = 4;
+                        _unicodeHexBuffer.Clear();
+                    }
+                    else
+                    {
+                        _stringStreamBuffer.Append(DecodeEscapeChar(c));
+                    }
                 }
 
                 return;
@@ -194,6 +221,8 @@ namespace CyanNook.Chat
 
             if (c == '\\' && _inString)
             {
+                // \uXXXX の16進収集中に \ が来た（不正入力）場合は収集を打ち切る
+                _unicodeEscapeRemaining = 0;
                 _escaped = true;
                 return;
             }
@@ -233,8 +262,29 @@ namespace CyanNook.Chat
                 }
                 else if (_isStreamingField)
                 {
-                    // ストリーミング中の通常文字を蓄積
-                    _stringStreamBuffer.Append(c);
+                    if (_unicodeEscapeRemaining > 0)
+                    {
+                        // \uXXXX の16進4桁を収集（16進数字は引用符になり得ないため安全）
+                        _unicodeHexBuffer.Append(c);
+                        _unicodeEscapeRemaining--;
+                        if (_unicodeEscapeRemaining == 0)
+                        {
+                            if (int.TryParse(_unicodeHexBuffer.ToString(),
+                                System.Globalization.NumberStyles.HexNumber,
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out int codePoint))
+                            {
+                                // サロゲートペア（絵文字等）も前半/後半を順に追加すれば正しく結合される
+                                _stringStreamBuffer.Append((char)codePoint);
+                            }
+                            // 16進として不正なら表示用途のため黙って捨てる
+                        }
+                    }
+                    else
+                    {
+                        // ストリーミング中の通常文字を蓄積
+                        _stringStreamBuffer.Append(c);
+                    }
                 }
                 return;
             }
@@ -255,7 +305,7 @@ namespace CyanNook.Chat
                 }
 
                 // depth==1 で値の開始（文字列型）
-                if (_depth == 1 && _parsingValue && !_valueIsObject)
+                if (_depth == 1 && _parsingValue && !_valueIsComposite)
                 {
                     _valueIsString = true;
 
@@ -277,13 +327,15 @@ namespace CyanNook.Chat
                 _waitingForColon = false;
                 _parsingValue = true;
                 _valueIsString = false;
-                _valueIsObject = false;
+                _valueIsComposite = false;
                 _valueStartIndex = _buffer.Length; // 次の文字から値
                 return;
             }
 
-            // ブラケット処理
-            if (c == '{')
+            // ブラケット処理（{ } と [ ] を同じ深度カウンタで追跡する。
+            // 配列を数えないと、トップレベルの配列値の中のカンマを
+            // フィールド区切りと誤認してパースが壊れる）
+            if (c == '{' || c == '[')
             {
                 _depth++;
 
@@ -293,12 +345,11 @@ namespace CyanNook.Chat
                     return;
                 }
 
-                // depth==1でのオブジェクト値の開始
-                if (_depth == 2 && _parsingValue && !_valueIsString)
+                // depth==1での複合値（オブジェクト/配列）の開始
+                if (_depth == 2 && _parsingValue && !_valueIsString && !_valueIsComposite)
                 {
-                    _valueIsObject = true;
-                    _valueObjectDepth = 2;
-                    // valueStartIndexを { の位置に調整
+                    _valueIsComposite = true;
+                    // valueStartIndexを { / [ の位置に調整
                     _valueStartIndex = _buffer.Length - 1;
                     return;
                 }
@@ -306,19 +357,19 @@ namespace CyanNook.Chat
                 return;
             }
 
-            if (c == '}')
+            if (c == '}' || c == ']')
             {
                 _depth--;
 
-                // オブジェクト型の値完了
-                if (_parsingValue && _valueIsObject && _depth == 1)
+                // 複合型（オブジェクト/配列）の値完了
+                if (_parsingValue && _valueIsComposite && _depth == 1)
                 {
                     EmitCurrentField();
                     return;
                 }
 
-                // JSON全体の完了
-                if (_depth == 0)
+                // JSON全体の完了（ルートはオブジェクト前提のため } のみ）
+                if (c == '}' && _depth == 0)
                 {
                     _completed = true;
                     OnJsonComplete?.Invoke();
@@ -329,14 +380,14 @@ namespace CyanNook.Chat
             }
 
             // カンマ（フィールド区切り） - プリミティブ値の完了
-            if (c == ',' && _depth == 1 && _parsingValue && !_valueIsString && !_valueIsObject)
+            if (c == ',' && _depth == 1 && _parsingValue && !_valueIsString && !_valueIsComposite)
             {
                 EmitCurrentField();
                 return;
             }
 
-            // 値のパース開始（非文字列、非オブジェクト = 数値/bool/null）
-            if (_depth == 1 && _parsingValue && !_valueIsString && !_valueIsObject)
+            // 値のパース開始（非文字列、非複合 = 数値/bool/null）
+            if (_depth == 1 && _parsingValue && !_valueIsString && !_valueIsComposite)
             {
                 // 空白は無視
                 if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
@@ -387,7 +438,7 @@ namespace CyanNook.Chat
             }
 
             string rawValue = _buffer.ToString().Substring(_valueStartIndex);
-            rawValue = rawValue.TrimEnd(',', ' ', '\t', '\n', '\r', '}');
+            rawValue = rawValue.TrimEnd(',', ' ', '\t', '\n', '\r', '}', ']');
 
             if (!string.IsNullOrEmpty(rawValue))
             {
@@ -403,9 +454,10 @@ namespace CyanNook.Chat
             _currentKey = null;
             _parsingValue = false;
             _valueIsString = false;
-            _valueIsObject = false;
+            _valueIsComposite = false;
             _valueStartIndex = 0;
             _isStreamingField = false;
+            _unicodeEscapeRemaining = 0;
         }
 
         /// <summary>
