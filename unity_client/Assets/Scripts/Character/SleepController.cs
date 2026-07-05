@@ -117,6 +117,11 @@ namespace CyanNook.Character
         {
             if (!_isSleeping) return;
 
+            // 起床ed再生中は何もしない。
+            // ここで夢メッセージを送るとChatManagerのリクエスト種別(WakeUp)を
+            // 上書きしてしまい、起床タイマー満了はExitSleepの二重実行を招く
+            if (_isWakingUp) return;
+
             // 起床タイマー監視
             if (DateTime.Now >= _wakeTime)
             {

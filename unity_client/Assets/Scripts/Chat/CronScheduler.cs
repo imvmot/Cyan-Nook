@@ -306,7 +306,9 @@ namespace CyanNook.Chat
         private void TrySendFromQueue()
         {
             if (_pendingPrompts.Count == 0) return;
-            if (chatManager == null || chatManager.CurrentState != ChatState.Idle) return;
+            // IsBusyで判定（CurrentStateだけ見るとLLMClientコルーチン完了前の窓で
+            // dequeueしたプロンプトがドロップされ失われる）。ビジー時はキューに残す
+            if (chatManager == null || chatManager.IsBusy) return;
 
             string prompt = _pendingPrompts.Dequeue();
             Debug.Log($"[CronScheduler] Sending queued prompt ({_pendingPrompts.Count} remaining)");
