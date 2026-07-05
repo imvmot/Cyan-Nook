@@ -32,7 +32,6 @@ VRM1.0キャラクターが箱庭空間で自律行動し、ユーザーとの�
 │ │ WebLLMProvider           - WebLLM（ブラウザ内LLM via WebGPU）│ │
 │ │ WebLLMBridge             - WebLLM jslib C#ブリッジ     │ │
 │ │ LLMConfigManager         - API設定保存（PlayerPrefs）   │ │
-│ │ LlmStreamHandler         - ストリーミングDownloadHandler│ │
 │ │ StreamSeparatorProcessor - ヘッダー/本文分離処理        │ │
 │ │ IncrementalJsonFieldParser - JSON逐次フィールドパーサー│ │
 │ │ VisibleObjectsProvider   - 視界内オブジェクト検出      │ │
@@ -1777,7 +1776,6 @@ WebGL 公開時にユーザーがブラウザから API エンドポイントを
 | `WebLLMProvider` | WebLLM（ブラウザ内LLM via WebGPU）ILLMProvider実装。WebLLMBridge経由でweb-llm APIを呼び出し。StreamSeparatorProcessorでJSONパース |
 | `WebLLMBridge` | WebLLM jslib C#ブリッジ（MonoBehaviour Singleton）。DllImport宣言 + SendMessageコールバック受信。C#イベントで外部に公開 |
 | `FirstRunController` | 初回起動ポップアップUI + WebLLMモデルダウンロード進捗表示 |
-| `LlmStreamHandler` | DownloadHandlerScript 継承。生テキストストリーム用（UTF-8 マルチバイト安全） |
 | `StreamSeparatorProcessor` | JSONストリームの逐次パース処理。IncrementalJsonFieldParserによる逐次パース統合、messageフィールドのストリーミング転送。プロバイダー間で共有 |
 | `IncrementalJsonFieldParser` | ストリーミングJSONの逐次フィールドパーサー。トップレベルフィールド完了ごとにイベント発火。StreamingFieldName指定フィールドはチャンク単位でOnStringValueChunk発火。シングルクォート正規化対応 |
 | `LlmResponseHeader` | ストリーミングヘッダーのデータクラス（JSON全体からパース。reaction含む） |
@@ -2193,13 +2191,13 @@ APIタイプ切替時にLLMSettingsPanelが自動でエンドポイントを切�
 ```
 [LLM API] ─ raw bytes ─→ DownloadHandlerScript
                              │
-                   ┌─────────┼──────────┐
-                   │         │          │
-         LlmStreamHandler  Ollama     Dify
-         (生テキスト)    NdjsonHandler SseHandler
-                   │         │          │
-                   └────┬────┘          │
-                        │               │
+                        ┌────┴─────┐
+                        │          │
+                     Ollama       Dify
+                  NdjsonHandler SseHandler
+                        │          │
+                        └────┬─────┘
+                             │
                 StreamSeparatorProcessor ← JSON逐次パース処理
                         │
               IncrementalJsonFieldParser ← 逐次フィールドパース + messageストリーミング
@@ -2212,7 +2210,6 @@ APIタイプ切替時にLLMSettingsPanelが自動でエンドポイントを切�
          LLMClient ──→ ChatManager ──→ CharacterController / UI
 ```
 
-- `LlmStreamHandler`: 生テキストストリーム用の `DownloadHandlerScript`。直接 HTTP ストリームを受信する用途
 - `OllamaNdjsonStreamHandler`: Ollama の NDJSON（各行が JSON）をパースし `response` フィールドを抽出
 - `DifySseStreamHandler`: Dify の SSE イベントをパースし `answer` フィールドを抽出
 - `StreamSeparatorProcessor`: 上記すべてのハンドラが共有するJSON逐次パース処理。messageフィールドのストリーミング転送
@@ -3413,7 +3410,7 @@ IncrementalJsonFieldParser で `sleep_duration` フィールドを検出した�
 | `Scripts/Character/InteractionController.cs` | ExitLoopWithCallback(skipCancelRegion)でed全体再生を制御 |
 | `Scripts/Character/CharacterSetup.cs` | 起動時のsleep復元チェック |
 | `Scripts/Chat/ChatManager.cs` | Wake-up並行LLM送信、ストリーミング応答抑制、レスポンスキュー |
-| `Scripts/Chat/LlmStreamHandler.cs` | 不完全JSON修復（RepairIncompleteJson） |
+| `Scripts/Chat/LlmStreamHandler.cs` | 不完全JSON修復（StreamSeparatorProcessor.RepairIncompleteJson） |
 | `Scripts/Chat/IdleChatController.cs` | Sleep中の停止/再開 |
 | `Scripts/Character/BoredomController.cs` | Sleep中の蓄積停止 |
 
@@ -4491,7 +4488,7 @@ Controller Controller Controller  Display
          │◄───────────────────────────┘
          │  → 状態更新のみ（反映済み）
          │
-         │ ④OnStreamCompleted → OnResponseReceived
+         │ ④OnResponseReceived
          ▼
    最終LLMResponseData構築
    会話履歴に追加（逐次反映済みの場合は口パクのみ）
@@ -4590,7 +4587,7 @@ public enum ChatState
 
 6. ストリーミング完了（正常時）
    ├─ LLMClient: LlmResponseHeader + 蓄積テキスト → LLMResponseData を構築
-   ├─ LLMClient.OnStreamCompleted + OnResponseReceived イベント発火（既存フローと互換）
+   ├─ LLMClient.OnResponseReceived イベント発火（非ストリーミングと共通フロー）
    │   └─ ChatManager.HandleLLMResponse():
    │       ├─ CharacterController.HandleChatResponse():
    │       │   ├─ _hasIncrementalFields=true → 口パクのみ（逐次反映済み）
@@ -6729,7 +6726,7 @@ Assets/
 │   │   ├── GeminiProvider.cs          ← Google Gemini API（x-goog-api-key認証 + Generative Language API）
 │   │   ├── WebLLMProvider.cs           ← WebLLM（ブラウザ内LLM via WebGPU）
 │   │   ├── WebLLMBridge.cs             ← WebLLM jslib C#ブリッジ（Singleton MonoBehaviour）
-│   │   ├── LlmStreamHandler.cs         ← DownloadHandlerScript + StreamSeparatorProcessor
+│   │   ├── LlmStreamHandler.cs         ← StreamSeparatorProcessor（JSON逐次パース）
 │   │   ├── IncrementalJsonFieldParser.cs ← ストリーミングJSON逐次フィールドパーサー
 │   │   ├── LlmResponseHeader.cs        ← ストリーミングヘッダーデータクラス
 │   │   ├── ChatManager.cs              ← プロンプト生成、会話履歴、ストリーミング対応
@@ -7509,13 +7506,11 @@ IB/PrePassでの根本修正はスナップショットの2層管理が必要で
 
 #### ~~VrmLoader - セットアップメソッドの重複~~ (解決済み)
 
-`SetupNavigationComponents()` は `SetupCharacterComponents()` への委譲に変更済み（後方互換性のためメソッド自体は残存）。
+`SetupNavigationComponents()` と3引数版オーバーロードは削除済み（フル版 `SetupCharacterComponents()` のみ）。
 
-#### FurnitureManager - レガシー互換性コード
+#### ~~FurnitureManager - レガシー互換性コード~~ (解決済み)
 
-`_legacyRegistry`とFurniturePoint関連のメソッド（GetFurnitureInCurrentRoom等）が残存している。
-
-**推奨**: FurnitureInstance移行完了後に削除
+`_legacyRegistry`とFurniturePoint一式は削除済み（FurnitureInstance系のみ）。
 
 #### TimelineBindingData - 未使用フィールド
 
@@ -7672,11 +7667,9 @@ static void SaveAudioClipToWav(AudioClip clip, string filePath); // デバッグ
 ```javascript
 WebSpeechSynth_Initialize(callbackObjectName) // 初期化、voiceschangedリスン
 WebSpeechSynth_IsSupported()                  // ブラウザ対応チェック
-WebSpeechSynth_GetVoices()                    // 音声リスト取得（JSON、日本語のみ）
 WebSpeechSynth_Speak(text, voiceURI, rate, pitch)   // 即時発話（テスト用）
 WebSpeechSynth_Enqueue(text, voiceURI, rate, pitch)  // キューに追加→順次再生
 WebSpeechSynth_Cancel()                       // 発話中止+キュークリア
-WebSpeechSynth_IsSpeaking()                   // 発話中確認
 ```
 
 **コールバック（SendMessage）**:
