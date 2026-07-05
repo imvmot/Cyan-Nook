@@ -116,6 +116,9 @@ namespace CyanNook.UI
         private InputMode _currentMode;
         private float _messageTimer = 0f;
 
+        // メッセージ欄の通常時の文字色（エラー表示後に戻すため保持）
+        private Color _defaultMessageColor = Color.white;
+
         // Enter送信の二重処理防止フラグ
         private bool _isSubmitting;
 
@@ -144,6 +147,8 @@ namespace CyanNook.UI
             if (chatInputField != null)
             {
                 chatInputField.lineType = TMP_InputField.LineType.MultiLineNewline;
+                // 入力中のタグ解釈を無効化（タグを打つと編集表示が崩れるため）
+                chatInputField.richText = false;
                 chatInputField.onEndEdit.AddListener(OnInputEndEdit);
                 chatInputField.onValueChanged.AddListener(OnInputValueChanged);
 
@@ -156,6 +161,16 @@ namespace CyanNook.UI
             if (messageText != null)
             {
                 messageText.text = "";
+                // LLM由来テキストがリッチテキストタグ（<size=500>等）として
+                // 解釈され表示が崩れるのを防ぐ。エラー色はcolorプロパティで
+                // 付けるためタグ解釈は不要
+                messageText.richText = false;
+                _defaultMessageColor = messageText.color;
+            }
+            if (llmRawResponseText != null)
+            {
+                // 生レスポンス表示も同様にタグ解釈を無効化
+                llmRawResponseText.richText = false;
             }
 
             // ChatManagerイベント登録
@@ -589,7 +604,7 @@ namespace CyanNook.UI
             if (chatManager == null)
             {
                 Debug.LogError("[UIController] ChatManager not set");
-                ShowMessage("Error: ChatManager not set");
+                ShowMessage("Error: ChatManager not set", errorMessageColor);
                 return;
             }
 
@@ -656,7 +671,7 @@ namespace CyanNook.UI
             else
             {
                 // StatusOverlay未設定時はメッセージ欄にフォールバック
-                ShowMessage($"<color=#{ColorUtility.ToHtmlStringRGB(errorMessageColor)}>Error: {error}</color>");
+                ShowMessage($"Error: {error}", errorMessageColor);
             }
         }
 
@@ -733,6 +748,7 @@ namespace CyanNook.UI
 
             if (messageText != null)
             {
+                messageText.color = _defaultMessageColor;
                 messageText.text = reaction;
                 _messageTimer = float.MaxValue;
             }
@@ -787,6 +803,7 @@ namespace CyanNook.UI
             // 外出中はメッセージ欄を更新しない（raw表示は継続）
             if (!IsOutingActive && messageText != null)
             {
+                messageText.color = _defaultMessageColor;
                 messageText.text = currentMessage;
                 _messageTimer = float.MaxValue;
             }
@@ -809,6 +826,7 @@ namespace CyanNook.UI
             string displayText = outingController != null ? outingController.OutingDisplayText : "お出かけ中…";
             if (messageText != null)
             {
+                messageText.color = _defaultMessageColor;
                 messageText.text = displayText;
                 _messageTimer = float.MaxValue; // 消えない
             }
@@ -839,8 +857,14 @@ namespace CyanNook.UI
 
         private void ShowMessage(string message)
         {
+            ShowMessage(message, _defaultMessageColor);
+        }
+
+        private void ShowMessage(string message, Color color)
+        {
             if (messageText != null)
             {
+                messageText.color = color;
                 messageText.text = message;
                 _messageTimer = messageDisplayDuration > 0 ? messageDisplayDuration : float.MaxValue;
             }
@@ -876,6 +900,7 @@ namespace CyanNook.UI
 
             if (messageText != null && response.HasMessage)
             {
+                messageText.color = _defaultMessageColor;
                 messageText.text = response.FullMessage;
                 _messageTimer = messageDisplayDuration;
             }
