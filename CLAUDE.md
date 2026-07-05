@@ -202,6 +202,15 @@ Category: common / talk / emote / interact
 - デフォルトフォント（LiberationSans SDF）は日本語非対応
 - 日本語表示には日本語対応フォントアセットが必要
 
+## Git 運用ルール
+
+- コミットメッセージは日本語。1行目は「何をしたか (カテゴリタグ)」形式（例: `(監査🟡性能)` `(開発環境)`）、本文に理由と方式を簡潔に
+- 末尾に `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` を付ける
+- **関連ファイルのみパス指定で `git add`**（`git add -A` 禁止）
+- 意図した変更でない限り含めないもの: `build/` 成果物、`AddressableAssetSettings.asset`、`ProjectSettings.asset`、`modern_ceiling_globe.mat`、`.claude/settings.json`
+- **ユーザーのテスト確認前にコミットしない**（コミット依頼を受けてから）
+- **`git push` はユーザーが行う**（Claude は push しない）
+
 ## Current Implementation Status
 
 ### Implemented
