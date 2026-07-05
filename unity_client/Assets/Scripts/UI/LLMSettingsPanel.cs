@@ -588,45 +588,11 @@ namespace CyanNook.UI
 
             llmClient.SaveAndApplyConfig(config);
 
-            // UseVision
-            if (chatManager != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_UseVision, chatManager.useVision ? 1 : 0);
-            }
-
-            // MaxHistory
-            if (chatManager != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_MaxHistory, chatManager.maxHistoryLength);
-            }
-
-            // CameraPreview
-            if (cameraPreviewToggle != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_CameraPreview, cameraPreviewToggle.isOn ? 1 : 0);
-            }
-
-            // WebCam
-            if (webCamToggle != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_WebCam, webCamToggle.isOn ? 1 : 0);
-            }
-
-            // Screen Capture
-            if (screenCaptureToggle != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_ScreenCapture, screenCaptureToggle.isOn ? 1 : 0);
-            }
-
-            // IdleChat Message
-            if (idleChatMessageInputField != null && idleChatController != null)
-            {
-                PlayerPrefs.SetString(PrefKey_IdleChatMessage, idleChatMessageInputField.text);
-            }
-
-            PlayerPrefs.Save();
+            // SaveボタンはLLM API設定 (llm_config) の検証+適用+保存専用。
+            // Vision/カメラ系トグル/MaxHistory/IdleChatメッセージ等の他の項目は
+            // 変更した瞬間に各ハンドラ/コントローラー側で即保存される
             SetStatus("Saved!");
-            Debug.Log($"[LLMSettingsPanel] Settings saved: API={config.apiType}, Vision={chatManager?.useVision}, MaxHistory={chatManager?.maxHistoryLength}");
+            Debug.Log($"[LLMSettingsPanel] LLM config saved: API={config.apiType}");
 
             // WebLLM選択時: モデル未ロードならダウンロードフローを開始
             if (config.apiType == LLMApiType.WebLLM && firstRunController != null
@@ -690,6 +656,8 @@ namespace CyanNook.UI
             if (int.TryParse(value, out int count) && count > 0)
             {
                 chatManager.maxHistoryLength = count;
+                PlayerPrefs.SetInt(PrefKey_MaxHistory, count);
+                PlayerPrefs.Save();
                 Debug.Log($"[LLMSettingsPanel] Max history: {count}");
             }
         }
@@ -757,6 +725,8 @@ namespace CyanNook.UI
             if (chatManager != null)
             {
                 chatManager.useVision = isOn;
+                PlayerPrefs.SetInt(PrefKey_UseVision, isOn ? 1 : 0);
+                PlayerPrefs.Save();
                 Debug.Log($"[LLMSettingsPanel] Vision: {(isOn ? "ON" : "OFF")}");
             }
         }
@@ -943,6 +913,11 @@ namespace CyanNook.UI
             else
                 webCamDisplayController.StopWebCam();
 
+            // 動作は即反映されるため保存も即時に行う
+            // （Saveボタン待ちだと「動いている=保存された」という認識とズレる）
+            PlayerPrefs.SetInt(PrefKey_WebCam, isOn ? 1 : 0);
+            PlayerPrefs.Save();
+
             Debug.Log($"[LLMSettingsPanel] WebCam: {(isOn ? "ON" : "OFF")}");
         }
 
@@ -991,6 +966,10 @@ namespace CyanNook.UI
                 screenCaptureDisplayController.StopCapture();
                 UpdateScreenCapturePreview();
             }
+
+            // 動作は即反映されるため保存も即時に行う
+            PlayerPrefs.SetInt(PrefKey_ScreenCapture, isOn ? 1 : 0);
+            PlayerPrefs.Save();
 
             Debug.Log($"[LLMSettingsPanel] ScreenCapture: {(isOn ? "ON" : "OFF")}");
         }
