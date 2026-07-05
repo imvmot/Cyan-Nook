@@ -61018,7 +61018,6 @@ MonoBehaviour:
   inputField: {fileID: 1082915415}
   turnSpeed: 180
   searchRadius: 10
-  _nearestFurniture: {fileID: 0}
 --- !u!114 &1637253020
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -62988,6 +62987,15 @@ MonoBehaviour:
   saveButton: {fileID: 356931163}
   testConnectionButton: {fileID: 1598722000}
   statusText: {fileID: 1445128243}
+  hideOnUnityroomBuild:
+  - {fileID: 1691724394}
+  - {fileID: 860985504}
+  - {fileID: 143633528}
+  - {fileID: 369189868}
+  - {fileID: 177684787}
+  - {fileID: 754607170}
+  - {fileID: 1593766888}
+  - {fileID: 861005136}
 --- !u!1 &1686510021
 GameObject:
   m_ObjectHideFlags: 0
@@ -67895,7 +67903,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: CyanNook::CyanNook.Voice.GeminiTtsClient
   apiKey: 
-  model: gemini-2.5-flash-preview-tts
+  model: gemini-3.1-flash-tts-preview
   voiceName: Leda
   stylePrompt: 
   testText: "\u3053\u3093\u306B\u3061\u306F\u3001\u30C6\u30B9\u30C8\u97F3\u58F0\u3067\u3059\u3002\r\n"
@@ -70335,6 +70343,9 @@ MonoBehaviour:
   intonationSlider: {fileID: 2375649}
   intonationValueText: {fileID: 206174446}
   geminiApiKeyInputField: {fileID: 1328368435}
+  hideOnUnityroomBuild:
+  - {fileID: 1101965822}
+  - {fileID: 547897816}
   geminiModelDropdown: {fileID: 1773499196}
   geminiVoiceDropdown: {fileID: 774579702}
   geminiStylePromptInputField: {fileID: 385521258}

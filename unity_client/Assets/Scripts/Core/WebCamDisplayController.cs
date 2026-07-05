@@ -49,6 +49,11 @@ namespace CyanNook.Core
             // PlayerPrefsから設定を読み込み
             LoadSettings();
 
+#if UNITYROOM_BUILD
+            // unityroom版では封鎖（Rendererも確実に無効化するため自動再生を止める）
+            autoPlay = false;
+#endif
+
             if (autoPlay)
             {
                 StartWebCam();
@@ -80,6 +85,13 @@ namespace CyanNook.Core
         /// </summary>
         public void StartWebCam()
         {
+#if UNITYROOM_BUILD
+            // unityroom版（体験版）ではWebカメラ機能を封鎖。
+            // UIを隠すだけではautoPlay既定値・PlayerPrefs復元・Importで
+            // 起動し得るため、起動メソッド自体で塞ぐ
+            Debug.LogWarning("[WebCamDisplayController] WebCam is disabled in unityroom build");
+            return;
+#else
             if (IsPlaying)
             {
                 Debug.Log("[WebCamDisplayController] WebCam already playing");
@@ -103,6 +115,7 @@ namespace CyanNook.Core
 
             Debug.Log($"[WebCamDisplayController] WebCam started: device=\"{_webCamTexture.deviceName}\", " +
                       $"requested={requestedWidth}x{requestedHeight}@{requestedFPS}fps");
+#endif
         }
 
         /// <summary>

@@ -178,7 +178,13 @@ namespace CyanNook.UI
             }
             if (importSettingsButton != null)
             {
+#if UNITYROOM_BUILD
+                // 体験版ではImportを封鎖（封鎖済み機能の設定を書き戻す抜け道になるため）。
+                // Exportは「GitHub版へ設定を持っていく」用途のため残す
+                importSettingsButton.gameObject.SetActive(false);
+#else
                 importSettingsButton.onClick.AddListener(OnImportSettingsClicked);
+#endif
             }
             if (settingsExporter != null)
             {

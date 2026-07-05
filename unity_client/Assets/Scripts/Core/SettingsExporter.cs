@@ -215,7 +215,13 @@ namespace CyanNook.Core
         /// </summary>
         public void OpenImportDialog()
         {
-#if UNITY_WEBGL && !UNITY_EDITOR
+#if UNITYROOM_BUILD
+            // unityroom版（体験版）ではImportを封鎖。
+            // 設定ファイル経由で封鎖済み機能（feed/cron/webcam等）の
+            // PlayerPrefsを書き戻す抜け道になるため（Exportは残す）
+            Debug.LogWarning("[SettingsExporter] Import is disabled in unityroom build");
+            OnImportComplete?.Invoke(false, "Import is disabled in this build");
+#elif UNITY_WEBGL && !UNITY_EDITOR
             FileIO_OpenFileDialog(gameObject.name, "OnFileImported", ".json");
             Debug.Log("[SettingsExporter] Import dialog opened");
 #else
@@ -238,6 +244,12 @@ namespace CyanNook.Core
         /// </summary>
         public void OnFileImported(string jsonContent)
         {
+#if UNITYROOM_BUILD
+            // ダイアログ側だけでなく実行主体側も封鎖
+            // （WebGLのSendMessage経由で直接呼び出せる public コールバックのため）
+            Debug.LogWarning("[SettingsExporter] Import is disabled in unityroom build");
+            OnImportComplete?.Invoke(false, "Import is disabled in this build");
+#else
             if (string.IsNullOrEmpty(jsonContent))
             {
                 Debug.LogWarning("[SettingsExporter] Import cancelled or empty file");
@@ -258,6 +270,7 @@ namespace CyanNook.Core
                 Debug.LogError($"[SettingsExporter] {message}");
                 OnImportComplete?.Invoke(false, message);
             }
+#endif
         }
 
         /// <summary>

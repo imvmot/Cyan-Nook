@@ -24,6 +24,10 @@ namespace CyanNook.Core
         [Tooltip("デフォルトのGemini APIエンドポイント")]
         public string geminiEndpoint = "https://generativelanguage.googleapis.com/v1beta";
 
+        [Header("Default TTS Settings")]
+        [Tooltip("unityroom版で使用するGemini TTSモデル名（モデル選択UIを封鎖しているためここで固定。モデル更新時はこの値を変更する）")]
+        public string geminiTtsModel = "gemini-2.5-flash-preview-tts";
+
         /// <summary>
         /// Resources フォルダからロードする。アセットが存在しなければ null。
         /// </summary>

@@ -66,7 +66,43 @@ namespace CyanNook.Voice
             if (PlayerPrefs.HasKey(PrefKey_StylePrompt))
                 stylePrompt = PlayerPrefs.GetString(PrefKey_StylePrompt);
 
+#if UNITYROOM_BUILD
+            // 体験版では内蔵キーで高コストモデル(Pro)を使わせない
+            // （LLM側のモデル名固定と同方針。モデル選択UIも非表示化している）。
+            // 使用モデルはUnityroomConfigで指定（TTSモデル更新時はアセット側を変更）
+            var unityroomConfig = UnityroomConfig.Load();
+            model = (unityroomConfig != null && !string.IsNullOrEmpty(unityroomConfig.geminiTtsModel))
+                ? unityroomConfig.geminiTtsModel
+                : "gemini-2.5-flash-preview-tts";
+#endif
+
             Debug.Log($"[GeminiTtsClient] Settings loaded - Model: {model}, Voice: {voiceName}");
+        }
+
+        /// <summary>
+        /// 実効APIキーが存在するか（内蔵キーフォールバック込み）。
+        /// UI側の事前チェックはapiKeyフィールドではなくこちらを使うこと
+        /// </summary>
+        public bool HasUsableApiKey => !string.IsNullOrEmpty(ResolveApiKey());
+
+        /// <summary>
+        /// 実際に使用するAPIキーを解決。
+        /// unityroom版ではキー入力UIを封鎖しているため、未設定時は
+        /// UnityroomConfigの内蔵キーへフォールバックする（LLM側のResolveApiKeyと同パターン）
+        /// </summary>
+        private string ResolveApiKey()
+        {
+#if UNITYROOM_BUILD
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                var config = UnityroomConfig.Load();
+                if (config != null && config.HasDefaultApiKey)
+                {
+                    return config.geminiApiKey;
+                }
+            }
+#endif
+            return apiKey;
         }
 
         public void SaveSettings()
@@ -91,7 +127,7 @@ namespace CyanNook.Voice
                 return (null, null);
             }
 
-            if (string.IsNullOrEmpty(apiKey))
+            if (string.IsNullOrEmpty(ResolveApiKey()))
             {
                 Debug.LogError("[GeminiTtsClient] API key is empty");
                 return (null, null);
@@ -149,7 +185,7 @@ namespace CyanNook.Voice
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
-                request.SetRequestHeader("x-goog-api-key", apiKey);
+                request.SetRequestHeader("x-goog-api-key", ResolveApiKey());
 
                 var operation = request.SendWebRequest();
                 while (!operation.isDone)

@@ -203,6 +203,10 @@ namespace CyanNook.UI
         [Tooltip("ステータス表示")]
         public TMP_Text statusText;
 
+        [Header("Unityroom Build")]
+        [Tooltip("unityroom版（体験版）で非表示にするUI。外部アクションフィード/Cron/WebCam/画面キャプチャの各セクション（ラベル含む行の親）を割り当てる")]
+        public GameObject[] hideOnUnityroomBuild;
+
         // 初期化フラグ（イベントハンドラの重複登録を防ぐ）
         private bool _isCameraPreviewInitialized = false;
         private Coroutine _cameraPreviewRetryCoroutine = null;
@@ -249,6 +253,18 @@ namespace CyanNook.UI
             // 保存済み設定の復元は各コントローラー側で行う
             // （Vision/MaxHistory=ChatManager.Awake、IdleChatメッセージ=IdleChatController、
             // カメラ系=各コントローラー。パネルの初期アクティブ状態に依存させないため）
+
+#if UNITYROOM_BUILD
+            // 体験版で封鎖する機能（外部フィード/Cron/WebCam/画面キャプチャ）のUIを非表示化。
+            // 機能自体は各コントローラー側のUNITYROOM_BUILDガードで停止済み
+            if (hideOnUnityroomBuild != null)
+            {
+                foreach (var go in hideOnUnityroomBuild)
+                {
+                    if (go != null) go.SetActive(false);
+                }
+            }
+#endif
         }
 
         /// <summary>
@@ -518,7 +534,13 @@ namespace CyanNook.UI
 
             if (apiKeyInputField != null)
             {
+#if UNITYROOM_BUILD
+                // unityroom版（体験版）ではユーザー自身のキー入力を禁止
+                // （Geminiは内蔵キー固定。IndexedDB平文保存リスクの回避）
+                bool needsApiKey = false;
+#else
                 bool needsApiKey = apiType == LLMApiType.Dify || apiType == LLMApiType.OpenAI || apiType == LLMApiType.Claude || apiType == LLMApiType.Gemini;
+#endif
                 apiKeyInputField.gameObject.SetActive(needsApiKey);
             }
 
@@ -531,7 +553,12 @@ namespace CyanNook.UI
             // WebLLM/Dify選択時はモデル名を非表示
             if (modelNameInputField != null)
             {
+#if UNITYROOM_BUILD
+                // unityroom版では内蔵キーで高コストモデルを指定されないようモデル名も固定
+                modelNameInputField.gameObject.SetActive(false);
+#else
                 modelNameInputField.gameObject.SetActive(!isDify && !isWebLLM);
+#endif
             }
 
             // Dify選択時は生成パラメータセクションを非表示（WebLLMは表示する）
@@ -543,7 +570,12 @@ namespace CyanNook.UI
             // WebLLM選択時はエンドポイントを非表示
             if (endpointInputField != null)
             {
+#if UNITYROOM_BUILD
+                // unityroom版では会話内容を任意サーバーへ送らせないようエンドポイントも固定
+                endpointInputField.gameObject.SetActive(false);
+#else
                 endpointInputField.gameObject.SetActive(!isWebLLM);
+#endif
             }
         }
 
@@ -580,6 +612,19 @@ namespace CyanNook.UI
                 config.modelName = WebLLMProvider.DefaultModelId;
                 config.apiEndpoint = "";
             }
+
+#if UNITYROOM_BUILD
+            // unityroom版ではキー/エンドポイント/モデル名の入力UIを封鎖しているため、
+            // 非表示フィールドに残った過去の値を保存に紛れ込ませない。
+            // Geminiは常にUnityroomConfigの既定構成で保存する
+            if (config.apiType == LLMApiType.Gemini)
+            {
+                var unityroomDefault = LLMConfig.GetUnityroomDefault();
+                config.apiEndpoint = unityroomDefault.apiEndpoint;
+                config.modelName = unityroomDefault.modelName;
+                config.apiKey = "";  // 空にして内蔵キーへのフォールバックに委ねる
+            }
+#endif
 
             if (!config.IsValid())
             {
@@ -624,7 +669,7 @@ namespace CyanNook.UI
 
             // テスト前にUIの値を一時的に適用
             var testDefaults = LLMConfig.GetDefault();
-            llmClient.ApplyConfig(new LLMConfig
+            var testConfig = new LLMConfig
             {
                 apiType = apiTypeDropdown != null ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini,
                 apiEndpoint = endpointInputField != null ? endpointInputField.text : "",
@@ -638,7 +683,20 @@ namespace CyanNook.UI
                 repeatPenalty = ParseFloat(repeatPenaltyInputField, llmClient.CurrentConfig?.repeatPenalty ?? testDefaults.repeatPenalty),
                 think = thinkToggle != null ? thinkToggle.isOn : (llmClient.CurrentConfig?.think ?? false),
                 timeout = llmClient.CurrentConfig?.timeout ?? testDefaults.timeout
-            });
+            };
+
+#if UNITYROOM_BUILD
+            // Saveと同じ正規化: 非表示フィールドの残存値を接続テストに使わせない
+            if (testConfig.apiType == LLMApiType.Gemini)
+            {
+                var unityroomDefault = LLMConfig.GetUnityroomDefault();
+                testConfig.apiEndpoint = unityroomDefault.apiEndpoint;
+                testConfig.modelName = unityroomDefault.modelName;
+                testConfig.apiKey = "";
+            }
+#endif
+
+            llmClient.ApplyConfig(testConfig);
 
             llmClient.TestConnection((success, message) =>
             {

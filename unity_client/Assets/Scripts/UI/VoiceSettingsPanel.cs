@@ -95,6 +95,9 @@ namespace CyanNook.UI
         [Tooltip("Gemini APIキー入力")]
         public TMP_InputField geminiApiKeyInputField;
 
+        [Tooltip("unityroom版（体験版）で非表示にするUI。Gemini APIキー入力行（ラベル含む親）を割り当てる")]
+        public GameObject[] hideOnUnityroomBuild;
+
         [Tooltip("Gemini TTSモデル選択ドロップダウン (Flash/Pro)")]
         public TMP_Dropdown geminiModelDropdown;
 
@@ -172,6 +175,17 @@ namespace CyanNook.UI
 
         private void Start()
         {
+#if UNITYROOM_BUILD
+            // 体験版ではキー入力を封鎖（Gemini TTSは内蔵キーフォールバックで動作）
+            if (hideOnUnityroomBuild != null)
+            {
+                foreach (var go in hideOnUnityroomBuild)
+                {
+                    if (go != null) go.SetActive(false);
+                }
+            }
+#endif
+
             // TTS ON/OFFトグル
             if (ttsEnabledToggle != null)
             {
@@ -1349,7 +1363,8 @@ namespace CyanNook.UI
             // UIの最新値をクライアントに反映してから合成
             ApplyGeminiUiToClient();
 
-            if (string.IsNullOrEmpty(geminiTtsClient.apiKey))
+            // apiKeyフィールドではなく実効キー（unityroom内蔵キーフォールバック込み）で判定
+            if (!geminiTtsClient.HasUsableApiKey)
             {
                 SetStatusForEngine(TTSEngineType.GeminiTTS, "Error: Gemini API key is empty");
                 return;

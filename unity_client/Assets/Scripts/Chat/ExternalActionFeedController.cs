@@ -84,6 +84,14 @@ namespace CyanNook.Chat
 
         private void Start()
         {
+#if UNITYROOM_BUILD
+            // unityroom版（体験版）では外部アクションフィードを完全停止。
+            // 誘導された悪意URLの登録でcontext/カメラ画像が外部送信されるのを防ぐ。
+            // UIを隠すだけではPlayerPrefs復元やImportで有効化され得るため機能側で塞ぐ
+            feedEnabled = false;
+            enabled = false;
+            return;
+#else
             LoadSettings();
 
             // LLM応答適用直後（キャラの状態が変わった直後）に即時publishする
@@ -91,6 +99,7 @@ namespace CyanNook.Chat
             {
                 chatManager.OnChatResponseReceived += OnChatResponseReceivedForPublish;
             }
+#endif
         }
 
         private void OnDestroy()
