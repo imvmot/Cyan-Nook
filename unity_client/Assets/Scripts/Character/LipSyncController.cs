@@ -446,6 +446,10 @@ namespace CyanNook.Character
             ApplyExpression(_currentVowel, _currentWeight);
         }
 
+        // 波形読み取り用バッファ。GetOutputDataは既存配列に上書きするため
+        // 毎フレームnewせず使い回す（WebGLのGCスパイク対策）
+        private readonly float[] _amplitudeSamples = new float[256];
+
         /// <summary>
         /// 音声の振幅を取得（0.0-1.0）
         /// </summary>
@@ -456,16 +460,15 @@ namespace CyanNook.Character
                 return 0f;
             }
 
-            float[] samples = new float[256];
-            audioSource.GetOutputData(samples, 0);
+            audioSource.GetOutputData(_amplitudeSamples, 0);
 
             float sum = 0f;
-            for (int i = 0; i < samples.Length; i++)
+            for (int i = 0; i < _amplitudeSamples.Length; i++)
             {
-                sum += Mathf.Abs(samples[i]);
+                sum += Mathf.Abs(_amplitudeSamples[i]);
             }
 
-            return Mathf.Clamp01(sum / samples.Length * 10f);
+            return Mathf.Clamp01(sum / _amplitudeSamples.Length * 10f);
         }
 
         // ─────────────────────────────────────
