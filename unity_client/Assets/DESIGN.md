@@ -1174,6 +1174,34 @@ Thinking の復帰先は Emote の復帰先を継承する（二重の復帰先�
 **ForceExitTalk**: 終了アニメーションなしで即座にNoneに遷移。
 非talkアクション（move+dynamic等）への切替時に使用。
 
+### 遅延実行系統一覧（Deferred Execution Systems）
+
+LLM応答の action / emote / レスポンス全体は、演出との衝突を避けるため
+「今すぐ実行せず、条件が整うまで保留する」仕組みが複数併存している。
+新しい遅延実行を追加・変更する際は、必ずこの表との相互作用を確認すること。
+
+| # | 系統 | 発動条件 | 保持場所 | 発火タイミング | キャンセル・上書き |
+|---|------|---------|---------|--------------|------------------|
+| 1 | **Think終了grace defer**（action/emote） | Thinking中またはThinking終了後grace期間（`_thinkExitDelay`=0.3s）にemoteが到着（actionはストリーミング逐次反映経路のみ。ブロッキング応答のactionはdeferされない） | CharacterController `_deferredAction` / `_deferredEmote`（各最新1件のみ） | `FlushAfterThinkExit`コルーチンがThinking完全終了+grace経過を待ち、**emote→actionの順**で発火（actionのExitLoopWithCallbackがEmoteを正規停止できるように） | 新しいdeferが来たら変数を上書き（古い方は破棄） |
+| 2 | **walk待ちemote** | Walking/Running中にemoteが到着 | CharacterController `_pendingEmoteCoroutine`（`PlayEmoteAfterWalk`） | NavigationState.Idle到達後、`CanPlayEmote()`がtrueになるまで最大3秒ポーリングして再生 | 新emote到着で旧コルーチン停止・差し替え／待機中に新しいナビ開始でキャンセル／3秒タイムアウトで破棄 |
+| 3 | **pre-walk emote**（emote先行→walk後行） | emote再生後にwalkが開始した場合（emoteがwalkより先に届いた応答用） | CharacterController `_pendingWalkEmote`（emote再生時に保存） | 歩行開始時に`DeferPendingWalkEmote`が拾い、系統2のコルーチンに引き渡して移動完了後に再再生 | **レスポンス境界（HandleChatResponse冒頭）で必ずクリア**（古いemoteが次のwalkで誤再生されないように） |
+| 4 | **ed後action**（インタラクション乗り換え） | インタラクション中（IsInteracting）に新しいactionが到着 | `ExitLoopWithCallback`のコールバックにキャプチャ | 現在のインタラクションのed再生完了後に`ExecuteAction`（ブロッキング応答時はemoteも同コールバック内で再生。逐次反映時はemote別処理） | 同種インタラクションなら現在家具を除外してランダム選択（excludeFurniture） |
+| 5 | **起床レスポンスキュー** | 起床リクエスト（RequestKind.WakeUp）の応答が起床ed再生中に到着 | SleepController `_queuedWakeUpResponse`（`QueueWakeUpResponse`） | ed完了後、`WakeUpWithMessage`のonEdCompleteコールバック経由でOnChatResponseReceived発火（null=未応答ならThinking開始） | `WakeUpWithMessage`開始時にnullリセット |
+| 6 | **Entryレスポンスキュー** | Entry再生中（IsPlayingEntry）に応答到着（通常Entry / Cron帰宅共通） | ChatManager `_entryQueuedResponse` | Entry完了イベント（OnEntryAnimationCompleted→`FlushEntryQueuedResponse`）で発火。Entry Timelineに`ActionCancelClip`があれば`RequestEarlyEntryComplete`で前倒し | `SendCronEntryRequest`開始時にnullリセット、Flushで消費 |
+
+**相互作用の注意点:**
+
+- 多段遅延があり得る: 系統4（ed後action）のコールバックは`ProcessEmote`を通るため、
+  発火時にThinking中なら系統1へ、移動中なら系統2へ改めて預けられる。
+  一方、系統1の発火は`PlayEmoteIfPossible`直行のため系統2/3には預け直されない
+  （CanPlayEmote不可なら破棄）
+- 系統1〜4は「最新1件のみ保持」で、同系統に新しい対象が来ると古い方は黙って破棄される
+- 系統5/6はレスポンス全体のキュー（1件）で、系統1〜4はその中身（action/emote）の遅延。
+  キューされたレスポンスは発火時に改めて系統1〜4の判定を通る
+- ストリーミング逐次反映では、Entry再生中に破棄されたフィールドがある場合
+  `_streamFieldsDroppedDuringEntry` により後続フィールドも逐次反映せずブロック処理に委ねる
+  （半分破棄/半分反映のstraddle状態の防止）
+
 ---
 
 ## Talk System
