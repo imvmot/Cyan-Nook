@@ -48,9 +48,6 @@ namespace CyanNook.Voice
         private static extern bool WebSpeechSynth_IsSupported();
 
         [DllImport("__Internal")]
-        private static extern string WebSpeechSynth_GetVoices();
-
-        [DllImport("__Internal")]
         private static extern void WebSpeechSynth_Speak(string text, string voiceURI, float rate, float pitch);
 
         [DllImport("__Internal")]
@@ -58,9 +55,6 @@ namespace CyanNook.Voice
 
         [DllImport("__Internal")]
         private static extern void WebSpeechSynth_Cancel();
-
-        [DllImport("__Internal")]
-        private static extern bool WebSpeechSynth_IsSpeaking();
 #endif
 
         /// <summary>

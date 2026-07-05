@@ -132,38 +132,6 @@ mergeInto(LibraryManager.library, {
     },
 
     /**
-     * 日本語音声リストをJSON文字列で取得
-     */
-    WebSpeechSynth_GetVoices: function() {
-        if (!window.speechSynthesis) {
-            var empty = '[]';
-            var bufferSize = lengthBytesUTF8(empty) + 1;
-            var buffer = _malloc(bufferSize);
-            stringToUTF8(empty, buffer, bufferSize);
-            return buffer;
-        }
-
-        var voices = window.speechSynthesis.getVoices();
-        var jaVoices = [];
-        for (var i = 0; i < voices.length; i++) {
-            if (voices[i].lang && voices[i].lang.indexOf('ja') === 0) {
-                jaVoices.push({
-                    name: voices[i].name,
-                    lang: voices[i].lang,
-                    voiceURI: voices[i].voiceURI,
-                    isDefault: voices[i].default
-                });
-            }
-        }
-
-        var json = JSON.stringify(jaVoices);
-        var bufferSize = lengthBytesUTF8(json) + 1;
-        var buffer = _malloc(bufferSize);
-        stringToUTF8(json, buffer, bufferSize);
-        return buffer;
-    },
-
-    /**
      * テキストを即座に発話（テスト用）
      * 現在のキューをクリアして即時発話
      */
@@ -267,12 +235,5 @@ mergeInto(LibraryManager.library, {
         this._webSpeechSynthQueue = [];
         this._webSpeechSynthIsSpeaking = false;
         console.log('[WebSpeechSynth] Cancelled');
-    },
-
-    /**
-     * 発話中かチェック
-     */
-    WebSpeechSynth_IsSpeaking: function() {
-        return this._webSpeechSynthIsSpeaking;
     }
 });
