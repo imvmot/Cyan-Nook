@@ -68,6 +68,9 @@ namespace CyanNook.Character
 
         private float _messageTimer;
 
+        // 送信失敗（ビジー）で保留中のOuting Prompt（Updateでリトライ）
+        private bool _pendingOutingMessage;
+
         // 定期実行マスター（PeriodicExecutionSettings）の状態。外出中メッセージ送信のゲート
         private bool _periodicEnabled;
 
@@ -119,6 +122,18 @@ namespace CyanNook.Character
             // アプリ再起動（外出状態は非永続化）までキャラは戻らない
             if (!_periodicEnabled || outingMessageInterval <= 0f) return;
 
+            // 保留中のOuting Promptをリトライ（SleepControllerの夢メッセージと同方式）
+            if (_pendingOutingMessage)
+            {
+                if (chatManager != null && !chatManager.IsBusy)
+                {
+                    _pendingOutingMessage = false;
+                    Debug.Log("[OutingController] Retrying pending outing message");
+                    chatManager.SendAutoRequest(outingPromptMessage);
+                }
+                return; // 保留中はタイマーを進めない
+            }
+
             // 定期メッセージタイマー
             _messageTimer -= Time.deltaTime;
             if (_messageTimer <= 0f)
@@ -146,11 +161,10 @@ namespace CyanNook.Character
             _isOutside = true;
             _messageTimer = outingMessageInterval * 60f; // 2回目以降はInterval経過後（分→秒変換）
 
-            // 初回Outing PromptをChatManager Idle待ちで送信
-            if (chatManager != null)
-            {
-                StartCoroutine(SendOutingPromptWhenReady());
-            }
+            // 初回Outing Promptを送信
+            // （interact_exit完了直後はChatManagerがビジーのため、
+            // 保留→Updateリトライの機構に乗せて確実に送る）
+            SendOutingMessage();
 
             // キャラクター非表示
             if (vrmLoader != null)
@@ -158,17 +172,8 @@ namespace CyanNook.Character
                 vrmLoader.SetMeshVisibility(false);
             }
 
-            // IdleChat停止
-            if (idleChatController != null)
-            {
-                idleChatController.SetPaused(true);
-            }
-
-            // Boredom蓄積停止
-            if (boredomController != null)
-            {
-                boredomController.SetPaused(true);
-            }
+            // 自律系（IdleChat/退屈度）を一時停止
+            SetAutonomyPaused(true);
 
             // UI表示
             if (uiController != null)
@@ -187,18 +192,10 @@ namespace CyanNook.Character
             if (!_isOutside) return;
 
             _isOutside = false;
+            _pendingOutingMessage = false;
 
-            // IdleChat再開
-            if (idleChatController != null)
-            {
-                idleChatController.SetPaused(false);
-            }
-
-            // Boredom蓄積再開
-            if (boredomController != null)
-            {
-                boredomController.SetPaused(false);
-            }
+            // 自律系（IdleChat/退屈度）を再開
+            SetAutonomyPaused(false);
 
             // UI表示解除
             if (uiController != null)
@@ -486,63 +483,72 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// 外出中定期メッセージを送信
+        /// 自律系（IdleChat/退屈度）の一時停止/再開をまとめて伝える。
+        /// 一時停止対象のシステムを増やす場合はここに追加する
+        /// （SleepController.SetAutonomyPaused にも同じ追加が必要）
+        /// </summary>
+        private void SetAutonomyPaused(bool paused)
+        {
+            if (idleChatController != null)
+            {
+                idleChatController.SetPaused(paused);
+            }
+            if (boredomController != null)
+            {
+                boredomController.SetPaused(paused);
+            }
+        }
+
+        /// <summary>
+        /// 外出中メッセージを送信（初回/定期共通）
+        /// ビジー時はスキップせず保留し、Updateでリトライする
+        /// （SleepControllerの夢メッセージと同方式に統一）
         /// </summary>
         private void SendOutingMessage()
         {
-            if (chatManager == null || chatManager.CurrentState != ChatState.Idle) return;
+            if (chatManager == null) return;
 
+            // 定期実行マスターOFF、またはinterval 0以下は送信しない
+            // （EnterOutingからの初回送信もここでまとめてゲートする）
+            if (!_periodicEnabled || outingMessageInterval <= 0f) return;
+
+            if (chatManager.IsBusy)
+            {
+                _pendingOutingMessage = true;
+                Debug.Log("[OutingController] Outing message deferred (ChatManager busy)");
+                return;
+            }
+
+            _pendingOutingMessage = false;
             Debug.Log("[OutingController] Sending outing message");
             chatManager.SendAutoRequest(outingPromptMessage);
         }
 
         /// <summary>
-        /// ChatManagerがIdle状態になるまで待ってから初回Outing Promptを送信
-        /// interact_exit完了直後はChatManagerがまだIdle状態でない可能性があるため待機する
-        /// </summary>
-        private System.Collections.IEnumerator SendOutingPromptWhenReady()
-        {
-            // 定期実行マスターOFF、またはinterval 0以下は初回Outing Promptも送らない
-            // （自動LLMリクエストを全て止めるというマスターの意味に合わせる）
-            if (!_periodicEnabled || outingMessageInterval <= 0f) yield break;
-
-            yield return SendPromptWhenIdle(outingPromptMessage, "initial outing prompt", requireStillOutside: true);
-        }
-
-        /// <summary>
-        /// ChatManagerがIdle状態になるまで待ってからEntry Promptを送信
+        /// ChatManagerが送信可能になるまで待ってから（最大10秒）Entry Promptを送信
         /// ゲーム起動直後はChatManagerが初期化中の可能性があるため待機する
+        /// ※初回Outing PromptはSendOutingMessageの保留リトライ機構を使用（この経路は使わない）
         /// </summary>
         private System.Collections.IEnumerator SendEntryPromptWhenReady()
         {
-            yield return SendPromptWhenIdle(entryPromptMessage, "entry prompt", requireStillOutside: false);
-        }
-
-        /// <summary>
-        /// ChatManagerがIdle状態になるまで待機（最大10秒）してからプロンプトを送信する共通処理
-        /// requireStillOutside: 送信直前に外出中であることを要求する
-        /// （短時間で帰還した場合にOuting Promptを送らないため）
-        /// </summary>
-        private System.Collections.IEnumerator SendPromptWhenIdle(string prompt, string label, bool requireStillOutside)
-        {
             float timeout = 10f;
             float elapsed = 0f;
-            while (chatManager.CurrentState != ChatState.Idle && elapsed < timeout)
+            // IsBusyで判定（CurrentStateだけ見るとLLMClientコルーチン完了前の窓で
+            // SendAutoRequestが黙って弾かれ、プロンプトが失われる）
+            while (chatManager.IsBusy && elapsed < timeout)
             {
                 elapsed += Time.deltaTime;
                 yield return null;
             }
 
-            if (requireStillOutside && !_isOutside) yield break;
-
-            if (chatManager.CurrentState == ChatState.Idle)
+            if (!chatManager.IsBusy)
             {
-                Debug.Log($"[OutingController] Sending {label}");
-                chatManager.SendAutoRequest(prompt);
+                Debug.Log("[OutingController] Sending entry prompt");
+                chatManager.SendAutoRequest(entryPromptMessage);
             }
             else
             {
-                Debug.LogWarning($"[OutingController] ChatManager not idle after timeout, skipping {label}");
+                Debug.LogWarning("[OutingController] ChatManager busy after timeout, skipping entry prompt");
             }
         }
 
