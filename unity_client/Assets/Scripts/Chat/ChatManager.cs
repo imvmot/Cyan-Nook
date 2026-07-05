@@ -695,11 +695,14 @@ namespace CyanNook.Chat
             else
             {
                 llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
+                // 動的コンテキスト（家具リスト・空間認識・視界等）の生成はコストが
+                // あるため、1リクエストで1回だけ生成して両プロンプトに使い回す
+                var contextValues = BuildDynamicContextValues();
+                string systemPrompt = GenerateSystemPrompt(contextValues);
                 string basePrompt = appendToPrompt
                     ? GenerateFullPromptWithAppend(message)
                     : GenerateFullPrompt(message);
-                string fullPrompt = ReplaceDynamicPlaceholders(basePrompt);
+                string fullPrompt = ReplaceDynamicPlaceholders(basePrompt, contextValues);
                 if (useStreaming)
                     llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
                 else
@@ -708,9 +711,44 @@ namespace CyanNook.Chat
         }
 
         /// <summary>
+        /// 動的プレースホルダの差し込み値一式
+        /// </summary>
+        private struct DynamicContextValues
+        {
+            public string dateTime;
+            public string pose;
+            public string emotion;
+            public string furnitureList;
+            public string roomTargetList;
+            public string spatialContext;
+            public string bored;
+            public string visibleObjects;
+        }
+
+        /// <summary>
+        /// 動的プレースホルダの差し込み値を生成
+        /// </summary>
+        private DynamicContextValues BuildDynamicContextValues()
+        {
+            return new DynamicContextValues
+            {
+                dateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm (ddd)", CultureInfo.InvariantCulture),
+                pose = _currentPose,
+                emotion = _currentEmotion,
+                furnitureList = furnitureManager?.GenerateFurnitureListForPrompt() ?? "  - なし",
+                roomTargetList = roomTargetManager?.GenerateTargetListForPrompt() ?? "  - なし",
+                spatialContext = spatialContextProvider?.GenerateSpatialContextJson() ?? "{}",
+                bored = (boredomController?.BoredInt ?? 0).ToString(),
+                // 視界内オブジェクト（Vision有効 かつ 抑制されていない場合のみ）
+                visibleObjects = (useVision && !IsVisionSuppressed && visibleObjectsProvider != null)
+                    ? visibleObjectsProvider.GenerateVisibleObjectsText() : ""
+            };
+        }
+
+        /// <summary>
         /// システムプロンプトを生成
         /// </summary>
-        private string GenerateSystemPrompt()
+        private string GenerateSystemPrompt(DynamicContextValues contextValues)
         {
             // キャラクター設定 + レスポンスフォーマットを結合
             string prompt = characterPrompt;
@@ -727,7 +765,7 @@ namespace CyanNook.Chat
                 prompt = prompt.Replace("{character_id}", characterTemplate.templateId);
             }
 
-            return ReplaceDynamicPlaceholders(prompt);
+            return ReplaceDynamicPlaceholders(prompt, contextValues);
         }
 
         /// <summary>
@@ -735,35 +773,16 @@ namespace CyanNook.Chat
         /// Difyなどシステムプロンプトを送信しないプロバイダーでも、
         /// fullPrompt内のプレースホルダが正しく置換されるようにするため共通化
         /// </summary>
-        private string ReplaceDynamicPlaceholders(string text)
+        private string ReplaceDynamicPlaceholders(string text, DynamicContextValues contextValues)
         {
-            text = text.Replace("{current_datetime}", DateTime.Now.ToString("yyyy-MM-dd HH:mm (ddd)", CultureInfo.InvariantCulture));
-            text = text.Replace("{current_pose}", _currentPose);
-            text = text.Replace("{current_emotion}", _currentEmotion);
-
-            // 利用可能な家具リストを生成
-            string furnitureList = furnitureManager?.GenerateFurnitureListForPrompt() ?? "  - なし";
-            text = text.Replace("{available_furniture}", furnitureList);
-
-            // 利用可能なルームターゲットリストを生成
-            string roomTargetList = roomTargetManager?.GenerateTargetListForPrompt() ?? "  - なし";
-            text = text.Replace("{available_room_targets}", roomTargetList);
-
-            // 空間認識コンテキストを生成（方向・距離付き）
-            string spatialContext = spatialContextProvider?.GenerateSpatialContextJson() ?? "{}";
-            text = text.Replace("{spatial_context}", spatialContext);
-
-            // 退屈ポイント
-            int bored = boredomController?.BoredInt ?? 0;
-            text = text.Replace("{bored}", bored.ToString());
-
-            // 視界内オブジェクト（Vision有効 かつ 抑制されていない場合のみ）
-            string visibleObjects = "";
-            if (useVision && !IsVisionSuppressed && visibleObjectsProvider != null)
-            {
-                visibleObjects = visibleObjectsProvider.GenerateVisibleObjectsText();
-            }
-            text = text.Replace("{visible_objects}", visibleObjects);
+            text = text.Replace("{current_datetime}", contextValues.dateTime);
+            text = text.Replace("{current_pose}", contextValues.pose);
+            text = text.Replace("{current_emotion}", contextValues.emotion);
+            text = text.Replace("{available_furniture}", contextValues.furnitureList);
+            text = text.Replace("{available_room_targets}", contextValues.roomTargetList);
+            text = text.Replace("{spatial_context}", contextValues.spatialContext);
+            text = text.Replace("{bored}", contextValues.bored);
+            text = text.Replace("{visible_objects}", contextValues.visibleObjects);
 
             return text;
         }
