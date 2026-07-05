@@ -4012,10 +4012,12 @@ LLM API設定、生成パラメータ、Vision、IdleChat、Sleep、WebCamの設
 - **Test Connection**: `LLMClient.TestConnection()` で接続テスト
 
 **Unity Lifecycle:**
-- **Awake()**: `LoadSavedSettings()` で保存済み設定を復元
-  - UseVision, MaxHistory, IdleChatMessage を ChatManager/IdleChatController に反映
-  - WebCam / ScreenCapture / CameraPreview は各コントローラーで自己復元（下記参照）
-  - Sleep設定は `SleepController.LoadSettings()` で自己復元
+- 保存済み設定の復元はパネルでは行わない（パネルの初期アクティブ状態に依存させないため）。
+  復元は「設定を使う側＝常時アクティブなコントローラー」の責務:
+  - UseVision / MaxHistory / プロンプト → `ChatManager.Awake()`
+  - IdleChatMessage → `IdleChatController.LoadSettings()`
+  - WebCam / ScreenCapture / CameraPreview → 各コントローラーで自己復元（下記参照）
+  - Sleep設定 → `SleepController.LoadSettings()`
 - **OnEnable()**: パネル表示時に現在の設定をUIに反映（`LoadSleepToUI()` 含む）+ カメラプレビュー初期化
 - **Start()**: イベントハンドラ登録
 
@@ -4074,7 +4076,7 @@ LLM API設定、生成パラメータ、Vision、IdleChat、Sleep、WebCamの設
 3. 音声認識開始 → リアルタイム文字起こし → Chat入力フィールド
 4. N秒無音検出 → 自動送信 → 入力フィールドクリア
 5. 設定はPlayerPrefsに保存（`voice_micEnabled`, `voice_inputLanguage`, `voice_silenceThreshold`）
-6. 起動時に保存済みマイク設定を自動適用（`Start()`で`ApplySavedMicrophoneSetting()`）
+6. 起動時に保存済みマイク設定を自動適用（`VoiceInputController.Start()` で自己復元。パネルの初期アクティブ状態に依存させないため）
 
 **TTSクレジット通知:**
 VoiceSettingsPanelは以下のタイミングで `VoiceSynthesisController.UpdateTTSCredit()` を呼び出し、
@@ -8398,12 +8400,13 @@ public TMP_Text voiceInputStatusText;              // ステータス表示
 **動作**:
 - `OnEnable()` で設定読み込み、UIに反映
 - トグル/ドロップダウン変更時に `VoiceInputController` / `VoiceSynthesisController` を制御
-- `Start()` 末尾で `ApplySavedMicrophoneSetting()` — 保存済みマイク設定の起動時適用
 - `Update()` でステータス表示をリアルタイム更新
 - `VoiceInputController.OnEnabledChanged` を購読 — 外部（UIControllerのマイクボタン等）からの状態変更時に `microphoneToggle.SetIsOnWithoutNotify()` でUI同期（無限ループ防止）+ PlayerPrefs保存
 
 **起動時マイク設定の適用**:
-`OnEnable()` → `LoadVoiceInputSettings()` はリスナー登録（`Start()` → `InitializeVoiceInput()`）より先に実行されるため、トグルUI更新だけで `VoiceInputController.SetEnabled()` が呼ばれない。`Start()` 末尾の `ApplySavedMicrophoneSetting()` で明示的に適用する。
+`VoiceInputController.Start()` が保存値（`voice_micEnabled`）を自己復元して `SetEnabled(true)` を呼ぶ
+（パネルの初期アクティブ状態に依存させないため。パネル側のトグルUIは `OnEnable()` の
+`LoadVoiceInputSettings()` がPlayerPrefsを直接読んで反映する）。
 
 ### データフロー
 

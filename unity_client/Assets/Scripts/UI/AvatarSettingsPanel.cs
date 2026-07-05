@@ -5,6 +5,7 @@ using TMPro;
 using System.IO;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using CyanNook.Core;
 using CyanNook.Character;
 using CyanNook.Chat;
 using CyanNook.CameraControl;
@@ -17,17 +18,17 @@ namespace CyanNook.UI
     /// </summary>
     public class AvatarSettingsPanel : MonoBehaviour
     {
-        // PlayerPrefsキー
-        private const string PrefKey_VrmFileName = "avatar_vrmFileName";
-        private const string PrefKey_CharacterPrompt = "avatar_characterPrompt";
-        private const string PrefKey_ResponseFormat = "avatar_responseFormat";
+        // PlayerPrefsキー（復元は各コントローラー側: CharacterSetup/ChatManager/BoredomController）
+        private const string PrefKey_VrmFileName = SettingsKeys.VrmFileName;
+        private const string PrefKey_CharacterPrompt = SettingsKeys.CharacterPrompt;
+        private const string PrefKey_ResponseFormat = SettingsKeys.ResponseFormat;
         private const string PrefKey_ResponseFormatLocked = "avatar_responseFormatLocked";
-        private const string PrefKey_BoredRate = "avatar_boredRate";
-        private const string PrefKey_BoredFactorHappy = "avatar_boredFactorHappy";
-        private const string PrefKey_BoredFactorRelaxed = "avatar_boredFactorRelaxed";
-        private const string PrefKey_BoredFactorAngry = "avatar_boredFactorAngry";
-        private const string PrefKey_BoredFactorSad = "avatar_boredFactorSad";
-        private const string PrefKey_BoredFactorSurprised = "avatar_boredFactorSurprised";
+        private const string PrefKey_BoredRate = SettingsKeys.BoredRate;
+        private const string PrefKey_BoredFactorHappy = SettingsKeys.BoredFactorHappy;
+        private const string PrefKey_BoredFactorRelaxed = SettingsKeys.BoredFactorRelaxed;
+        private const string PrefKey_BoredFactorAngry = SettingsKeys.BoredFactorAngry;
+        private const string PrefKey_BoredFactorSad = SettingsKeys.BoredFactorSad;
+        private const string PrefKey_BoredFactorSurprised = SettingsKeys.BoredFactorSurprised;
 
         [Header("References")]
         public CharacterSetup characterSetup;
@@ -107,11 +108,9 @@ namespace CyanNook.UI
             public string[] files;
         }
 
-        private void Awake()
-        {
-            // OnEnable()より先に保存済み設定を復元
-            LoadSavedSettings();
-        }
+        // 保存済み設定の復元は各コントローラー側で行う
+        // （VRMファイル名=CharacterSetup.Awake、プロンプト=ChatManager.Awake、
+        // 退屈度=BoredomController.Awake。パネルの初期アクティブ状態に依存させないため）
 
         private void OnEnable()
         {
@@ -418,72 +417,6 @@ namespace CyanNook.UI
                 {
                     responseFormatInputField.interactable = !locked;
                 }
-            }
-        }
-
-        /// <summary>
-        /// 保存された設定を復元（起動時）
-        /// VRMファイル名、システムプロンプト
-        /// ※ カメラ設定は DynamicCameraController が自動復元
-        /// </summary>
-        private void LoadSavedSettings()
-        {
-            if (characterSetup == null) return;
-
-            // VRMファイル名
-            if (PlayerPrefs.HasKey(PrefKey_VrmFileName))
-            {
-                string savedFileName = PlayerPrefs.GetString(PrefKey_VrmFileName);
-                if (!string.IsNullOrEmpty(savedFileName))
-                {
-                    characterSetup.vrmFileName = savedFileName;
-                    Debug.Log($"[AvatarSettingsPanel] Loaded saved VRM: {savedFileName}");
-                }
-            }
-
-            // キャラクター設定プロンプト
-            if (PlayerPrefs.HasKey(PrefKey_CharacterPrompt) && chatManager != null)
-            {
-                string saved = PlayerPrefs.GetString(PrefKey_CharacterPrompt);
-                if (!string.IsNullOrEmpty(saved))
-                {
-                    chatManager.characterPrompt = saved;
-                    Debug.Log("[AvatarSettingsPanel] Loaded saved character prompt");
-                }
-            }
-
-            // レスポンスフォーマットプロンプト
-            if (PlayerPrefs.HasKey(PrefKey_ResponseFormat) && chatManager != null)
-            {
-                string saved = PlayerPrefs.GetString(PrefKey_ResponseFormat);
-                if (!string.IsNullOrEmpty(saved))
-                {
-                    chatManager.responseFormatPrompt = saved;
-                    Debug.Log("[AvatarSettingsPanel] Loaded saved response format prompt");
-                }
-            }
-
-            // 退屈ポイントレート
-            if (PlayerPrefs.HasKey(PrefKey_BoredRate) && boredomController != null)
-            {
-                boredomController.increaseRate = PlayerPrefs.GetFloat(PrefKey_BoredRate);
-                Debug.Log($"[AvatarSettingsPanel] Loaded saved bored rate: {boredomController.increaseRate}");
-            }
-
-            // 感情係数
-            if (boredomController != null)
-            {
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorHappy))
-                    boredomController.happyFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorHappy);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorRelaxed))
-                    boredomController.relaxedFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorRelaxed);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorAngry))
-                    boredomController.angryFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorAngry);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorSad))
-                    boredomController.sadFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorSad);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorSurprised))
-                    boredomController.surprisedFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorSurprised);
-                Debug.Log("[AvatarSettingsPanel] Loaded saved emotion factors");
             }
         }
 

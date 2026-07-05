@@ -49,16 +49,16 @@ namespace CyanNook.Core
         private static readonly SettingEntry[] AllSettings = new[]
         {
             // Avatar
-            new SettingEntry("avatar_vrmFileName", PrefType.String),
-            new SettingEntry("avatar_characterPrompt", PrefType.String),
-            new SettingEntry("avatar_responseFormat", PrefType.String),
+            new SettingEntry(SettingsKeys.VrmFileName, PrefType.String),
+            new SettingEntry(SettingsKeys.CharacterPrompt, PrefType.String),
+            new SettingEntry(SettingsKeys.ResponseFormat, PrefType.String),
             new SettingEntry("avatar_responseFormatLocked", PrefType.Int),
-            new SettingEntry("avatar_boredRate", PrefType.Float),
-            new SettingEntry("avatar_boredFactorHappy", PrefType.Float),
-            new SettingEntry("avatar_boredFactorRelaxed", PrefType.Float),
-            new SettingEntry("avatar_boredFactorAngry", PrefType.Float),
-            new SettingEntry("avatar_boredFactorSad", PrefType.Float),
-            new SettingEntry("avatar_boredFactorSurprised", PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredRate, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorHappy, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorRelaxed, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorAngry, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorSad, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorSurprised, PrefType.Float),
 
             // Camera
             new SettingEntry("camera_height", PrefType.Float),
@@ -68,8 +68,8 @@ namespace CyanNook.Core
 
             // LLM
             new SettingEntry("llm_config", PrefType.String),
-            new SettingEntry("llm_useVision", PrefType.Int),
-            new SettingEntry("llm_maxHistory", PrefType.Int),
+            new SettingEntry(SettingsKeys.UseVision, PrefType.Int),
+            new SettingEntry(SettingsKeys.MaxHistory, PrefType.Int),
             new SettingEntry(SettingsKeys.CameraPreview, PrefType.Int),
             new SettingEntry(SettingsKeys.WebCam, PrefType.Int),
             new SettingEntry(SettingsKeys.ScreenCapture, PrefType.Int),
@@ -133,7 +133,7 @@ namespace CyanNook.Core
             new SettingEntry("gemini_tts_stylePrompt", PrefType.String),
 
             // Voice - Input
-            new SettingEntry("voice_micEnabled", PrefType.Int),
+            new SettingEntry(SettingsKeys.MicEnabled, PrefType.Int),
             new SettingEntry("voice_inputLanguage", PrefType.String),
             new SettingEntry("voice_silenceThreshold", PrefType.Float),
 

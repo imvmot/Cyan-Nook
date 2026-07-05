@@ -205,6 +205,54 @@ namespace CyanNook.Chat
         // Difyモード判定（Dify時はconversation_idで履歴管理、inputs で動的変数送信）
         private bool IsDifyMode => llmClient?.CurrentConfig?.apiType == LLMApiType.Dify;
 
+        private void Awake()
+        {
+            LoadPersistedSettings();
+        }
+
+        /// <summary>
+        /// 保存済み設定（Vision/MaxHistory/プロンプト）を復元する。
+        /// 設定パネル（LLMSettingsPanel/AvatarSettingsPanel）ではなく本クラスで行うのは、
+        /// パネルが初期非アクティブに変更されると復元が起動時に走らなくなるため。
+        /// 復元は「設定を使う側＝常時アクティブなコントローラー」の責務とする
+        /// </summary>
+        private void LoadPersistedSettings()
+        {
+            if (PlayerPrefs.HasKey(SettingsKeys.UseVision))
+            {
+                useVision = PlayerPrefs.GetInt(SettingsKeys.UseVision) == 1;
+                Debug.Log($"[ChatManager] Loaded saved useVision: {useVision}");
+            }
+
+            if (PlayerPrefs.HasKey(SettingsKeys.MaxHistory))
+            {
+                maxHistoryLength = PlayerPrefs.GetInt(SettingsKeys.MaxHistory);
+                Debug.Log($"[ChatManager] Loaded saved maxHistory: {maxHistoryLength}");
+            }
+
+            // キャラクター設定プロンプト
+            if (PlayerPrefs.HasKey(SettingsKeys.CharacterPrompt))
+            {
+                string saved = PlayerPrefs.GetString(SettingsKeys.CharacterPrompt);
+                if (!string.IsNullOrEmpty(saved))
+                {
+                    characterPrompt = saved;
+                    Debug.Log("[ChatManager] Loaded saved character prompt");
+                }
+            }
+
+            // レスポンスフォーマットプロンプト
+            if (PlayerPrefs.HasKey(SettingsKeys.ResponseFormat))
+            {
+                string saved = PlayerPrefs.GetString(SettingsKeys.ResponseFormat);
+                if (!string.IsNullOrEmpty(saved))
+                {
+                    responseFormatPrompt = saved;
+                    Debug.Log("[ChatManager] Loaded saved response format prompt");
+                }
+            }
+        }
+
         private void Start()
         {
             if (llmClient != null)

@@ -20,8 +20,8 @@ namespace CyanNook.UI
         public event Action OnLLMConfigured;
 
         // PlayerPrefsキー
-        private const string PrefKey_UseVision = "llm_useVision";
-        private const string PrefKey_MaxHistory = "llm_maxHistory";
+        private const string PrefKey_UseVision = SettingsKeys.UseVision;
+        private const string PrefKey_MaxHistory = SettingsKeys.MaxHistory;
         private const string PrefKey_CameraPreview = SettingsKeys.CameraPreview;
         private const string PrefKey_WebCam = SettingsKeys.WebCam;
         private const string PrefKey_ScreenCapture = SettingsKeys.ScreenCapture;
@@ -246,8 +246,9 @@ namespace CyanNook.UI
                 apiTypeDropdown.AddOptions(labels);
             }
 
-            // OnEnable()より先に保存済み設定を復元
-            LoadSavedSettings();
+            // 保存済み設定の復元は各コントローラー側で行う
+            // （Vision/MaxHistory=ChatManager.Awake、IdleChatメッセージ=IdleChatController、
+            // カメラ系=各コントローラー。パネルの初期アクティブ状態に依存させないため）
         }
 
         /// <summary>
@@ -687,39 +688,6 @@ namespace CyanNook.UI
             }
         }
 
-        /// <summary>
-        /// 保存された設定を復元（起動時）
-        /// UseVision、MaxHistory、IdleChatMessage
-        /// ※ WebCamとCameraPreviewは各コントローラーで自動復元
-        /// </summary>
-        private void LoadSavedSettings()
-        {
-            // UseVision
-            if (PlayerPrefs.HasKey(PrefKey_UseVision) && chatManager != null)
-            {
-                chatManager.useVision = PlayerPrefs.GetInt(PrefKey_UseVision) == 1;
-                Debug.Log($"[LLMSettingsPanel] Loaded saved useVision: {chatManager.useVision}");
-            }
-
-            // MaxHistory
-            if (PlayerPrefs.HasKey(PrefKey_MaxHistory) && chatManager != null)
-            {
-                chatManager.maxHistoryLength = PlayerPrefs.GetInt(PrefKey_MaxHistory);
-                Debug.Log($"[LLMSettingsPanel] Loaded saved maxHistory: {chatManager.maxHistoryLength}");
-            }
-
-            // IdleChat Message
-            if (PlayerPrefs.HasKey(PrefKey_IdleChatMessage) && idleChatController != null)
-            {
-                string savedMessage = PlayerPrefs.GetString(PrefKey_IdleChatMessage);
-                if (!string.IsNullOrEmpty(savedMessage))
-                {
-                    idleChatController.idlePromptMessage = savedMessage;
-                    Debug.Log("[LLMSettingsPanel] Loaded saved idleChat message");
-                }
-            }
-        }
-
         private void OnVisionToggleChanged(bool isOn)
         {
             if (chatManager != null)
@@ -894,7 +862,7 @@ namespace CyanNook.UI
         {
             if (webCamToggle != null)
             {
-                // LoadSavedSettings()でWebCamが起動されている場合、その状態を反映
+                // WebCamDisplayControllerが起動時に自動復元している場合、その状態を反映
                 webCamToggle.isOn = webCamDisplayController != null && webCamDisplayController.IsPlaying;
                 webCamToggle.onValueChanged.AddListener(OnWebCamToggleChanged);
             }
