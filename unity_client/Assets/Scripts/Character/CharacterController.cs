@@ -14,7 +14,6 @@ namespace CyanNook.Character
     public class CharacterController : MonoBehaviour
     {
         [Header("References")]
-        public CharacterTemplateData templateData;
         public ChatManager chatManager;
         public FurnitureManager furnitureManager;
 
@@ -976,8 +975,8 @@ namespace CyanNook.Character
                 return;
             }
 
-            // Walking/Running中の場合は移動完了後にemoteを再生
-            if (_currentState == CharacterState.Walking || _currentState == CharacterState.Running)
+            // Walking中の場合は移動完了後にemoteを再生
+            if (_currentState == CharacterState.Walking)
             {
                 Debug.Log($"[CharacterController] Deferring emote until walk completes: {emoteAnimationId}");
                 if (_pendingEmoteCoroutine != null)
@@ -1026,7 +1025,7 @@ namespace CyanNook.Character
             else
             {
                 // フォールバック: CharacterStateで待機
-                while (_currentState == CharacterState.Walking || _currentState == CharacterState.Running)
+                while (_currentState == CharacterState.Walking)
                 {
                     yield return null;
                 }
@@ -1116,11 +1115,8 @@ namespace CyanNook.Character
     {
         Idle,           // 通常待機
         Walking,        // 歩行中
-        Running,        // 走行中
         Interacting,    // 家具インタラクション中
-        Emote,          // 感情表現中
         TalkIdle,       // 会話中待機
-        Thinking,       // 考え中（API待ち）
-        TalkEmote       // 会話中の感情表現
+        Thinking        // 考え中（API待ち）
     }
 }

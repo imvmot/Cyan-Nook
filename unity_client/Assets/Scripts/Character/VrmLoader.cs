@@ -380,7 +380,6 @@ namespace CyanNook.Character
             {
                 animationController.animator = animator;
                 animationController.director = director;
-                animationController.templateData = templateData;
                 animationController.timelineBindings = timelineBindings;
                 animationController.lookAtController = lookAtController;
                 animationController.expressionController = expressionController;
