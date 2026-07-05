@@ -52,6 +52,12 @@ namespace CyanNook.Character
         [Tooltip("入室アニメーションのID")]
         public string entryAnimationId = "interact_entry01";
 
+        [Tooltip("Entry完了イベントが来ない場合の強制完了タイムアウト（秒）。" +
+            "Entry TimelineにInteractionEndClipが無い等の設定ミスで" +
+            "全応答が無視される沈黙状態になるのを防ぐ。" +
+            "最長のEntry Timelineより長い値にすること（0以下で監視無効）")]
+        public float entryTimeoutSeconds = 15f;
+
         [Header("Door Furniture")]
         [Tooltip("入退室に使用するドア家具のinstanceId")]
         public string doorFurnitureId = "room01_door_01";
@@ -76,6 +82,9 @@ namespace CyanNook.Character
 
         // Entry早期完了リクエスト済みか（ActionCancelClipでの早期完了用）
         private bool _earlyCompleteRequested;
+
+        // Entry完了イベント不達の監視コルーチン（EntryTimeoutWatchdog）
+        private Coroutine _entryTimeoutCoroutine;
 
         /// <summary>外出中かどうか</summary>
         public bool IsOutside => _isOutside;
@@ -224,6 +233,13 @@ namespace CyanNook.Character
             _isPlayingEntry = true;
             _earlyCompleteRequested = false;
 
+            // タイムアウト監視を開始（完了イベントが来ない設定ミスへの保険）
+            if (_entryTimeoutCoroutine != null)
+            {
+                StopCoroutine(_entryTimeoutCoroutine);
+            }
+            _entryTimeoutCoroutine = StartCoroutine(EntryTimeoutWatchdog());
+
             // ドア家具を検索
             FurnitureInstance doorFurniture = null;
             if (furnitureManager != null)
@@ -352,13 +368,46 @@ namespace CyanNook.Character
         // ===================================================================
 
         /// <summary>
+        /// Entry完了イベントの不達を監視する。
+        /// Entry TimelineにInteractionEndClipが無い、TimelineBindingData未登録等の
+        /// 設定ミスがあると完了イベントが永遠に来ず、全LLM応答がキューされたまま
+        /// キャラクターが無反応になる（NavMeshAgentも無効のまま）。
+        /// タイムアウト時はエラーログで原因を明示し、強制的に完了処理へ進める
+        /// </summary>
+        private System.Collections.IEnumerator EntryTimeoutWatchdog()
+        {
+            // 0以下は監視無効（WaitForSeconds(0)は約1フレームで戻り毎回強制完了してしまう）
+            if (entryTimeoutSeconds <= 0f) yield break;
+
+            yield return new WaitForSeconds(entryTimeoutSeconds);
+            _entryTimeoutCoroutine = null;
+
+            if (!_isPlayingEntry) yield break;
+
+            Debug.LogError(
+                $"[OutingController] Entry animation did not complete within {entryTimeoutSeconds}s. " +
+                $"Forcing completion. Check that Timeline '{entryAnimationId}' has an InteractionEndClip, " +
+                "is registered in TimelineBindingData, and the animationController reference is set. " +
+                "If the entry Timeline is legitimately longer than the timeout, increase entryTimeoutSeconds.");
+            OnEntryAnimationComplete();
+        }
+
+        /// <summary>
         /// Entry アニメーション完了（InteractionEndClip到達時に呼ばれる）
         /// </summary>
         private void OnEntryAnimationComplete()
         {
             if (!_isPlayingEntry) return;
 
-            Debug.Log("[OutingController] Entry animation InteractionEnd reached");
+            // InteractionEndClip到達 / CancelRegion早期完了 / タイムアウト強制完了 の共通経路
+            Debug.Log("[OutingController] Entry completion triggered");
+
+            // タイムアウト監視を停止
+            if (_entryTimeoutCoroutine != null)
+            {
+                StopCoroutine(_entryTimeoutCoroutine);
+                _entryTimeoutCoroutine = null;
+            }
 
             // イベント解除
             if (animationController != null)
