@@ -283,19 +283,23 @@ namespace CyanNook.Furniture
 
         /// <summary>
         /// インタラクション位置を取得（アクション指定）
+        /// fromPosition: 最寄りポイント選択の基準位置（通常はキャラクターの現在位置）。
+        /// 同一アクションのポイントが複数ある家具（ソファ両側のsit等）で、
+        /// 基準位置に近い側のポイントが選ばれる
         /// </summary>
-        public Vector3 GetInteractionPosition(string action = null)
+        public Vector3 GetInteractionPosition(Vector3 fromPosition, string action = null)
         {
-            var point = GetNearestInteractionPoint(Vector3.zero, action);
+            var point = GetNearestInteractionPoint(fromPosition, action);
             return point != null ? point.position : transform.position;
         }
 
         /// <summary>
         /// インタラクション時の回転を取得
+        /// fromPosition: 最寄りポイント選択の基準位置（GetInteractionPositionと同じ値を渡すこと）
         /// </summary>
-        public Quaternion GetInteractionRotation(string action = null)
+        public Quaternion GetInteractionRotation(Vector3 fromPosition, string action = null)
         {
-            var point = GetNearestInteractionPoint(Vector3.zero, action);
+            var point = GetNearestInteractionPoint(fromPosition, action);
             float angleOffset = typeData?.facingAngleOffset ?? 0f;
 
             Quaternion baseRotation = point != null ? point.rotation : transform.rotation;

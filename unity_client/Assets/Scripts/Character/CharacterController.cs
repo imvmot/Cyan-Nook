@@ -791,8 +791,10 @@ namespace CyanNook.Character
             var furniture = furnitureManager.GetNearestAvailableFurniture(transform.position, furnitureAction);
             if (furniture != null)
             {
-                var position = furniture.GetInteractionPosition(furnitureAction);
-                var rotation = furniture.GetInteractionRotation(furnitureAction);
+                // キャラ位置を基準に最寄りのインタラクションポイントを選ぶ
+                // （複数ポイントの家具で原点側に回り込まないように）
+                var position = furniture.GetInteractionPosition(transform.position, furnitureAction);
+                var rotation = furniture.GetInteractionRotation(transform.position, furnitureAction);
                 navigationController.MoveTo(position, rotation, () => SetState(CharacterState.Idle));
                 SetState(CharacterState.Walking);
                 DeferPendingWalkEmote();
