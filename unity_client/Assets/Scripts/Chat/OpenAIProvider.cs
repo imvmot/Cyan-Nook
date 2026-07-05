@@ -4,6 +4,7 @@ using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -186,9 +187,9 @@ namespace CyanNook.Chat
         private static string BuildRequestJson(LLMConfig config, string systemPrompt,
             string userMessage, bool stream, List<string> imagesBase64 = null)
         {
-            string escapedModel = EscapeJsonString(config.modelName);
-            string escapedSystem = EscapeJsonString(systemPrompt);
-            string escapedUser = EscapeJsonString(userMessage);
+            string escapedModel = JsonEscape.Escape(config.modelName);
+            string escapedSystem = JsonEscape.Escape(systemPrompt);
+            string escapedUser = JsonEscape.Escape(userMessage);
             string streamStr = stream ? "true" : "false";
 
             var sb = new StringBuilder();
@@ -241,16 +242,5 @@ namespace CyanNook.Chat
             return sb.ToString();
         }
 
-        private static string EscapeJsonString(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-        }
     }
 }

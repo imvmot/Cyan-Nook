@@ -3,6 +3,7 @@ using UnityEngine.Networking;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using CyanNook.Core;
 using CyanNook.Character;
 
 namespace CyanNook.Voice
@@ -198,8 +199,8 @@ namespace CyanNook.Voice
         /// </summary>
         private static string BuildRequestJson(string text, string voiceName)
         {
-            string escapedText = EscapeJsonString(text);
-            string escapedVoice = EscapeJsonString(voiceName);
+            string escapedText = JsonEscape.Escape(text);
+            string escapedVoice = JsonEscape.Escape(voiceName);
 
             return
                 "{" +
@@ -219,34 +220,6 @@ namespace CyanNook.Voice
                 "}";
         }
 
-        /// <summary>
-        /// JSON文字列のエスケープ（", \, 改行、タブ、制御文字）
-        /// </summary>
-        private static string EscapeJsonString(string input)
-        {
-            if (string.IsNullOrEmpty(input)) return "";
-            var sb = new System.Text.StringBuilder(input.Length + 16);
-            foreach (char c in input)
-            {
-                switch (c)
-                {
-                    case '\\': sb.Append("\\\\"); break;
-                    case '"': sb.Append("\\\""); break;
-                    case '\b': sb.Append("\\b"); break;
-                    case '\f': sb.Append("\\f"); break;
-                    case '\n': sb.Append("\\n"); break;
-                    case '\r': sb.Append("\\r"); break;
-                    case '\t': sb.Append("\\t"); break;
-                    default:
-                        if (c < 0x20)
-                            sb.AppendFormat("\\u{0:x4}", (int)c);
-                        else
-                            sb.Append(c);
-                        break;
-                }
-            }
-            return sb.ToString();
-        }
 
         /// <summary>
         /// レスポンスJSONから candidates[0].content.parts[0].inlineData.data を抽出。

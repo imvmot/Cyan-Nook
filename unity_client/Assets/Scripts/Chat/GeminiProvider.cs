@@ -4,6 +4,7 @@ using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -212,8 +213,8 @@ namespace CyanNook.Chat
         private static string BuildRequestJson(LLMConfig config, string systemPrompt,
             string userMessage, List<string> imagesBase64 = null)
         {
-            string escapedSystem = EscapeJsonString(systemPrompt);
-            string escapedUser = EscapeJsonString(userMessage);
+            string escapedSystem = JsonEscape.Escape(systemPrompt);
+            string escapedUser = JsonEscape.Escape(userMessage);
 
             // maxOutputTokens: numPredict <= 0 の場合はデフォルト値を使用
             int maxOutputTokens = config.numPredict > 0 ? config.numPredict : DefaultMaxOutputTokens;
@@ -296,17 +297,6 @@ namespace CyanNook.Chat
             return null;
         }
 
-        private static string EscapeJsonString(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-        }
     }
 
     // ===================================================================
@@ -321,12 +311,8 @@ namespace CyanNook.Chat
     /// テキスト抽出: candidates[0].content.parts[0].text
     /// 終了判定: finishReasonフィールド（"STOP"等）の存在
     /// </summary>
-    internal class GeminiSseStreamHandler : DownloadHandlerScript
+    internal class GeminiSseStreamHandler : SseStreamHandlerBase
     {
-        private readonly Decoder _utf8Decoder;
-        private readonly StreamSeparatorProcessor _processor;
-        private readonly StringBuilder _lineBuffer = new StringBuilder();
-
         // Gemma 4 thought フォールバック: 全 part が thought=true の場合に
         // ストリーム完了時に thought テキストを通常テキストとして処理する
         private readonly StringBuilder _thoughtBuffer = new StringBuilder();
@@ -335,86 +321,22 @@ namespace CyanNook.Chat
         public GeminiSseStreamHandler(byte[] preallocatedBuffer,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action<string> onError, Action<string, string> onField = null,
-            Action<string, string> onParseError = null) : base(preallocatedBuffer)
+            Action<string, string> onParseError = null)
+            : base(preallocatedBuffer, onHeader, onTextChunk, onError, onField, onParseError)
         {
-            _utf8Decoder = Encoding.UTF8.GetDecoder();
-            _processor = new StreamSeparatorProcessor
-            {
-                OnHeaderReceived = onHeader,
-                OnTextReceived = onTextChunk,
-                OnError = onError,
-                OnFieldParsed = onField,
-                OnParseError = onParseError
-            };
-        }
-
-        protected override bool ReceiveData(byte[] data, int dataLength)
-        {
-            if (data == null || dataLength < 1) return false;
-
-            int charCount = _utf8Decoder.GetCharCount(data, 0, dataLength, false);
-            if (charCount == 0) return true;
-
-            char[] chars = new char[charCount];
-            _utf8Decoder.GetChars(data, 0, dataLength, chars, 0, false);
-            string chunk = new string(chars);
-
-            _lineBuffer.Append(chunk);
-            ProcessSseLines();
-
-            return true;
-        }
-
-        protected override void CompleteContent()
-        {
-            // 残りをフラッシュ
-            int charCount = _utf8Decoder.GetCharCount(new byte[0], 0, 0, true);
-            if (charCount > 0)
-            {
-                char[] chars = new char[charCount];
-                _utf8Decoder.GetChars(new byte[0], 0, 0, chars, 0, true);
-                _lineBuffer.Append(new string(chars));
-                ProcessSseLines();
-            }
-
-            // Gemma 4 フォールバック: 全 part が thought=true だった場合、
-            // thought バッファを通常テキストとして処理する。
-            // これによりレスポンスが空になる問題を回避する。
-            if (!_hasNonThoughtContent && _thoughtBuffer.Length > 0)
-            {
-                Debug.Log($"[GeminiSseStreamHandler] All parts were thought=true, flushing {_thoughtBuffer.Length} chars as regular text");
-                _processor.ProcessChunk(_thoughtBuffer.ToString());
-            }
-
-            _processor.Complete();
         }
 
         /// <summary>
-        /// SSEイベント行を処理
-        /// Gemini SSEは "data:" 行のみ（event:行なし）
+        /// Gemma 4 フォールバック: 全 part が thought=true だった場合、
+        /// thought バッファを通常テキストとして処理する。
+        /// これによりレスポンスが空になる問題を回避する。
         /// </summary>
-        private void ProcessSseLines()
+        protected override void OnBeforeComplete()
         {
-            string content = _lineBuffer.ToString();
-            int lastNewline = content.LastIndexOf('\n');
-
-            if (lastNewline < 0) return;
-
-            string completedPart = content.Substring(0, lastNewline);
-            string remaining = content.Substring(lastNewline + 1);
-
-            _lineBuffer.Clear();
-            _lineBuffer.Append(remaining);
-
-            string[] lines = completedPart.Split('\n');
-            foreach (string line in lines)
+            if (!_hasNonThoughtContent && _thoughtBuffer.Length > 0)
             {
-                string trimmed = line.Trim();
-                if (trimmed.StartsWith("data:", StringComparison.Ordinal))
-                {
-                    string jsonData = trimmed.Substring(5).Trim();
-                    ProcessSseData(jsonData);
-                }
+                Debug.Log($"[GeminiSseStreamHandler] All parts were thought=true, flushing {_thoughtBuffer.Length} chars as regular text");
+                Processor.ProcessChunk(_thoughtBuffer.ToString());
             }
         }
 
@@ -422,38 +344,29 @@ namespace CyanNook.Chat
         /// SSEのdataフィールド（JSON）を処理
         /// candidates[0].content.parts[0].text を抽出
         /// </summary>
-        private void ProcessSseData(string jsonData)
+        protected override void ProcessSseData(string jsonData)
         {
-            if (string.IsNullOrEmpty(jsonData)) return;
-
-            try
+            var chunk = JsonUtility.FromJson<GeminiResponse>(jsonData);
+            if (chunk.candidates != null && chunk.candidates.Length > 0 &&
+                chunk.candidates[0].content != null &&
+                chunk.candidates[0].content.parts != null)
             {
-                var chunk = JsonUtility.FromJson<GeminiResponse>(jsonData);
-                if (chunk.candidates != null && chunk.candidates.Length > 0 &&
-                    chunk.candidates[0].content != null &&
-                    chunk.candidates[0].content.parts != null)
+                foreach (var part in chunk.candidates[0].content.parts)
                 {
-                    foreach (var part in chunk.candidates[0].content.parts)
-                    {
-                        if (string.IsNullOrEmpty(part.text)) continue;
+                    if (string.IsNullOrEmpty(part.text)) continue;
 
-                        if (!part.thought)
-                        {
-                            // 通常テキスト → 即時処理
-                            _hasNonThoughtContent = true;
-                            _processor.ProcessChunk(part.text);
-                        }
-                        else
-                        {
-                            // thought part → バッファに蓄積（フォールバック用）
-                            _thoughtBuffer.Append(part.text);
-                        }
+                    if (!part.thought)
+                    {
+                        // 通常テキスト → 即時処理
+                        _hasNonThoughtContent = true;
+                        Processor.ProcessChunk(part.text);
+                    }
+                    else
+                    {
+                        // thought part → バッファに蓄積（フォールバック用）
+                        _thoughtBuffer.Append(part.text);
                     }
                 }
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[GeminiSseStreamHandler] Failed to parse SSE data: {e.Message}\nData: {jsonData}");
             }
         }
     }

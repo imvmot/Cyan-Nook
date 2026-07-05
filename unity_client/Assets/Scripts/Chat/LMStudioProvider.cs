@@ -4,6 +4,7 @@ using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -157,9 +158,9 @@ namespace CyanNook.Chat
         private static string BuildRequestJson(LLMConfig config, string systemPrompt,
             string userMessage, bool stream, List<string> imagesBase64 = null)
         {
-            string escapedModel = EscapeJsonString(config.modelName);
-            string escapedSystem = EscapeJsonString(systemPrompt);
-            string escapedUser = EscapeJsonString(userMessage);
+            string escapedModel = JsonEscape.Escape(config.modelName);
+            string escapedSystem = JsonEscape.Escape(systemPrompt);
+            string escapedUser = JsonEscape.Escape(userMessage);
             string streamStr = stream ? "true" : "false";
 
             var sb = new StringBuilder();
@@ -212,17 +213,6 @@ namespace CyanNook.Chat
             return sb.ToString();
         }
 
-        private static string EscapeJsonString(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-        }
     }
 
     // ===================================================================
@@ -238,111 +228,30 @@ namespace CyanNook.Chat
     ///   data: {"choices":[{"delta":{"content":"token"}}]}
     ///   data: [DONE]
     /// </summary>
-    internal class LMStudioSseStreamHandler : DownloadHandlerScript
+    internal class LMStudioSseStreamHandler : SseStreamHandlerBase
     {
-        private readonly Decoder _utf8Decoder;
-        private readonly StreamSeparatorProcessor _processor;
-        private readonly StringBuilder _lineBuffer = new StringBuilder();
-
         public LMStudioSseStreamHandler(byte[] preallocatedBuffer,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action<string> onError, Action<string, string> onField = null,
-            Action<string, string> onParseError = null) : base(preallocatedBuffer)
+            Action<string, string> onParseError = null)
+            : base(preallocatedBuffer, onHeader, onTextChunk, onError, onField, onParseError)
         {
-            _utf8Decoder = Encoding.UTF8.GetDecoder();
-            _processor = new StreamSeparatorProcessor
-            {
-                OnHeaderReceived = onHeader,
-                OnTextReceived = onTextChunk,
-                OnError = onError,
-                OnFieldParsed = onField,
-                OnParseError = onParseError
-            };
-        }
-
-        protected override bool ReceiveData(byte[] data, int dataLength)
-        {
-            if (data == null || dataLength < 1) return false;
-
-            int charCount = _utf8Decoder.GetCharCount(data, 0, dataLength, false);
-            if (charCount == 0) return true;
-
-            char[] chars = new char[charCount];
-            _utf8Decoder.GetChars(data, 0, dataLength, chars, 0, false);
-            string chunk = new string(chars);
-
-            _lineBuffer.Append(chunk);
-            ProcessSseLines();
-
-            return true;
-        }
-
-        protected override void CompleteContent()
-        {
-            // 残りをフラッシュ
-            int charCount = _utf8Decoder.GetCharCount(new byte[0], 0, 0, true);
-            if (charCount > 0)
-            {
-                char[] chars = new char[charCount];
-                _utf8Decoder.GetChars(new byte[0], 0, 0, chars, 0, true);
-                _lineBuffer.Append(new string(chars));
-                ProcessSseLines();
-            }
-
-            _processor.Complete();
-        }
-
-        /// <summary>
-        /// SSEイベント行を処理
-        /// "data: " プレフィックスの行からJSON部分を抽出
-        /// </summary>
-        private void ProcessSseLines()
-        {
-            string content = _lineBuffer.ToString();
-            int lastNewline = content.LastIndexOf('\n');
-
-            if (lastNewline < 0) return;
-
-            string completedPart = content.Substring(0, lastNewline);
-            string remaining = content.Substring(lastNewline + 1);
-
-            _lineBuffer.Clear();
-            _lineBuffer.Append(remaining);
-
-            string[] lines = completedPart.Split('\n');
-            foreach (string line in lines)
-            {
-                string trimmed = line.Trim();
-                if (trimmed.StartsWith("data:", StringComparison.Ordinal))
-                {
-                    string jsonData = trimmed.Substring(5).Trim();
-                    ProcessSseData(jsonData);
-                }
-            }
         }
 
         /// <summary>
         /// SSEのdataフィールド（JSON）を処理
         /// choices[0].delta.content を抽出してStreamSeparatorProcessorに渡す
         /// </summary>
-        private void ProcessSseData(string jsonData)
+        protected override void ProcessSseData(string jsonData)
         {
-            if (string.IsNullOrEmpty(jsonData)) return;
             if (jsonData == "[DONE]") return;
 
-            try
+            var chunk = JsonUtility.FromJson<OpenAIStreamChunk>(jsonData);
+            if (chunk.choices != null && chunk.choices.Length > 0 &&
+                chunk.choices[0].delta != null &&
+                !string.IsNullOrEmpty(chunk.choices[0].delta.content))
             {
-                var chunk = JsonUtility.FromJson<OpenAIStreamChunk>(jsonData);
-                if (chunk.choices != null && chunk.choices.Length > 0 &&
-                    chunk.choices[0].delta != null &&
-                    !string.IsNullOrEmpty(chunk.choices[0].delta.content))
-                {
-                    _processor.ProcessChunk(chunk.choices[0].delta.content);
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[LMStudioSseStreamHandler] Failed to parse SSE data: {e.Message}\nData: {jsonData}");
+                Processor.ProcessChunk(chunk.choices[0].delta.content);
             }
         }
     }

@@ -4,6 +4,7 @@ using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -120,7 +121,7 @@ namespace CyanNook.Chat
         {
             // Claude APIにはモデル一覧エンドポイントがないため、
             // 最小限のリクエストを送信して接続確認
-            string jsonBody = "{\"model\":\"" + EscapeJsonString(config.modelName) +
+            string jsonBody = "{\"model\":\"" + JsonEscape.Escape(config.modelName) +
                 "\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
             byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonBody);
 
@@ -192,9 +193,9 @@ namespace CyanNook.Chat
         private static string BuildRequestJson(LLMConfig config, string systemPrompt,
             string userMessage, bool stream, List<string> imagesBase64 = null)
         {
-            string escapedModel = EscapeJsonString(config.modelName);
-            string escapedSystem = EscapeJsonString(systemPrompt);
-            string escapedUser = EscapeJsonString(userMessage);
+            string escapedModel = JsonEscape.Escape(config.modelName);
+            string escapedSystem = JsonEscape.Escape(systemPrompt);
+            string escapedUser = JsonEscape.Escape(userMessage);
             string streamStr = stream ? "true" : "false";
 
             // max_tokens: Claude APIでは必須。numPredict <= 0 の場合はデフォルト値を使用
@@ -248,17 +249,6 @@ namespace CyanNook.Chat
             return sb.ToString();
         }
 
-        private static string EscapeJsonString(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-        }
     }
 
     // ===================================================================
@@ -280,120 +270,37 @@ namespace CyanNook.Chat
     ///   event: message_stop
     ///   data: {"type":"message_stop"}
     /// </summary>
-    internal class ClaudeSseStreamHandler : DownloadHandlerScript
+    internal class ClaudeSseStreamHandler : SseStreamHandlerBase
     {
-        private readonly Decoder _utf8Decoder;
-        private readonly StreamSeparatorProcessor _processor;
-        private readonly StringBuilder _lineBuffer = new StringBuilder();
-
         public ClaudeSseStreamHandler(byte[] preallocatedBuffer,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action<string> onError, Action<string, string> onField = null,
-            Action<string, string> onParseError = null) : base(preallocatedBuffer)
+            Action<string, string> onParseError = null)
+            : base(preallocatedBuffer, onHeader, onTextChunk, onError, onField, onParseError)
         {
-            _utf8Decoder = Encoding.UTF8.GetDecoder();
-            _processor = new StreamSeparatorProcessor
-            {
-                OnHeaderReceived = onHeader,
-                OnTextReceived = onTextChunk,
-                OnError = onError,
-                OnFieldParsed = onField,
-                OnParseError = onParseError
-            };
-        }
-
-        protected override bool ReceiveData(byte[] data, int dataLength)
-        {
-            if (data == null || dataLength < 1) return false;
-
-            int charCount = _utf8Decoder.GetCharCount(data, 0, dataLength, false);
-            if (charCount == 0) return true;
-
-            char[] chars = new char[charCount];
-            _utf8Decoder.GetChars(data, 0, dataLength, chars, 0, false);
-            string chunk = new string(chars);
-
-            _lineBuffer.Append(chunk);
-            ProcessSseLines();
-
-            return true;
-        }
-
-        protected override void CompleteContent()
-        {
-            // 残りをフラッシュ
-            int charCount = _utf8Decoder.GetCharCount(new byte[0], 0, 0, true);
-            if (charCount > 0)
-            {
-                char[] chars = new char[charCount];
-                _utf8Decoder.GetChars(new byte[0], 0, 0, chars, 0, true);
-                _lineBuffer.Append(new string(chars));
-                ProcessSseLines();
-            }
-
-            _processor.Complete();
-        }
-
-        /// <summary>
-        /// SSEイベント行を処理
-        /// Claude SSEは "event:" 行と "data:" 行のペアで構成される
-        /// テキスト抽出に必要なのは "data:" 行のみ
-        /// </summary>
-        private void ProcessSseLines()
-        {
-            string content = _lineBuffer.ToString();
-            int lastNewline = content.LastIndexOf('\n');
-
-            if (lastNewline < 0) return;
-
-            string completedPart = content.Substring(0, lastNewline);
-            string remaining = content.Substring(lastNewline + 1);
-
-            _lineBuffer.Clear();
-            _lineBuffer.Append(remaining);
-
-            string[] lines = completedPart.Split('\n');
-            foreach (string line in lines)
-            {
-                string trimmed = line.Trim();
-                if (trimmed.StartsWith("data:", StringComparison.Ordinal))
-                {
-                    string jsonData = trimmed.Substring(5).Trim();
-                    ProcessSseData(jsonData);
-                }
-            }
         }
 
         /// <summary>
         /// SSEのdataフィールド（JSON）を処理
         /// content_block_delta イベントから delta.text を抽出
         /// </summary>
-        private void ProcessSseData(string jsonData)
+        protected override void ProcessSseData(string jsonData)
         {
-            if (string.IsNullOrEmpty(jsonData)) return;
+            // typeフィールドを簡易抽出して分岐
+            // JsonUtility.FromJsonは型が一致しないフィールドを無視するため、
+            // まず共通のtypeフィールドだけで判定
+            var baseEvent = JsonUtility.FromJson<ClaudeSseEventBase>(jsonData);
 
-            try
+            if (baseEvent.type == "content_block_delta")
             {
-                // typeフィールドを簡易抽出して分岐
-                // JsonUtility.FromJsonは型が一致しないフィールドを無視するため、
-                // まず共通のtypeフィールドだけで判定
-                var baseEvent = JsonUtility.FromJson<ClaudeSseEventBase>(jsonData);
-
-                if (baseEvent.type == "content_block_delta")
+                var deltaEvent = JsonUtility.FromJson<ClaudeContentBlockDelta>(jsonData);
+                if (deltaEvent.delta != null && !string.IsNullOrEmpty(deltaEvent.delta.text))
                 {
-                    var deltaEvent = JsonUtility.FromJson<ClaudeContentBlockDelta>(jsonData);
-                    if (deltaEvent.delta != null && !string.IsNullOrEmpty(deltaEvent.delta.text))
-                    {
-                        _processor.ProcessChunk(deltaEvent.delta.text);
-                    }
+                    Processor.ProcessChunk(deltaEvent.delta.text);
                 }
-                // message_start, content_block_start, content_block_stop, message_delta, message_stop
-                // は無視（テキスト抽出には不要）
             }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"[ClaudeSseStreamHandler] Failed to parse SSE data: {e.Message}\nData: {jsonData}");
-            }
+            // message_start, content_block_start, content_block_stop, message_delta, message_stop
+            // は無視（テキスト抽出には不要）
         }
     }
 
