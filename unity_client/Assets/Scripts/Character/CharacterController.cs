@@ -475,44 +475,7 @@ namespace CyanNook.Character
         /// </summary>
         private void ProcessActionFromField(LLMResponseData response)
         {
-            // Talk状態から移動/インタラクトする場合はTalkを終了
-            if (talkController != null && talkController.IsInTalkMode)
-            {
-                var targetType = ResolveTargetType(response.target);
-                bool isNonTalkAction = response.IsInteract ||
-                    (response.IsMove && targetType != TargetType.Talk);
-
-                if (isNonTalkAction)
-                {
-                    Debug.Log("[CharacterController] Exiting talk mode for non-talk action (incremental)");
-                    talkController.ForceExitTalk();
-                }
-            }
-
-            // インタラクション中に別のアクションが来た場合: ed再生 → 完了後に実行
-            if (interactionController != null && interactionController.IsInteracting())
-            {
-                // 同種インタラクションの場合: 現在の家具を除外してランダム選択するため参照を保持
-                FurnitureInstance excludeFurniture = null;
-                if (response.IsInteract)
-                {
-                    var newAction = response.GetInteractAction();
-                    if (newAction == interactionController.CurrentAction)
-                    {
-                        excludeFurniture = interactionController.CurrentFurniture;
-                        Debug.Log($"[CharacterController] Same interaction type ({newAction}), will exclude current furniture (incremental): {excludeFurniture?.instanceId}");
-                    }
-                }
-
-                Debug.Log("[CharacterController] Exiting interaction before processing new action (incremental)");
-                interactionController.ExitLoopWithCallback(() =>
-                {
-                    ExecuteAction(response, excludeFurniture);
-                });
-                return;
-            }
-
-            ExecuteAction(response);
+            ProcessActionCore(response, includeEmoteInDeferred: false);
         }
 
         /// <summary>
@@ -549,6 +512,16 @@ namespace CyanNook.Character
         /// trueの場合、emote処理はコールバック内で行われるため呼び出し元でスキップすること。
         /// </summary>
         private bool ProcessAction(LLMResponseData response)
+        {
+            return ProcessActionCore(response, includeEmoteInDeferred: true);
+        }
+
+        /// <summary>
+        /// アクション処理の共通実装（ブロッキング/逐次反映）。遅延実行された場合はtrueを返す。
+        /// includeEmoteInDeferred: 遅延実行時にemoteもコールバック内で再生するか。
+        /// ブロッキングはtrue、逐次反映はemoteが別フィールドで処理されるためfalse
+        /// </summary>
+        private bool ProcessActionCore(LLMResponseData response, bool includeEmoteInDeferred)
         {
             if (response.IsIgnore) return false;
 
@@ -587,7 +560,7 @@ namespace CyanNook.Character
                 interactionController.ExitLoopWithCallback(() =>
                 {
                     ExecuteAction(response, excludeFurniture);
-                    if (response.HasEmote)
+                    if (includeEmoteInDeferred && response.HasEmote)
                     {
                         ProcessEmote(response.emote);
                     }

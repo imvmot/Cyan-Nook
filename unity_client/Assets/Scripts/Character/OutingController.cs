@@ -457,26 +457,7 @@ namespace CyanNook.Character
             // （自動LLMリクエストを全て止めるというマスターの意味に合わせる）
             if (!_periodicEnabled || outingMessageInterval <= 0f) yield break;
 
-            float timeout = 10f;
-            float elapsed = 0f;
-            while (chatManager.CurrentState != ChatState.Idle && elapsed < timeout)
-            {
-                elapsed += Time.deltaTime;
-                yield return null;
-            }
-
-            // 外出中でなくなっていたら送信しない（短時間で帰還した場合）
-            if (!_isOutside) yield break;
-
-            if (chatManager.CurrentState == ChatState.Idle)
-            {
-                Debug.Log("[OutingController] Sending initial outing prompt");
-                chatManager.SendAutoRequest(outingPromptMessage);
-            }
-            else
-            {
-                Debug.LogWarning("[OutingController] ChatManager not idle after timeout, skipping initial outing prompt");
-            }
+            yield return SendPromptWhenIdle(outingPromptMessage, "initial outing prompt", requireStillOutside: true);
         }
 
         /// <summary>
@@ -485,7 +466,16 @@ namespace CyanNook.Character
         /// </summary>
         private System.Collections.IEnumerator SendEntryPromptWhenReady()
         {
-            // ChatManagerがIdle状態になるまで最大10秒待機
+            yield return SendPromptWhenIdle(entryPromptMessage, "entry prompt", requireStillOutside: false);
+        }
+
+        /// <summary>
+        /// ChatManagerがIdle状態になるまで待機（最大10秒）してからプロンプトを送信する共通処理
+        /// requireStillOutside: 送信直前に外出中であることを要求する
+        /// （短時間で帰還した場合にOuting Promptを送らないため）
+        /// </summary>
+        private System.Collections.IEnumerator SendPromptWhenIdle(string prompt, string label, bool requireStillOutside)
+        {
             float timeout = 10f;
             float elapsed = 0f;
             while (chatManager.CurrentState != ChatState.Idle && elapsed < timeout)
@@ -494,14 +484,16 @@ namespace CyanNook.Character
                 yield return null;
             }
 
+            if (requireStillOutside && !_isOutside) yield break;
+
             if (chatManager.CurrentState == ChatState.Idle)
             {
-                Debug.Log("[OutingController] Sending entry prompt");
-                chatManager.SendAutoRequest(entryPromptMessage);
+                Debug.Log($"[OutingController] Sending {label}");
+                chatManager.SendAutoRequest(prompt);
             }
             else
             {
-                Debug.LogWarning("[OutingController] ChatManager not idle after timeout, skipping entry prompt");
+                Debug.LogWarning($"[OutingController] ChatManager not idle after timeout, skipping {label}");
             }
         }
 
