@@ -1,4 +1,5 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
 
 namespace CyanNook.Character
@@ -21,7 +22,11 @@ namespace CyanNook.Character
     {
         private const string LookAtSuffix = "_lookattarget";
 
-        private Dictionary<string, RoomTargetData> _targets = new Dictionary<string, RoomTargetData>();
+        // 大文字小文字を区別しない辞書。検索側のToLower()が不要になり、
+        // 毎フレーム呼ばれるLookAt追跡（CharacterController.UpdateLookAt）で
+        // 文字列アロケーションを発生させない
+        private Dictionary<string, RoomTargetData> _targets =
+            new Dictionary<string, RoomTargetData>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// 登録済みターゲット名のコレクション（GetTargetType解決用）
@@ -76,7 +81,7 @@ namespace CyanNook.Character
         public bool HasTarget(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
-            return _targets.ContainsKey(name.ToLower());
+            return _targets.ContainsKey(name);
         }
 
         /// <summary>
@@ -85,7 +90,7 @@ namespace CyanNook.Character
         public RoomTargetData GetTarget(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            _targets.TryGetValue(name.ToLower(), out var target);
+            _targets.TryGetValue(name, out var target);
             return target;
         }
 
