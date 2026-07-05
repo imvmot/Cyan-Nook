@@ -153,10 +153,6 @@ namespace CyanNook.Character
         {
             switch (_currentState)
             {
-                case NavigationState.TurningToTarget:
-                    UpdateTurning();
-                    break;
-
                 case NavigationState.Moving:
                     UpdateMoving();
                     break;
@@ -177,7 +173,7 @@ namespace CyanNook.Character
         /// VRMインスタンスに配置したRootMotionForwarderから委譲される
         ///
         /// NavMeshAgent駆動方式:
-        /// - 移動中（Moving/ApproachingInteraction/Turning/FinalTurning）: Root Motionを無視（agentが制御）
+        /// - 移動中（Moving/ApproachingInteraction/FinalTurning）: Root Motionを無視（agentが制御）
         /// - 位置保持モード（Idle/Talk/Emote）: Root Motionを無視（位置保持が優先）
         /// - Interact等: Root Motionをローカル座標で適用（BlendPivot相対の微調整）
         /// </summary>
@@ -198,7 +194,6 @@ namespace CyanNook.Character
             // 移動中はNavMeshAgentが位置を制御するため、Root Motionを適用しない
             if (_currentState == NavigationState.Moving ||
                 _currentState == NavigationState.ApproachingInteraction ||
-                _currentState == NavigationState.TurningToTarget ||
                 _currentState == NavigationState.FinalTurning)
             {
                 return;
@@ -409,52 +404,6 @@ namespace CyanNook.Character
             }
 
             Debug.Log("[CharacterNavigationController] StopForwardWalk");
-        }
-
-        private void StartTurning(float angle)
-        {
-            _currentState = NavigationState.TurningToTarget;
-
-            // ターン中はagentの移動を停止
-            if (agent != null && agent.isOnNavMesh)
-            {
-                agent.isStopped = true;
-            }
-
-            // 左右どちらに回転するか
-            string turnAnim = angle < 0
-                ? (_useRun ? "common_runturn01" : "common_walkturn01")  // 左回転
-                : (_useRun ? "common_runturn02" : "common_walkturn02"); // 右回転
-
-            animationController?.PlayAnimation(turnAnim);
-        }
-
-        private void UpdateTurning()
-        {
-            // CharacterRoot（transform）を回転（VRMは子として追従）
-            Vector3 direction = _targetPosition - transform.position;
-            direction.y = 0;
-
-            if (direction.sqrMagnitude > 0.01f)
-            {
-                Quaternion targetRot = Quaternion.LookRotation(direction.normalized);
-                transform.rotation = Quaternion.RotateTowards(
-                    transform.rotation,
-                    targetRot,
-                    rotationSpeed * Time.deltaTime
-                );
-
-                // 十分に向いたら移動開始
-                float remainingAngle = Quaternion.Angle(transform.rotation, targetRot);
-                if (remainingAngle < 5f)
-                {
-                    StartMoving();
-                }
-            }
-            else
-            {
-                StartMoving();
-            }
         }
 
         private void StartMoving()
@@ -1118,7 +1067,6 @@ namespace CyanNook.Character
     public enum NavigationState
     {
         Idle,                   // 停止中
-        TurningToTarget,        // 目標方向に回転中
         Moving,                 // 移動中
         FinalTurning,           // 最終回転中
         ApproachingInteraction  // インタラクション接近中
