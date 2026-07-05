@@ -180,7 +180,16 @@ namespace CyanNook.Chat
         public IEnumerator TestConnection(LLMConfig config, Action<bool, string> callback)
         {
             // エンドポイントのベースURLからタグ一覧APIのURLを構築
-            var uri = new Uri(config.apiEndpoint);
+            // Uri.TryCreateで検証（new Uriだと不正URL入力時に例外でコルーチンが
+            // 打ち切られ、callbackが呼ばれずUIが無反応になる）。
+            // スキームも確認する（"ttp://"等のタイプミスはURL文法上は合法な
+            // 未知スキームとして解析に成功してしまい、通信層のUnknown Errorになる）
+            if (!Uri.TryCreate(config.apiEndpoint, UriKind.Absolute, out Uri uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                callback?.Invoke(false, $"Invalid URL: {config.apiEndpoint}");
+                yield break;
+            }
             string testUrl = $"{uri.Scheme}://{uri.Authority}/api/tags";
 
             using (var request = UnityWebRequest.Get(testUrl))

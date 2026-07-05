@@ -110,8 +110,19 @@ namespace CyanNook.Chat
 
         public IEnumerator TestConnection(LLMConfig config, Action<bool, string> callback)
         {
-            // エンドポイントURLから /v1/models APIのURLを構築
+            // URL検証: Uri.TryCreate（new Uriだと不正URL入力時に例外でコルーチンが
+            // 打ち切られ、callbackが呼ばれずUIが無反応になる）+ スキーム確認
+            // （"ttp://"等のタイプミスはURL文法上は合法な未知スキームとして
+            // 解析に成功してしまい、通信層のUnknown Errorになる）
             string baseUrl = config.apiEndpoint;
+            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                callback?.Invoke(false, $"Invalid URL: {baseUrl}");
+                yield break;
+            }
+
+            // エンドポイントURLから /v1/models APIのURLを構築
             int v1Index = baseUrl.IndexOf("/v1/", StringComparison.OrdinalIgnoreCase);
             string testUrl;
             if (v1Index >= 0)
@@ -120,7 +131,6 @@ namespace CyanNook.Chat
             }
             else
             {
-                var uri = new Uri(baseUrl);
                 testUrl = $"{uri.Scheme}://{uri.Authority}/v1/models";
             }
 
