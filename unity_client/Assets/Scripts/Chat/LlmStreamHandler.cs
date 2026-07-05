@@ -2,125 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
-using UnityEngine.Networking;
 
 namespace CyanNook.Chat
 {
     /// <summary>
-    /// LLMストリーミングレスポンス用DownloadHandler
-    /// WebGLビルドでも動作するDownloadHandlerScript継承
-    ///
-    /// 想定フォーマット:
-    ///   {
-    ///     "emotion": {...}, "reaction": "...", "action": "...",
-    ///     "target": {...}, "emote": "...", "message": "..."
-    ///   }
-    ///
-    /// JSONフィールド単位で逐次パースされ、各フィールド完了時にOnFieldParsedを発火。
-    /// "message"フィールドはストリーミング表示のため、値の途中でもOnTextReceivedを発火。
-    /// UTF-8マルチバイト文字の境界分割にも対応（System.Text.Decoder使用）
-    /// </summary>
-    public class LlmStreamHandler : DownloadHandlerScript
-    {
-        private readonly Decoder _utf8Decoder;
-        private readonly StreamSeparatorProcessor _processor;
-
-        // デバッグ用: 受信した全テキスト
-        private readonly StringBuilder _fullResponse = new StringBuilder();
-        public string FullResponse => _fullResponse.ToString();
-
-        // StreamSeparatorProcessorのイベントをそのまま公開
-        public Action<LlmResponseHeader> OnHeaderReceived
-        {
-            get => _processor.OnHeaderReceived;
-            set => _processor.OnHeaderReceived = value;
-        }
-
-        /// <summary>JSONフィールドが逐次パースされた時（fieldName, rawJsonValue）</summary>
-        public Action<string, string> OnFieldParsed
-        {
-            get => _processor.OnFieldParsed;
-            set => _processor.OnFieldParsed = value;
-        }
-
-        public Action<string> OnTextReceived
-        {
-            get => _processor.OnTextReceived;
-            set => _processor.OnTextReceived = value;
-        }
-
-        public Action OnComplete
-        {
-            get => _processor.OnComplete;
-            set => _processor.OnComplete = value;
-        }
-
-        public Action<string> OnError
-        {
-            get => _processor.OnError;
-            set => _processor.OnError = value;
-        }
-
-        /// <summary>JSONパースエラー時（エラーメッセージ, 生レスポンステキスト）</summary>
-        public Action<string, string> OnParseError
-        {
-            get => _processor.OnParseError;
-            set => _processor.OnParseError = value;
-        }
-
-        public bool IsHeaderParsed => _processor.IsHeaderParsed;
-
-        public LlmStreamHandler(byte[] preallocatedBuffer) : base(preallocatedBuffer)
-        {
-            _utf8Decoder = Encoding.UTF8.GetDecoder();
-            _processor = new StreamSeparatorProcessor();
-        }
-
-        /// <summary>
-        /// データ受信コールバック（UnityWebRequestから呼ばれる）
-        /// </summary>
-        protected override bool ReceiveData(byte[] data, int dataLength)
-        {
-            if (data == null || dataLength < 1) return false;
-
-            // UTF-8デコーダで安全に文字列に変換
-            // flush=false: 不完全なマルチバイトシーケンスは次回に持ち越し
-            int charCount = _utf8Decoder.GetCharCount(data, 0, dataLength, false);
-            if (charCount == 0) return true;
-
-            char[] chars = new char[charCount];
-            _utf8Decoder.GetChars(data, 0, dataLength, chars, 0, false);
-            string chunk = new string(chars);
-
-            _fullResponse.Append(chunk);
-            _processor.ProcessChunk(chunk);
-
-            return true;
-        }
-
-        /// <summary>
-        /// レスポンス完了時に呼ばれる
-        /// </summary>
-        protected override void CompleteContent()
-        {
-            // デコーダに残っている不完全バイトをフラッシュ
-            int charCount = _utf8Decoder.GetCharCount(new byte[0], 0, 0, true);
-            if (charCount > 0)
-            {
-                char[] chars = new char[charCount];
-                _utf8Decoder.GetChars(new byte[0], 0, 0, chars, 0, true);
-                string remaining = new string(chars);
-                _fullResponse.Append(remaining);
-                _processor.ProcessChunk(remaining);
-            }
-
-            _processor.Complete();
-        }
-    }
-
-    /// <summary>
     /// JSONストリームの逐次パース処理
-    /// LlmStreamHandler以外のプロバイダー固有ハンドラからも再利用可能
+    /// プロバイダー固有のDownloadHandlerから再利用される
     ///
     /// JSONフィールドが確定するごとにOnFieldParsedを発火し、
     /// "message"フィールドの文字列値は途中でもOnTextReceivedを発火する。
