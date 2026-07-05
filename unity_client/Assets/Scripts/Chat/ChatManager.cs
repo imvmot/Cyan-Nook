@@ -412,28 +412,7 @@ namespace CyanNook.Chat
             List<string> imagesBase64 = CaptureVisionImages();
 
             // LLMに送信
-            _isStreamingRequest = useStreaming;
-            if (IsDifyMode)
-            {
-                // Dify: currentMessageのみ送信、動的値はinputsで送信
-                // 会話履歴とシステムプロンプトはDify側で管理（conversation_id）
-                llmClient.SetRequestInputs(BuildDynamicInputs());
-                if (useStreaming)
-                    llmClient.SendStreamingRequest("", userMessage, imagesBase64);
-                else
-                    llmClient.SendRequest("", userMessage, imagesBase64);
-            }
-            else
-            {
-                // Ollama/LM Studio: 従来通りシステムプロンプト + 会話履歴付きフルプロンプト
-                llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPrompt(userMessage));
-                if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
-                else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
-            }
+            DispatchLlmRequest(userMessage, imagesBase64, appendToPrompt: false);
         }
 
         /// <summary>
@@ -464,27 +443,7 @@ namespace CyanNook.Chat
             // 状態を更新（HandleRequestStartedはスキップされるため手動で設定）
             SetState(ChatState.WaitingForResponse);
 
-            _isStreamingRequest = useStreaming;
-            if (IsDifyMode)
-            {
-                // Dify: idleMessageのみ送信、動的値はinputsで送信
-                llmClient.SetRequestInputs(BuildDynamicInputs());
-                if (useStreaming)
-                    llmClient.SendStreamingRequest("", idleMessage, imagesBase64);
-                else
-                    llmClient.SendRequest("", idleMessage, imagesBase64);
-            }
-            else
-            {
-                // Ollama/LM Studio: 従来通り
-                llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPromptWithAppend(idleMessage));
-                if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
-                else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
-            }
+            DispatchLlmRequest(idleMessage, imagesBase64, appendToPrompt: true);
         }
 
         /// <summary>
@@ -552,25 +511,7 @@ namespace CyanNook.Chat
             // _isAutoRequest = false のまま → HandleLLMResponseでレスポンスは履歴に追加される
             SetState(ChatState.WaitingForResponse);
 
-            _isStreamingRequest = useStreaming;
-            if (IsDifyMode)
-            {
-                llmClient.SetRequestInputs(BuildDynamicInputs());
-                if (useStreaming)
-                    llmClient.SendStreamingRequest("", combinedPrompt, null);
-                else
-                    llmClient.SendRequest("", combinedPrompt, null);
-            }
-            else
-            {
-                llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPromptWithAppend(combinedPrompt));
-                if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, null);
-                else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, null);
-            }
+            DispatchLlmRequest(combinedPrompt, null, appendToPrompt: true);
         }
 
         /// <summary>
@@ -638,24 +579,42 @@ namespace CyanNook.Chat
             // LLMに送信（履歴には追加しない）
             SetState(ChatState.WaitingForResponse);
 
+            DispatchLlmRequest(combinedPrompt, null, appendToPrompt: true);
+        }
+
+        /// <summary>
+        /// LLMへリクエストを送出する（送信4メソッド共通のDify/非Dify分岐）
+        /// Dify: メッセージのみ送信し、動的値はinputsで送信。
+        ///       会話履歴とシステムプロンプトはDify側で管理（conversation_id）
+        /// 非Dify: システムプロンプト + 会話履歴付きフルプロンプトを構築して送信
+        /// </summary>
+        /// <param name="message">送信メッセージ（Difyはそのまま、非Difyはプロンプト構築に使用）</param>
+        /// <param name="imagesBase64">Vision画像（null=なし）</param>
+        /// <param name="appendToPrompt">非Dify時のプロンプト構築方法。
+        /// true=会話履歴の末尾にシステム指示として追記（自律・Cron系）、false=ユーザー発言として構築</param>
+        private void DispatchLlmRequest(string message, List<string> imagesBase64, bool appendToPrompt)
+        {
             _isStreamingRequest = useStreaming;
             if (IsDifyMode)
             {
                 llmClient.SetRequestInputs(BuildDynamicInputs());
                 if (useStreaming)
-                    llmClient.SendStreamingRequest("", combinedPrompt, null);
+                    llmClient.SendStreamingRequest("", message, imagesBase64);
                 else
-                    llmClient.SendRequest("", combinedPrompt, null);
+                    llmClient.SendRequest("", message, imagesBase64);
             }
             else
             {
                 llmClient.SetRequestInputs(null);
                 string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPromptWithAppend(combinedPrompt));
+                string basePrompt = appendToPrompt
+                    ? GenerateFullPromptWithAppend(message)
+                    : GenerateFullPrompt(message);
+                string fullPrompt = ReplaceDynamicPlaceholders(basePrompt);
                 if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, null);
+                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
                 else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, null);
+                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
             }
         }
 
