@@ -78,10 +78,6 @@ namespace CyanNook.Chat
         private int _unicodeEscapeRemaining;                                      // 収集残りの16進桁数（0=非収集中）
         private readonly StringBuilder _unicodeHexBuffer = new StringBuilder(4);  // 16進4桁の蓄積
 
-        // JSON後の残りテキスト
-        private string _remainingText;
-        public string RemainingText => _remainingText ?? string.Empty;
-
         /// <summary>
         /// ストリーミングチャンクを処理
         /// </summary>
@@ -93,15 +89,8 @@ namespace CyanNook.Chat
 
             foreach (char c in chunk)
             {
-                if (_completed)
-                {
-                    // JSON完了後の残りテキストを蓄積
-                    if (_remainingText == null)
-                        _remainingText = c.ToString();
-                    else
-                        _remainingText += c;
-                    continue;
-                }
+                // JSON完了後の残りテキストは読み捨てる
+                if (_completed) break;
 
                 // シングルクォート正規化:
                 // LLMがシングルクォートを出力した場合、バッファにはダブルクォートとして格納
@@ -170,7 +159,6 @@ namespace CyanNook.Chat
             _stringStreamBuffer.Clear();
             _unicodeEscapeRemaining = 0;
             _unicodeHexBuffer.Clear();
-            _remainingText = null;
         }
 
         /// <summary>

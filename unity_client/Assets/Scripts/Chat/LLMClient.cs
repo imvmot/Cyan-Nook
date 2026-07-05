@@ -78,9 +78,6 @@ namespace CyanNook.Chat
         /// <summary>テキストチャンク受信時（逐次発火）</summary>
         public event Action<string> OnStreamTextReceived;
 
-        /// <summary>ストリーミング完了時（最終LLMResponseDataを含む）</summary>
-        public event Action<LLMResponseData> OnStreamCompleted;
-
         /// <summary>ストリーミング中のJSONパースエラー時（errorMessage, rawText）</summary>
         public event Action<string, string> OnStreamParseError;
 
@@ -148,32 +145,6 @@ namespace CyanNook.Chat
         {
             LLMConfigManager.Save(config);
             ApplyConfig(config);
-        }
-
-        /// <summary>
-        /// エンドポイントを更新（簡易メソッド）
-        /// </summary>
-        public void SetEndpoint(string endpoint)
-        {
-            if (_currentConfig == null)
-            {
-                _currentConfig = LLMConfig.GetDefault();
-            }
-            _currentConfig.apiEndpoint = endpoint;
-            SaveAndApplyConfig(_currentConfig);
-        }
-
-        /// <summary>
-        /// モデル名を更新（簡易メソッド）
-        /// </summary>
-        public void SetModelName(string modelName)
-        {
-            if (_currentConfig == null)
-            {
-                _currentConfig = LLMConfig.GetDefault();
-            }
-            _currentConfig.modelName = modelName;
-            SaveAndApplyConfig(_currentConfig);
         }
 
         /// <summary>
@@ -251,18 +222,12 @@ namespace CyanNook.Chat
                 // JSONブロックを抽出（```json...``` で囲まれている場合）
                 string json = ExtractJsonFromResponse(llmOutput);
 
-                var responseData = LLMResponseData.FromJson(json);
+                // FromJsonはFillDefaultsで必須フィールドを補填するため検証不要。
+                // JsonUtilityがnullを返す端ケース（json文字列が"null"等）のみフォールバック
+                var responseData = LLMResponseData.FromJson(json) ?? LLMResponseData.GetFallback();
 
-                if (responseData.Validate())
-                {
-                    Debug.Log($"[LLMClient] Response: {responseData.message}");
-                    OnResponseReceived?.Invoke(responseData);
-                }
-                else
-                {
-                    Debug.LogWarning($"[LLMClient] Invalid response, using fallback. Raw: {llmOutput}");
-                    OnResponseReceived?.Invoke(LLMResponseData.GetFallback());
-                }
+                Debug.Log($"[LLMClient] Response: {responseData.message}");
+                OnResponseReceived?.Invoke(responseData);
             }
             catch (Exception e)
             {
@@ -344,10 +309,6 @@ namespace CyanNook.Chat
                     // 生レスポンスイベント（デバッグ用）
                     OnRawResponseReceived?.Invoke(fullMessage);
 
-                    // ストリーミング完了イベント
-                    OnStreamCompleted?.Invoke(responseData);
-
-                    // 既存のOnResponseReceivedも発火（ChatManagerの既存フローと互換）
                     OnResponseReceived?.Invoke(responseData);
                 },
                 onError: (error) =>
