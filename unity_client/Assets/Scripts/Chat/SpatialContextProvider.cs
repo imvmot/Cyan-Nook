@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.AI;
 using System.Text;
 using System.Collections.Generic;
+using CyanNook.Core;
 using CyanNook.Furniture;
 using CyanNook.Character;
 
@@ -79,7 +80,8 @@ namespace CyanNook.Chat
                 float distance = RaycastNavMeshEdge(charPos, direction);
 
                 if (i > 0) sb.Append(", ");
-                sb.Append($"\"{clocks[i]}\": {distance:F1}");
+                // ロケール非依存で書式化（独仏等のOSでは既定の小数点がカンマになり不正JSONになる）
+                sb.Append($"\"{clocks[i]}\": {distance.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}");
             }
 
             sb.Append(" }");
@@ -133,15 +135,15 @@ namespace CyanNook.Chat
             string[] actions = inst.typeData?.availableActions ?? new string[0];
 
             sb.Append("{ ");
-            sb.Append($"\"id\": \"{EscapeJson(inst.instanceId)}\", ");
-            sb.Append($"\"name\": \"{EscapeJson(displayName)}\", ");
+            sb.Append($"\"id\": \"{JsonEscape.Escape(inst.instanceId)}\", ");
+            sb.Append($"\"name\": \"{JsonEscape.Escape(displayName)}\", ");
             sb.Append($"\"clock\": {clock}, ");
-            sb.Append($"\"distance\": {distance:F1}, ");
+            sb.Append($"\"distance\": {distance.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}, ");
             sb.Append("\"actions\": [");
             for (int j = 0; j < actions.Length; j++)
             {
                 if (j > 0) sb.Append(", ");
-                sb.Append($"\"{EscapeJson(actions[j])}\"");
+                sb.Append($"\"{JsonEscape.Escape(actions[j])}\"");
             }
             sb.Append("], ");
             sb.Append($"\"occupied\": {(inst.isOccupied ? "true" : "false")}");
@@ -170,9 +172,9 @@ namespace CyanNook.Chat
                     float distance = CalculateHorizontalDistance(charPos, target.transform.position);
 
                     sb.Append("{ ");
-                    sb.Append($"\"name\": \"{EscapeJson(targetName)}\", ");
+                    sb.Append($"\"name\": \"{JsonEscape.Escape(targetName)}\", ");
                     sb.Append($"\"clock\": {clock}, ");
-                    sb.Append($"\"distance\": {distance:F1}");
+                    sb.Append($"\"distance\": {distance.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}");
                     sb.Append(" }");
 
                     index++;
@@ -210,13 +212,5 @@ namespace CyanNook.Chat
             return diff.magnitude;
         }
 
-        /// <summary>
-        /// JSON文字列エスケープ（最低限）
-        /// </summary>
-        private static string EscapeJson(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
-        }
     }
 }

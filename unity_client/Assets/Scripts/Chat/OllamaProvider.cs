@@ -152,13 +152,14 @@ namespace CyanNook.Chat
             sb.Append($",\"think\":{thinkStr}");
 
             // options
+            // float はロケール非依存で書式化（独仏等のOSでは既定の小数点がカンマになり不正JSONになる）
             var opt = request.options;
-            sb.Append($",\"options\":{{\"temperature\":{opt.temperature}");
-            sb.Append($",\"top_p\":{opt.top_p}");
+            sb.Append($",\"options\":{{\"temperature\":{opt.temperature.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            sb.Append($",\"top_p\":{opt.top_p.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
             sb.Append($",\"top_k\":{opt.top_k}");
             sb.Append($",\"num_predict\":{opt.num_predict}");
             sb.Append($",\"num_ctx\":{opt.num_ctx}");
-            sb.Append($",\"repeat_penalty\":{opt.repeat_penalty}}}");
+            sb.Append($",\"repeat_penalty\":{opt.repeat_penalty.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}");
 
             // images（あれば、複数画像対応）
             if (imagesBase64 != null && imagesBase64.Count > 0)
