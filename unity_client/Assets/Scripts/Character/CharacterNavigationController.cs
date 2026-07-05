@@ -830,7 +830,7 @@ namespace CyanNook.Character
 
             if (_inFinalApproach ||
                 (!agent.pathPending &&
-                (agent.remainingDistance <= finalApproachDistance || agent.path.corners.Length <= 2)))
+                (agent.remainingDistance <= finalApproachDistance || IsRemainingPathStraight())))
             {
                 // 近距離 or 直線パス: target方向への直接回転
                 // desiredVelocityは近距離で小さくノイジーになり、方向が不安定になるため
@@ -852,6 +852,20 @@ namespace CyanNook.Character
                     rotationSpeed * Time.deltaTime
                 );
             }
+        }
+
+        /// <summary>
+        /// 残り経路が直線（曲がり角なし）かを判定
+        /// agent.path.corners.Length <= 2 と等価だが、cornersはアクセスごとに
+        /// NavMeshPathとVector3[]をnewして全曲がり角をコピーするため毎フレーム呼べない
+        /// （WebGLはインクリメンタルGCがなくGCスパイクの原因になる）。
+        /// 次の経由点(steeringTarget)が経路終点(pathEndPosition)と一致すれば残りは直線。
+        /// ※ UpdateMovementRotationのガード通過後にのみ呼ぶこと
+        /// （agent有効・hasPath・!pathPending 前提）
+        /// </summary>
+        private bool IsRemainingPathStraight()
+        {
+            return (agent.steeringTarget - agent.pathEndPosition).sqrMagnitude < 0.01f;
         }
 
         // --- アニメーション速度制御 ---
