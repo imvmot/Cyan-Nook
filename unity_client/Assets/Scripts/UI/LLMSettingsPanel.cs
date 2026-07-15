@@ -290,7 +290,7 @@ namespace CyanNook.UI
             switch (apiType)
             {
                 case LLMApiType.Ollama: return "Ollama";
-                case LLMApiType.LMStudio: return "LM Studio";
+                case LLMApiType.LMStudio: return "LM Studio (OpenAI-compatible)";
                 case LLMApiType.Dify: return "Dify";
                 case LLMApiType.OpenAI: return "OpenAI";
                 case LLMApiType.Claude: return "Claude";
