@@ -143,15 +143,7 @@ namespace CyanNook.UI
         public TMP_InputField cronAutoReloadInputField;
 
         [Header("UI - Sleep")]
-        [Tooltip("デフォルト睡眠時間（分）")]
-        public TMP_InputField defaultSleepDurationInputField;
-
-        [Tooltip("最小睡眠時間（分）")]
-        public TMP_InputField minSleepDurationInputField;
-
-        [Tooltip("最大睡眠時間（分）")]
-        public TMP_InputField maxSleepDurationInputField;
-
+        // 睡眠時間 (Default/Min/Max) はキャラ性の設定として AvatarSettingsPanel に移動済み
         [Tooltip("夢メッセージ間隔（分）")]
         public TMP_InputField dreamIntervalInputField;
 
@@ -436,12 +428,6 @@ namespace CyanNook.UI
                 maxHistoryInputField.onEndEdit.RemoveListener(OnMaxHistoryChanged);
             if (idleChatMessageInputField != null)
                 idleChatMessageInputField.onEndEdit.RemoveListener(OnIdleChatMessageChanged);
-            if (defaultSleepDurationInputField != null)
-                defaultSleepDurationInputField.onEndEdit.RemoveListener(OnDefaultSleepDurationChanged);
-            if (minSleepDurationInputField != null)
-                minSleepDurationInputField.onEndEdit.RemoveListener(OnMinSleepDurationChanged);
-            if (maxSleepDurationInputField != null)
-                maxSleepDurationInputField.onEndEdit.RemoveListener(OnMaxSleepDurationChanged);
             if (dreamIntervalInputField != null)
                 dreamIntervalInputField.onEndEdit.RemoveListener(OnDreamIntervalChanged);
             if (dreamPromptInputField != null)
@@ -1364,12 +1350,6 @@ namespace CyanNook.UI
 
         private void InitializeSleepSettings()
         {
-            if (defaultSleepDurationInputField != null)
-                defaultSleepDurationInputField.onEndEdit.AddListener(OnDefaultSleepDurationChanged);
-            if (minSleepDurationInputField != null)
-                minSleepDurationInputField.onEndEdit.AddListener(OnMinSleepDurationChanged);
-            if (maxSleepDurationInputField != null)
-                maxSleepDurationInputField.onEndEdit.AddListener(OnMaxSleepDurationChanged);
             if (dreamIntervalInputField != null)
                 dreamIntervalInputField.onEndEdit.AddListener(OnDreamIntervalChanged);
             if (dreamPromptInputField != null)
@@ -1382,48 +1362,12 @@ namespace CyanNook.UI
         {
             if (sleepController == null) return;
 
-            if (defaultSleepDurationInputField != null)
-                defaultSleepDurationInputField.text = sleepController.defaultSleepDuration.ToString();
-            if (minSleepDurationInputField != null)
-                minSleepDurationInputField.text = sleepController.minSleepDuration.ToString();
-            if (maxSleepDurationInputField != null)
-                maxSleepDurationInputField.text = sleepController.maxSleepDuration.ToString();
             if (dreamIntervalInputField != null)
                 dreamIntervalInputField.text = sleepController.dreamInterval.ToString("F0");
             if (dreamPromptInputField != null)
                 dreamPromptInputField.text = sleepController.dreamPromptMessage;
             if (wakeUpMessageInputField != null)
                 wakeUpMessageInputField.text = sleepController.wakeUpSystemMessage;
-        }
-
-        private void OnDefaultSleepDurationChanged(string value)
-        {
-            if (sleepController == null) return;
-            if (int.TryParse(value, out int minutes))
-            {
-                sleepController.SetDefaultSleepDuration(minutes);
-                Debug.Log($"[LLMSettingsPanel] Sleep default duration: {minutes}min");
-            }
-        }
-
-        private void OnMinSleepDurationChanged(string value)
-        {
-            if (sleepController == null) return;
-            if (int.TryParse(value, out int minutes))
-            {
-                sleepController.SetMinSleepDuration(minutes);
-                Debug.Log($"[LLMSettingsPanel] Sleep min duration: {minutes}min");
-            }
-        }
-
-        private void OnMaxSleepDurationChanged(string value)
-        {
-            if (sleepController == null) return;
-            if (int.TryParse(value, out int minutes))
-            {
-                sleepController.SetMaxSleepDuration(minutes);
-                Debug.Log($"[LLMSettingsPanel] Sleep max duration: {minutes}min");
-            }
         }
 
         private void OnDreamIntervalChanged(string value)
