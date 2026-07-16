@@ -577,6 +577,14 @@ namespace CyanNook.UI
                 bool supportsExtraParams = apiType == LLMApiType.LMStudio || apiType == LLMApiType.OpenAI;
                 extraParamsInputField.gameObject.SetActive(supportsExtraParams);
             }
+
+            // thinkフィールドを送信するのはOllamaのみのため、他プロバイダーでは行ごと非表示
+            // （OpenAI互換でのthinking制御はExtra Paramsで行う。
+            // ラベルを含む行コンテナ=トグルの親を非表示にする）
+            if (thinkToggle != null)
+            {
+                thinkToggle.transform.parent.gameObject.SetActive(apiType == LLMApiType.Ollama);
+            }
         }
 
         private void OnSaveClicked()
