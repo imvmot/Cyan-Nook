@@ -248,6 +248,18 @@ namespace CyanNook.Chat
                 sb.Append($",\"frequency_penalty\":{freqPenalty.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
             }
 
+            // 追加パラメータ（上級者設定）をトップレベルにマージ
+            // UIに無いフィールド（chat_template_kwargs等のサーバー固有設定）を送るための逃げ道
+            if (LLMConfig.TryGetExtraParamsBody(config.extraParamsJson, out string extraBody))
+            {
+                sb.Append(',').Append(extraBody);
+            }
+            else if (!string.IsNullOrWhiteSpace(config.extraParamsJson))
+            {
+                // 設定Import経由などで不正な値が入った場合の診断用（黙って捨てない）
+                Debug.LogWarning("[OpenAIProvider] extraParamsJson is not a valid JSON object, ignored");
+            }
+
             sb.Append("}");
             return sb.ToString();
         }

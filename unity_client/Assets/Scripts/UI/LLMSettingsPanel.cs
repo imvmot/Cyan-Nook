@@ -191,6 +191,10 @@ namespace CyanNook.UI
         [Tooltip("接続テストボタン")]
         public Button testConnectionButton;
 
+        [Header("UI - Advanced")]
+        [Tooltip("追加リクエストパラメータ（JSONオブジェクト）。LM Studio/OpenAI選択時のみ表示される上級者設定。model/messages/streamを上書きすると壊れるため指定しないこと")]
+        public TMP_InputField extraParamsInputField;
+
         [Header("UI - Status")]
         [Tooltip("ステータス表示")]
         public TMP_Text statusText;
@@ -461,6 +465,8 @@ namespace CyanNook.UI
                 modelNameInputField.text = config.modelName;
             if (apiKeyInputField != null)
                 apiKeyInputField.text = config.apiKey ?? "";
+            if (extraParamsInputField != null)
+                extraParamsInputField.text = config.extraParamsJson ?? "";
 
             // 生成パラメータ
             if (temperatureInputField != null)
@@ -563,6 +569,14 @@ namespace CyanNook.UI
                 endpointInputField.gameObject.SetActive(!isWebLLM);
 #endif
             }
+
+            // 追加パラメータはOpenAI互換プロバイダー（LM Studio/OpenAI）のみ表示
+            // （unityroom版は選択肢にこの2つが無いため常に非表示になる）
+            if (extraParamsInputField != null)
+            {
+                bool supportsExtraParams = apiType == LLMApiType.LMStudio || apiType == LLMApiType.OpenAI;
+                extraParamsInputField.gameObject.SetActive(supportsExtraParams);
+            }
         }
 
         private void OnSaveClicked()
@@ -574,14 +588,30 @@ namespace CyanNook.UI
                 return;
             }
 
+            var selectedApiType = apiTypeDropdown != null
+                ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini;
+
+            // 追加パラメータの検証（対象プロバイダー選択時のみ。
+            // 対象外プロバイダーでは欄が非表示のため、残存する古い値で保存を妨げない。
+            // 不正なJSONは送信時に黙って捨てられるので、保存前に検知してユーザーに知らせる）
+            string extraParams = extraParamsInputField != null ? extraParamsInputField.text : "";
+            bool extraParamsApply = selectedApiType == LLMApiType.LMStudio || selectedApiType == LLMApiType.OpenAI;
+            if (extraParamsApply && !string.IsNullOrWhiteSpace(extraParams) &&
+                !LLMConfig.TryGetExtraParamsBody(extraParams, out _))
+            {
+                SetStatus("Error: Extra Params must be a valid JSON object like {\"key\":value}");
+                return;
+            }
+
             // LLM API設定
             var defaults = LLMConfig.GetDefault();
             var config = new LLMConfig
             {
-                apiType = apiTypeDropdown != null ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini,
+                apiType = selectedApiType,
                 apiEndpoint = endpointInputField != null ? endpointInputField.text : "",
                 modelName = modelNameInputField != null ? modelNameInputField.text : "",
                 apiKey = apiKeyInputField != null ? apiKeyInputField.text : "",
+                extraParamsJson = extraParams,
                 temperature = ParseFloat(temperatureInputField, llmClient.CurrentConfig?.temperature ?? defaults.temperature),
                 topP = ParseFloat(topPInputField, llmClient.CurrentConfig?.topP ?? defaults.topP),
                 topK = ParseInt(topKInputField, llmClient.CurrentConfig?.topK ?? defaults.topK),
@@ -661,6 +691,7 @@ namespace CyanNook.UI
                 apiEndpoint = endpointInputField != null ? endpointInputField.text : "",
                 modelName = modelNameInputField != null ? modelNameInputField.text : "",
                 apiKey = apiKeyInputField != null ? apiKeyInputField.text : "",
+                extraParamsJson = extraParamsInputField != null ? extraParamsInputField.text : "",
                 temperature = ParseFloat(temperatureInputField, llmClient.CurrentConfig?.temperature ?? testDefaults.temperature),
                 topP = ParseFloat(topPInputField, llmClient.CurrentConfig?.topP ?? testDefaults.topP),
                 topK = ParseInt(topKInputField, llmClient.CurrentConfig?.topK ?? testDefaults.topK),

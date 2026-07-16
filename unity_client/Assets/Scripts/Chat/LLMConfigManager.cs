@@ -117,6 +117,38 @@ namespace CyanNook.Chat
         [Tooltip("API Key（Dify/OpenAI/Claude/Gemini用）")]
         public string apiKey;
 
+        [Tooltip("追加リクエストパラメータ（JSONオブジェクト、LM Studio/OpenAI用の上級者設定）")]
+        public string extraParamsJson;
+
+        /// <summary>
+        /// extraParamsJson からトップレベルマージ用の中身（外側の {} を除いた部分）を取り出す。
+        /// UIに無いフィールド（chat_template_kwargs 等のサーバー固有パラメータ）を
+        /// ユーザーがリクエストへ直接追加できるようにする上級者設定。
+        /// 空・JSONオブジェクトとして不正な場合は false。
+        /// Newtonsoft.Json でパース→再シリアライズするため、返る body は常に正規の JSON。
+        /// 括弧バランスだけの簡易チェックだと {"a":1}{"b":2} のような入力が
+        /// すり抜けてリクエスト全体を壊すため、正規パース方式を採用している
+        /// </summary>
+        public static bool TryGetExtraParamsBody(string extraParamsJson, out string body)
+        {
+            body = null;
+            if (string.IsNullOrWhiteSpace(extraParamsJson)) return false;
+
+            try
+            {
+                var obj = Newtonsoft.Json.Linq.JObject.Parse(extraParamsJson.Trim());
+                if (!obj.HasValues) return false;
+
+                string normalized = obj.ToString(Newtonsoft.Json.Formatting.None);
+                body = normalized.Substring(1, normalized.Length - 2);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         /// <summary>
         /// デフォルト設定を取得（Ollama用）
         /// </summary>
@@ -135,7 +167,8 @@ namespace CyanNook.Chat
                 think = false,
                 timeout = 60f,
                 apiType = LLMApiType.Ollama,
-                apiKey = ""
+                apiKey = "",
+                extraParamsJson = ""
             };
         }
 
@@ -225,7 +258,8 @@ namespace CyanNook.Chat
                 repeatPenalty = 1.1f,
                 think = false,
                 timeout = 120f,
-                apiKey = "" // UIには空欄。実行時にResolveApiKeyでデフォルトキーにフォールバック
+                apiKey = "", // UIには空欄。実行時にResolveApiKeyでデフォルトキーにフォールバック
+                extraParamsJson = ""
             };
         }
     }
