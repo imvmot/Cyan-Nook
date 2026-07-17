@@ -71,14 +71,22 @@ namespace CyanNook.Voice
         private const string PrefKey_TTSEnabled = "voice_ttsEnabled";
         private const string PrefKey_EchoPrevention = "voice_echoPrevention";
 
-        // AudioClip再生キュー（VOICEVOX / Gemini TTS 共通）
+        // AudioClip再生バッファ（VOICEVOX / Gemini TTS 共通）
         // moraTimeline は VOICEVOX のみ提供、Gemini TTS は常に null
+        // clip == null は「合成失敗した文」のプレースホルダー（再生せず読み飛ばす）
         private struct AudioClipQueueEntry
         {
             public AudioClip clip;
             public List<MoraEntry> moraTimeline;
         }
-        private Queue<AudioClipQueueEntry> _audioClipQueue = new Queue<AudioClipQueueEntry>();
+
+        // 順序保証バッファ: 合成は文ごとに並列実行されるため、短い文が長い文を
+        // 追い越して先に完成することがある（合成完了順に再生すると文の順番が
+        // 入れ替わる）。合成依頼時に連番を振り、再生は必ず連番順に消費する。
+        // 次に再生すべき番号がまだ合成中なら、後の番号が完成していても待つ
+        private Dictionary<int, AudioClipQueueEntry> _orderedClipBuffer = new Dictionary<int, AudioClipQueueEntry>();
+        private int _nextSynthesisSequence = 0;
+        private int _nextPlaybackSequence = 0;
 
         /// <summary>
         /// 現在のエンジンがAudioClipベース（VOICEVOX / Gemini TTS）かどうか
@@ -146,8 +154,25 @@ namespace CyanNook.Voice
 
         private void Update()
         {
-            // AudioClipベースエンジン（VOICEVOX / Gemini TTS）はキューを自動再生
-            if (IsAudioClipBasedEngine && !_isPlaying && _audioClipQueue.Count > 0)
+            // AudioClipベースエンジン（VOICEVOX / Gemini TTS）はバッファを自動再生
+            if (!IsAudioClipBasedEngine) return;
+
+            // 合成失敗した文（clip==nullプレースホルダー）は再生せず読み飛ばし、
+            // 後続の文が永久に待たされないよう連番を進める
+            bool skipped = false;
+            while (_orderedClipBuffer.TryGetValue(_nextPlaybackSequence, out var entry) && entry.clip == null)
+            {
+                _orderedClipBuffer.Remove(_nextPlaybackSequence);
+                _nextPlaybackSequence++;
+                skipped = true;
+            }
+            if (skipped)
+            {
+                TryResumeSTT();
+            }
+
+            // 次に再生すべき番号の文が完成していれば再生（後の番号が先に完成していても待つ）
+            if (!_isPlaying && _orderedClipBuffer.ContainsKey(_nextPlaybackSequence))
             {
                 PlayNextAudioClip();
             }
@@ -240,7 +265,9 @@ namespace CyanNook.Voice
             {
                 audioSource.Stop();
             }
-            _audioClipQueue.Clear();
+            _orderedClipBuffer.Clear();
+            _nextSynthesisSequence = 0;
+            _nextPlaybackSequence = 0;
 
             // Web Speech API停止
             if (webSpeechSynthesis != null)
@@ -377,6 +404,8 @@ namespace CyanNook.Voice
         {
             int gen = _stopGeneration;
             bool counted = false;
+            // 再生順の連番。awaitより前（呼び出し順が保たれる同期区間）で採番することが重要
+            int seq = -1;
 
             try
             {
@@ -384,30 +413,30 @@ namespace CyanNook.Voice
                 {
                     if (voicevoxClient == null) return;
 
+                    seq = _nextSynthesisSequence++;
                     _pendingSynthesisCount++;
                     counted = true;
                     var (clip, moraTimeline) = await voicevoxClient.SynthesizeAsync(text);
 
-                    // Stop()済み: 結果を捨てる（カウンタはStopで0リセット済みのためデクリメントしない）
+                    // Stop()済み: 結果を捨てる（カウンタ・連番はStopでリセット済みのため触らない）
                     if (gen != _stopGeneration) return;
                     _pendingSynthesisCount--;
                     counted = false;
 
+                    // 合成失敗（clip==null）でもプレースホルダーを登録して連番の穴を空けない
+                    // （穴が空くと後続の文が永久に再生されない）。読み飛ばしはUpdateで行う
+                    _orderedClipBuffer[seq] = new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline };
+
                     if (clip != null)
                     {
-                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline });
-                        Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX: {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
-                    }
-                    else
-                    {
-                        // 合成失敗時: 他に何も残っていなければSTT再開
-                        TryResumeSTT();
+                        Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX: {text.Substring(0, Mathf.Min(20, text.Length))}... (seq={seq}, Buffered: {_orderedClipBuffer.Count})");
                     }
                 }
                 else if (ttsEngineType == TTSEngineType.GeminiTTS)
                 {
                     if (geminiTtsClient == null) return;
 
+                    seq = _nextSynthesisSequence++;
                     _pendingSynthesisCount++;
                     counted = true;
                     var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
@@ -416,14 +445,11 @@ namespace CyanNook.Voice
                     _pendingSynthesisCount--;
                     counted = false;
 
+                    _orderedClipBuffer[seq] = new AudioClipQueueEntry { clip = clip, moraTimeline = null };
+
                     if (clip != null)
                     {
-                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = null });
-                        Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS: {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
-                    }
-                    else
-                    {
-                        TryResumeSTT();
+                        Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS: {text.Substring(0, Mathf.Min(20, text.Length))}... (seq={seq}, Buffered: {_orderedClipBuffer.Count})");
                     }
                 }
                 else // WebSpeechAPI
@@ -442,9 +468,16 @@ namespace CyanNook.Voice
                 {
                     _pendingSynthesisCount--;
                 }
+
+                // 採番済み・現世代・未登録ならプレースホルダーで連番の穴を塞ぐ
+                // （countedの状態に依存させず、どの経路で例外が起きても穴を残さない）
+                if (seq >= 0 && gen == _stopGeneration && !_orderedClipBuffer.ContainsKey(seq))
+                {
+                    _orderedClipBuffer[seq] = new AudioClipQueueEntry { clip = null, moraTimeline = null };
+                }
                 Debug.LogError($"[VoiceSynthesisController] Synthesis failed: {ex.Message}");
 
-                // 合成失敗（clip==null）経路と同様、他に何も残っていなければSTTを再開する
+                // 他に何も残っていなければSTTを再開する
                 TryResumeSTT();
             }
         }
@@ -454,16 +487,20 @@ namespace CyanNook.Voice
         // ─────────────────────────────────────
 
         /// <summary>
-        /// キューから次のAudioClipを再生（VOICEVOX / Gemini TTS）
+        /// 順序保証バッファから次の連番のAudioClipを再生（VOICEVOX / Gemini TTS）
         /// </summary>
         private void PlayNextAudioClip()
         {
-            if (_audioClipQueue.Count == 0 || audioSource == null)
+            if (audioSource == null ||
+                !_orderedClipBuffer.TryGetValue(_nextPlaybackSequence, out var entry) ||
+                entry.clip == null)
             {
                 return;
             }
 
-            var entry = _audioClipQueue.Dequeue();
+            _orderedClipBuffer.Remove(_nextPlaybackSequence);
+            _nextPlaybackSequence++;
+
             audioSource.clip = entry.clip;
             audioSource.Play();
 
@@ -493,7 +530,7 @@ namespace CyanNook.Voice
             CancelPlaybackWait();
             _playbackWaitCoroutine = StartCoroutine(WaitForPlaybackEnd(entry.clip.length));
 
-            Debug.Log($"[VoiceSynthesisController] Playing AudioClip ({entry.clip.length:F1}s, Queue: {_audioClipQueue.Count}, engine={ttsEngineType})");
+            Debug.Log($"[VoiceSynthesisController] Playing AudioClip ({entry.clip.length:F1}s, Buffered: {_orderedClipBuffer.Count}, engine={ttsEngineType})");
         }
 
         /// <summary>
@@ -595,7 +632,7 @@ namespace CyanNook.Voice
             if (_isPlaying) return;
             if (_isStreaming) return;
             if (_pendingSynthesisCount > 0) return;
-            if (_audioClipQueue.Count > 0) return;
+            if (_orderedClipBuffer.Count > 0) return;
 
             // 既にクールダウン中なら再スケジュールしない
             if (_sttResumeCoroutine != null) return;
@@ -621,7 +658,7 @@ namespace CyanNook.Voice
             _sttResumeCoroutine = null;
 
             // クールダウン中にTTSが再開されていないか再チェック
-            if (_isPlaying || _isStreaming || _pendingSynthesisCount > 0 || _audioClipQueue.Count > 0)
+            if (_isPlaying || _isStreaming || _pendingSynthesisCount > 0 || _orderedClipBuffer.Count > 0)
             {
                 yield break;
             }

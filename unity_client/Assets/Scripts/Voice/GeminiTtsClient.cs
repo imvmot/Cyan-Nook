@@ -186,6 +186,9 @@ namespace CyanNook.Voice
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
                 request.SetRequestHeader("x-goog-api-key", ResolveApiKey());
+                // 応答が来ないハング状態で永久待機すると、順序保証バッファの連番に
+                // 穴が空いて以降の文が全て再生されなくなるため、必ずタイムアウトさせる
+                request.timeout = 60;
 
                 var operation = request.SendWebRequest();
                 while (!operation.isDone)
