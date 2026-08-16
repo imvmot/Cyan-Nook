@@ -84,12 +84,15 @@ Gemini（内蔵既定キー）+ WebLLM のみ。キー/エンドポイント入�
 - 既定キー・モデル名等は `Resources/UnityroomConfig.asset`（gitignore 対象）で管理。
   Gemini TTS のモデルもここで指定する
 
-### リリース手順の罠: define の戻し忘れ
+### ビルド切替は Build Profiles で行う
 
-`Switch to Unityroom Build` ⇔ `Switch to GitHub Build` の切替後は
-**File > Save Project を実行**しないと ProjectSettings.asset に define が残留する。
-リリース後は `git diff unity_client/ProjectSettings/ProjectSettings.asset` が
-空であることを確認する。手順全体は `.claude/skills/unityroom-release/` にチェックリスト化済み。
+ビルド種別 (GitHub / Unityroom / Mobile) の切替は `Window > Build Profiles` の
+3プロファイルで行う。define (`UNITYROOM_BUILD` / `MOBILE_WEB_BUILD`)・テクスチャ圧縮
+(DXT/ASTC)・WebGL テンプレートはプロファイル側が保持するため、かつての
+「define の戻し忘れが ProjectSettings.asset に残留する」事故は構造的に起きない。
+注意点は1つ: **Mobile プロファイルだけ Player Settings のコピーを持つ**ため、
+グローバルの Player Settings を変更した際は Mobile 側への反映を確認すること。
+リリース手順全体は `.claude/skills/unityroom-release/` にチェックリスト化済み。
 
 ## ローカルサーバー（build/server.ps1）
 

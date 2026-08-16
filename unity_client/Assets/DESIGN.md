@@ -4195,7 +4195,7 @@ unityroom は **`Build` フォルダ4ファイル + `StreamingAssets` のみア�
 
 **運用フロー（unityroom版リリース時）:**
 
-1. `CyanNook > Build > Switch to Unityroom Build` (UNITYROOM_BUILD ON)
+1. `Window > Build Profiles` で WebGL - Unityroom プロファイルをアクティブ化 (UNITYROOM_BUILD ON)
 2. main シーンを開く
 3. `CyanNook > Localization > Bake Japanese to Active Scene TMPs` 実行（全 TMP に日本語焼き付け）
 4. WebGL ビルド → `prepare_unityroom.bat` → unityroom にアップロード

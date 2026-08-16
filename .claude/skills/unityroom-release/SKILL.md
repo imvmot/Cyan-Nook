@@ -17,7 +17,8 @@ unityroom 版は Gemini 内蔵キー+WebLLM のみの体験版（UNITYROOM_BUILD
 
 ## 2. Unityroom ビルドへ切替
 
-- `CyanNook > Build > Switch to Unityroom Build`（UNITYROOM_BUILD ON）
+- `Window > Build Profiles` で **WebGL - Unityroom** プロファイルをアクティブ化
+  （UNITYROOM_BUILD はプロファイルの Scripting Defines が付与。テクスチャ圧縮 DXT も設定済み）
 - 切替後、コンパイルエラーがないことを read_console で確認
 
 ## 3. 日本語ベイク
@@ -53,8 +54,8 @@ unityroom 版は Gemini 内蔵キー+WebLLM のみの体験版（UNITYROOM_BUILD
 
 ## 7. 後片付け（重要・忘れやすい）
 
-- `CyanNook > Build > Switch to GitHub Build`（UNITYROOM_BUILD OFF）
-- **File > Save Project を実行**（忘れると ProjectSettings.asset のメモリ上の変更が
-  ディスクに反映されず、次の define 切替往復で UNITYROOM_BUILD が残留する）
-- `git diff unity_client/ProjectSettings/ProjectSettings.asset` が空であることを確認
+- `Window > Build Profiles` で **WebGL - GitHub** プロファイルへ戻す
+  （define はプロファイル管理のため ProjectSettings.asset に UNITYROOM_BUILD が
+  残留する事故は起きない。旧メニュー時代の File > Save Project 手順は不要になった）
+- `git diff unity_client/ProjectSettings/ProjectSettings.asset` が空であることを念のため確認
 - コンパイルが GitHub 版で通ることを確認
