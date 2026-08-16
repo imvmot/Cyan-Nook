@@ -20,7 +20,7 @@ MonoBehaviour:
     rid: 998337135487221838
   m_OverrideGlobalSceneList: 0
   m_Scenes: []
-  m_HasScriptingDefines: 0
+  m_HasScriptingDefines: 1
   m_ScriptingDefines:
   - MOBILE_WEB_BUILD
   m_PlayerSettingsYaml:
@@ -870,7 +870,7 @@ MonoBehaviour:
     - line: '|   webGLDebugSymbols: 0'
     - line: '|   webGLEmscriptenArgs: '
     - line: '|   webGLModulesDirectory: '
-    - line: '|   webGLTemplate: PROJECT:CyanNook'
+    - line: '|   webGLTemplate: PROJECT:CyanNookMobile'
     - line: '|   webGLAnalyzeBuildSize: 0'
     - line: '|   webGLUseEmbeddedResources: 0'
     - line: '|   webGLCompressionFormat: 1'
