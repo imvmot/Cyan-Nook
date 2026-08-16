@@ -13,3 +13,5 @@ unity_client/Assets/Resources/UnityroomConfig.asset.meta
 
 # 3rdパーティEditor拡張（Unity Asset Store EULA、本リポのMITには含まれない）
 unity_client/Assets/Plugins/Listwon/
+# モバイル用ASTCビルド出力（PC用の build/ と違いテスト配信用のためコミットしない）
+build_mobile/
