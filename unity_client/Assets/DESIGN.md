@@ -27,9 +27,16 @@ VRM1.0キャラクターが箱庭空間で自律行動し、ユーザーとの�
 │ ┌─────────────────────────────────────────────────────────┐ │
 │ │ LLMClient                - LLM通信統合（ILLMProvider）  │ │
 │ │ ILLMProvider             - LLMプロバイダーIF            │ │
-│ │ OllamaProvider           - Ollama/LM Studio HTTP通信   │ │
+│ │ OllamaProvider           - Ollama HTTP通信（独自API）  │ │
+│ │ LMStudioProvider         - LM Studio/OpenAI互換API通信 │ │
+│ │ OpenAIProvider/ClaudeProvider/GeminiProvider - クラウドAPI│ │
 │ │ DifyProvider             - Dify Chat Messages API通信  │ │
 │ │ WebLLMProvider           - WebLLM（ブラウザ内LLM via WebGPU）│ │
+│ │ ExternalActionFeedController - 外部アクションフィード購読/公開│ │
+│ │ CronScheduler            - 定期LLMリクエスト            │ │
+│ │ IdleChatController       - 放置時の自律リクエスト       │ │
+│ │ BoredomController        - 退屈度管理                   │ │
+│ │ SpatialContextProvider   - 空間コンテキスト生成         │ │
 │ │ WebLLMBridge             - WebLLM jslib C#ブリッジ     │ │
 │ │ LLMConfigManager         - API設定保存（PlayerPrefs）   │ │
 │ │ StreamSeparatorProcessor - ヘッダー/本文分離処理        │ │
@@ -64,6 +71,9 @@ VRM1.0キャラクターが箱庭空間で自律行動し、ユーザーとの�
 │ │ WebSpeechRecognition     - Web Speech STT C#ラッパー    │ │
 │ │ VoiceInputController     - 音声入力統合管理             │ │
 │ │ VoiceActivityDetector    - 無音検出・自動送信           │ │
+│ │ VoiceSynthesisController - TTS統合管理（3エンジン・順序保証再生）│ │
+│ │ VoicevoxClient / GeminiTtsClient - TTS APIクライアント │ │
+│ │ LipSyncController        - リップシンク統合             │ │
 │ │ FirstRunController       - 初回起動ポップアップ・WebLLMダウンロード進捗│ │
 │ │ DebugSettingsPanel       - デバッグ設定パネル            │ │
 │ │ SettingsExporter         - 設定JSON Import/Export       │ │
@@ -95,7 +105,7 @@ VRM1.0キャラクターが箱庭空間で自律行動し、ユーザーとの�
     "height": "high | mid | low"
   },
   "reaction": "短い相槌（省略可）",
-  "action": "move | interact_sit | interact_sleep | interact_exit | ignore",
+  "action": "move | interact_sit | interact_sleep | interact_exit | interact_entry | ignore",
   "emote": "Neutral | happy01 | relaxed01 | angry01 | sad01 | surprised01",
   "sleep_duration": 30,
   "message": "メッセージ本文（省略可）"
@@ -113,7 +123,7 @@ VRM1.0キャラクターが箱庭空間で自律行動し、ユーザーとの�
 | target.clock | No | 方向（1-12、キャラ基準。dynamic時のみ） |
 | target.distance | No | 距離プリセット（near/mid/far。dynamic時のみ） |
 | target.height | No | 高さプリセット（high/mid/low。dynamic時のみ） |
-| action | No | 行動指示（"ignore"=何もしない） |
+| action | No | 行動指示（"ignore"=何もしない。"interact_entry"=外出中の帰宅指示、外出中のみ有効） |
 | emote | No | 感情モーション（"Neutral"=再生しない） |
 | sleep_duration | No | 睡眠時間（分）。action が `interact_sleep` の時のみ有効。未指定時はデフォルト値を使用 |
 | message | No | メイン本文（ストリーミング表示される。JSONの最後に配置推奨） |
@@ -182,7 +192,10 @@ EmotePlayableClip の `additiveBones` が設定されている場合は加算モ
 指定ボーンのみ Emote アニメーションで上書きし、それ以外のボーンはベースアニメーションを維持する。
 （例：interact_sit の lp 区間に上半身ボーンを設定 → 座ったまま上半身のみ Emote 再生）
 
-Thinking 再生中に emote リクエストが来た場合は `ForceStopThinking()` で即座にキャンセルし、エモートアニメーションに遷移する。
+Thinking 再生中に emote リクエストが来た場合は `StopThinking()`（graceful exit、think_ed 再生あり）で終了し、
+`FlushAfterThinkExit()` の遅延実行でエモートアニメーションに遷移する。
+（過去は emote のみ `ForceStopThinking()` で即時キャンセルしていたが、think_ed 上の AdditiveCancelClip
+発火前に打ち切られる問題があり、現在は emotion / target / reaction / emote すべて graceful exit に統一）
 
 ### DynamicTarget システム
 
@@ -260,7 +273,10 @@ LLM: target.type = "mirror"
 ```
 
 未知の type（登録名にもない）は `TargetType.Dynamic` にフォールバックする。
-clock/distance/height が未設定なら DynamicTarget も動かず、直前の視線位置を維持する。
+このとき clock/distance/height が未設定でもデフォルト解決される点に注意:
+`action:"move"` では `ClockToAngle(0)`=正面 0°、`ResolveDistance(null)`=mid (3.0m) となり
+「正面3m」へ実際に移動する。`action:"ignore"` でも `SetLookAtHeight(null)`=mid (1.0) が
+適用されるため、視線高さは直前の値を維持せず mid にリセットされる。
 
 #### LLMプロンプトへの通知
 
@@ -345,7 +361,9 @@ DynamicTargetは不可視マーカーのため、他のNavMeshAgentとの干渉�
 3. 値の種類に応じた完了検出:
    - 文字列: 閉じ引用符で完了
    - オブジェクト: depth==1に戻った時点で完了
-   - プリミティブ（数値/bool/null）: カンマまたは `}` で完了
+   - プリミティブ（数値/bool/null）: カンマで完了（JSON末尾＝閉じ `}` 直前に置かれた
+     プリミティブは逐次発火されず、完了時の全体パースでのみ反映される。
+     `sleep_duration` 等を逐次反映させたい場合は末尾以外に配置する）
 4. 値完了時: `OnFieldParsed(fieldName, rawJsonValue)` を発火
 5. `StreamingFieldName`（デフォルト: "message"）に一致するフィールドの場合:
    - 文字列値の途中でもチャンク単位で `OnStringValueChunk(fieldName, decodedChunk)` を発火
@@ -420,7 +438,11 @@ LLM Streaming Response
     ├─ reaction到着 → StopThinking()（graceful: ed再生）
     ├─ target到着   → StopThinking()（graceful: ed再生）
     ├─ action到着   → Thinking継続（target/emote待ち）
-    └─ emote到着    → ForceStopThinking()（即座キャンセル → エモートへ遷移）
+    └─ emote到着    → StopThinking()（graceful: ed再生。エモートはFlushAfterThinkExitで遅延実行）
+
+※ emotion/target/reaction/emote すべて graceful exit に統一済み
+  （過去は emote のみ ForceStopThinking の即座キャンセルだったが、
+  think_ed 上の AdditiveCancelClip 発火前に打ち切られる問題により変更）
 
 フォールバック: HandleRequestCompleted()時にまだThinking中なら強制解除
 ```
@@ -497,7 +519,8 @@ ChatManager.HandleStreamParseError():
   ├─ Thinking解除（StopThinking）
   ├─ SetState(Idle)
   ├─ OnParseError → UIController.OnChatParseError
-  │     └─ <color>エラーメッセージ</color> + 改行 + 生テキスト
+  │     ├─ エラーメッセージ → StatusOverlay.ShowError()（overlay未設定時のみ errorMessageColor で色付き表示）
+  │     └─ 生テキスト → 別途 ShowMessage() でメッセージ欄に表示
   ├─ voiceSynthesisController.SynthesizeAndPlay(rawText) ← TTS対象（エラーメッセージは除外）
   └─ OnChatResponseReceived(fallback) → CharacterControllerクリーンアップ
 ```
@@ -533,10 +556,11 @@ public class LlmResponseHeader
     public string action;        // "move", "interact_sit", "interact_sleep", "interact_exit", "ignore"
     public TargetData target;
     public EmotionData emotion;
+    public string reaction;  // 短い相槌
+    public string message;   // JSON全体パース時に含まれる
     // characterフィールドなし（設定パネルで管理）
-    // messageフィールドなし
 
-    public LLMResponseData ToResponseData(string message);
+    public LLMResponseData ToResponseData(string streamingMessage = null);
 }
 ```
 
@@ -557,38 +581,37 @@ chr001_anim_common_idle01_lp
 └────────────────────────────── Character template ID
 ```
 
-### Tool Animation (Separate file)
+### 家具連動アニメーション (Separate file)
+
+キャラクターと同期再生する家具側アニメーションは、同名 + 家具IDサフィックスの別ファイルとして管理する
+（`FurnitureAnimationController` が同期再生）:
+
 ```
-chr001_anim_interact_bookshelf01_ed_toolL
-                                    │
-                                    └── Tool bone animation for left hand
+chr001_anim_interact_exit01_Door01
+                            │
+                            └── 対応する家具プレハブ名（Door01）
 ```
+
+実在例: `chr001_anim_interact_entry01_Door01` / `chr001_anim_interact_exit01_Door01`
 
 ---
 
 ## Animation Categories
 
+実装済み（`Assets/Animations/chr001/` に実在するもの）:
+
 ### common - 基本行動
 | ID | Type | Description |
 |----|------|-------------|
 | common_idle01_lp | Loop | 待機 |
-| common_idlevar01 | OneShot | 待機バリエーション |
-| common_walk01_st/lp/ed | Start/Loop/End | 歩き前 |
-| common_walk02_lp | Loop | 歩き後 |
-| common_walk03_lp | Loop | 歩き左 |
-| common_walk04_lp | Loop | 歩き右 |
+| common_walk01_st/lp/ed | Start/Loop/End | 歩き |
 | common_walkturnL01_st | Start | 左旋回歩き出し（Walk-Turnシステム、TurnL_STトラック） |
 | common_walkturnR01_st | Start | 右旋回歩き出し（Walk-Turnシステム、TurnR_STトラック） |
-| common_run01_st/lp/ed | Start/Loop/End | 走り |
-| common_runturn01_st | Start | 左90度ターン→走り |
-| common_runturn02_st | Start | 右90度ターン→走り |
 
 ### talk - 会話
 | ID | Type | Description |
 |----|------|-------------|
 | talk_idle01_st/lp/ed | Start/Loop/End | 会話中待機 |
-| talk_idle02_lp | Loop | 長時間待機（退屈そう） |
-| talk_idlevar01 | OneShot | 会話中バリエーション |
 | talk_thinking01_st/lp/ed | Start/Loop/End | 考え中（API待ち） |
 
 ### emote - 感情表現
@@ -604,11 +627,21 @@ chr001_anim_interact_bookshelf01_ed_toolL
 | ID | Type | Description |
 |----|------|-------------|
 | interact_sit01_st/lp/ed | Start/Loop/End | 座る |
-| interact_bed01_st/lp/ed | Start/Loop/End | ベッドに寝転ぶ |
-| interact_bookshelf01_st/lp/ed | Start/Loop/End | 本棚から本を取る |
-| interact_bookchair01_st/lp/ed | Start/Loop/End | 椅子で本を読む |
-| interact_exit01_st/lp/ed | Start/Loop/End | ドアから出る（退室） |
-| interact_entry01 | OneShot | ドアから入る（入室、Root Motion移動） |
+| interact_sleep01_st/lp/ed | Start/Loop/End | ベッドで眠る |
+| interact_exit01 | OneShot | ドアから出る（退室、家具連動 _Door01 あり） |
+| interact_entry01 | OneShot | ドアから入る（入室、Root Motion移動、家具連動 _Door01 あり） |
+
+### facial - 表情
+| ID | Type | Description |
+|----|------|-------------|
+| facial_blink01_shape | Shape | まばたき（Facial Timeline 用） |
+
+### 未実装（将来追加候補・命名予約のみ）
+
+`common_idlevar01`（待機バリエーション）、`common_walk02〜04_lp`（方向別歩き）、
+`common_run01_st/lp/ed`・`common_runturn01/02_st`（走り系。`TL_common_run01.playable` のみ存在、クリップ未作成）、
+`talk_idle02_lp`・`talk_idlevar01`（会話バリエーション）、
+`interact_bookshelf01`・`interact_bookchair01`（本棚・読書。家具側も未実装）
 
 ---
 
@@ -650,13 +683,18 @@ Nook = 部屋プレハブ。床・壁・家具をひとまとめにした環境�
 
 ```
 Assets/Prefabs/Nook/
-├── Nook01/
-│   ├── Nook01_default.prefab          # デフォルト部屋
-│   └── Nook01_default/
-│       └── NavMesh-Floor_NavMesh.asset # ベイク済みNavMesh
-└── Nook02/
-    └── Nook02_japanstyle.prefab
+└── Nook01/
+    ├── Nook01_default.prefab          # デフォルト部屋（現状唯一のNook）
+    ├── FurnitureType_chair.asset      # 家具種類定義（ScriptableObject）
+    ├── FurnitureType_bed.asset
+    ├── FurnitureType_door.asset
+    └── Nook01_default/
+        ├── NavMesh-Floor_NavMesh 1.asset    # ベイク済みNavMesh
+        ├── NavMesh-NavMesh_Object.asset
+        └── NavMesh-NavMesh_Object 2.asset
 ```
+
+※ Nook02（和室等の別部屋）は将来構想。現状は Nook01_default のみ。
 
 ### Nookプレハブ内部構造
 
@@ -674,18 +712,12 @@ Nook01_default (Prefab)
     └── Door01 (FurnitureInstance)
 ```
 
-### Nook読み込み（Addressables）
+### Nook読み込み
 
-```csharp
-// 動的読み込み
-var handle = Addressables.LoadAssetAsync<GameObject>("Nook01_default");
-var nookPrefab = await handle.Task;
-var nookInstance = Instantiate(nookPrefab);
-
-// 切り替え時
-Destroy(currentNook);
-currentNook = Instantiate(newNookPrefab);
-```
+**現状はシーンに静的配置**（main.unity に Nook01_default のインスタンスを直接配置）。
+Addressables による動的読み込み・部屋切り替えは将来構想であり未実装
+（`FurnitureManager.SetNook(GameObject)` は API として存在するが呼び出し元なし）。
+将来ランタイムロード化する場合のテクスチャ形式は KTX2/Basis Universal が候補。
 
 ---
 
@@ -707,9 +739,13 @@ room01_chair_01
 | Category | Actions | Default Action | Description |
 |----------|---------|----------------|-------------|
 | chair | sit | sit | 座れる椅子全般 |
-| bed | sleep, sit | sleep | 寝転べるベッド |
-| bookshelf | look, take | look | 本棚 |
-| door | exit, entry | 自動判定 | 出入り口（exit=退室インタラクション、entry=入室ポイント） |
+| bed | sit, sleep | sit | 寝転べるベッド |
+| door | exit, entry | entry | 出入り口（exit=退室インタラクション、entry=入室ポイント） |
+
+※ bookshelf（look/take）は将来候補で未実装。実在する FurnitureTypeData は chair/bed/door の3種のみ。
+※ door の「キャラクター位置による exit/enter 自動判定」（`SelectBestAction`）は、判定結果の
+文字列 `"enter"` がアセット側の許容アクション `"entry"` と綴り不一致のため現状機能しておらず、
+常に defaultAction（entry）へフォールバックする（既知の問題、修正判断は保留中）。
 
 ### データ構造
 
@@ -718,13 +754,13 @@ room01_chair_01
 家具の「種類」を定義。椅子全般、ベッド全般などの共通設定。
 
 ```csharp
-[CreateAssetMenu(menuName = "CyanNook/FurnitureTypeData")]
+[CreateAssetMenu(fileName = "FurnitureType_", menuName = "CyanNook/Furniture Type Data")]
 public class FurnitureTypeData : ScriptableObject
 {
     public string typeId;                      // "chair", "bed", etc.
-    public string[] availableActions;          // ["sit"], ["sleep", "sit"]
-    public string defaultAction;               // "sit", "sleep"
-    public string interactionPointPrefix;      // "Interact_sit"
+    public string[] availableActions;          // ["sit"], ["sit", "sleep"]
+    public string defaultAction;               // "sit", "entry"
+    public string interactionPointPrefix;      // デフォルト "Interact_"（※実質未使用: FurnitureInstance側は "Interact_" をハードコード）
     public string lookAtPointPrefix;           // "Interact_lookattarget"
     public float approachRadius = 0.1f;        // 接近判定半径(m)
     public float lookAtMaxDistance = 2.0f;     // LookAt有効距離(m)
@@ -765,7 +801,11 @@ public class FurnitureInstance : MonoBehaviour
 | `Interact_entry` | 入室位置（NavMesh外可） | `Interact_entry01` |
 | `Interact_lookattarget` | 視線ターゲット | `Interact_lookattarget01` |
 
-**注意**: 接頭辞の大文字/小文字は区別しない（case-insensitive）。Blender側での命名が小文字でも正しくマッチする。
+**注意（大文字/小文字の扱い・現状は不完全）**: ポイントの**収集**（`CollectPoints`）は
+case-insensitive だが、**アクション分類**（`ExtractActionFromPointName` の `StartsWith("Interact_")`）は
+case-sensitive。そのため小文字命名（`interact_sit01` 等）だと収集はされるがアクション別分類に
+入らず、複数アクション家具（bed の sit/sleep）でポイント選択が全ポイントfallbackになる。
+Blender 側では **`Interact_` の大文字始まりで命名すること**（分類も case-insensitive にする修正は判断保留中）。
 
 ---
 
@@ -780,7 +820,7 @@ public class FurnitureInstance : MonoBehaviour
 
 2. NavMesh移動 (CharacterNavigationController)
    └─ NavMeshAgentが位置制御（agent.SetDestination）
-   └─ TL_Walk再生（walk01_lp ループ、Root Motionは無視）
+   └─ TL_common_walk01再生（walk01_lp ループ、Root Motionは無視）
    └─ アニメーション速度をagent速度に合わせて調整
    └─ InteractionPointへ接近
 
@@ -827,7 +867,7 @@ agent.updateRotation = false;  // 回転は手動制御（UpdateMovementRotation
 
 ```
 1. 位置保持モード（Idle/Talk/Emote）→ 無視（位置保持が優先）
-2. 移動中（Moving/Approaching/Turning/FinalTurning）→ 無視（agentが制御）
+2. 移動中（Moving/ApproachingInteraction/FinalTurning）→ 無視（agentが制御）
 3. Walk/Runアニメーション中 → 無視（安全策: JSON入力等でもドリフト防止）
 4. ループジャンプ直後 → 無視（大きな負のdeltaを除外）
 5. 上記以外（Interact等）→ ローカル座標で適用（BlendPivot相対の微調整）
@@ -1213,7 +1253,7 @@ Talk システムは、キャラクターが RoomTarget "talk" 位置に移動�
 | 項目 | 内容 |
 |------|------|
 | 役割 | Talk モードの状態管理、移動・LookAt 制御 |
-| 配置 | VRM インスタンスに `VrmLoader` が自動追加 |
+| 配置 | シーン上の既存コンポーネント（`CharacterSetup` の Inspector 参照。`VrmLoader` は参照を代入するのみで AddComponent はしない） |
 | 参照 | `CharacterAnimationController`, `CharacterNavigationController`, `CharacterLookAtController`, `RoomTargetManager` |
 
 ### 主要API
@@ -1226,7 +1266,7 @@ Talk システムは、キャラクターが RoomTarget "talk" 位置に移動�
 | `CancelTalk()` | Approaching中のキャンセル、InTalk中はExitTalkを呼び出し |
 | `IsAwayFromTalkPosition(threshold)` | talk位置から離れているか判定（デフォルト閾値 1.0m） |
 | `StartThinking()` / `StopThinking()` | Thinking状態の切替（LLM応答待ち）。Talk以外の状態でもCanPlayThinking()がtrueなら再生可能 |
-| `ForceStopThinking()` | Thinking状態を即座に終了（ed再生なし）。emoteが最初に届いた場合等に使用 |
+| `ForceStopThinking()` | Thinking状態を即座に終了（ed再生なし）。Talk終了処理（ExitTalk/ForceExitTalk）から使用 |
 
 ### Talk位置の取得（RoomTargetManager経由）
 
@@ -1292,8 +1332,8 @@ public enum TalkState
 
 | Timeline | 用途 |
 |----------|------|
-| TL_Walk | talk位置への移動 |
-| TL_talk_idle01 | Talk 中の待機（st/lp/ed パターン） |
+| TL_common_walk01 | talk位置への移動 |
+| TL_talk_Idle01 | Talk 中の待機（st/lp/ed パターン） |
 | TL_talk_thinking01 | LLM 応答待ち中（st/lp/ed パターン） |
 
 ### デバッグ操作（Talk関連）
@@ -1311,7 +1351,7 @@ Talk のデバッグキーは `DebugKeyController` で一括管理される（�
 1. EnterTalk() 呼び出し
    ├─ State: None → Approaching
    ├─ NavigationController: GetTalkPosition() へ移動開始
-   └─ AnimationController: TL_Walk 再生
+   └─ AnimationController: TL_common_walk01 再生
 
 2. 移動完了 (OnApproachComplete)
    ├─ State: Approaching → InTalk
@@ -1319,9 +1359,11 @@ Talk のデバッグキーは `DebugKeyController` で一括管理される（�
    └─ LookAtController: GetTalkLookAtTarget() 注視開始（フォールバック: LookAtPlayer）
 
 3. Talk 中
-   ├─ TL_talk_idle01 ループ再生
+   ├─ TL_talk_Idle01 ループ再生
    ├─ LLM 応答待ち時: TL_talk_thinking01 に切替
-   └─ 視線: talk_lookattarget 追従継続
+   └─ 視線: talk_lookattarget 位置を LookAtPosition() でスナップショット注視
+      （毎フレーム追従ではない。追従はLLMレスポンス経路の UpdateLookAtRoomTarget が
+      LookAtTransform を呼ぶ場合のみ）
 
 4. ExitTalk() 呼び出し
    ├─ State: InTalk → Exiting
@@ -1427,7 +1469,7 @@ Head/Chest 各ボーンで独立したスムージング状態（`_headSmoothedO
 
 Head/Chest のボーン回転は LateUpdate で適用し、次フレームの Update でリセットする。
 AnimationTrack がボーン回転を毎フレーム上書きするため、この順序が必須。
-`[DefaultExecutionOrder(20000)]` で InertialBlendHelper と同じタイミングで実行。
+`[DefaultExecutionOrder(20100)]` で InertialBlendHelper(20000) → AdditiveOverrideHelper(20050) の後に実行。
 
 #### ~~将来拡張: LLM からの視線指示~~ → 不採用
 
@@ -1696,38 +1738,39 @@ VrmExpressionTrackが存在するTimelineは全Expressionの制御権を持ち�
 
 ### テキスト口パク（簡易リップシンク）
 
-LLM応答テキスト表示中に、VRM ExpressionPreset の `aa`（あ口）と `ee`（い口）を使い、
-モーラ周期で口の開閉を繰り返す簡易リップシンク。音声ソースなしのテキストのみ対応。
+LLM応答テキスト表示中に、VRM ExpressionPreset の5母音（`aa/ih/ou/ee/oh`）を順番に巡回しながら
+モーラ周期で口の開閉を繰り返す簡易リップシンク。音声ソースなしのテキストのみ対応（TextOnlyモード）。
 
-将来 VOICEVOX TTS 統合時には `SetTtsActive(true)` でこの機能を停止し、
-AudioQuery データに基づく本格リップシンクに切り替える。
+TTS 有効時はこの機能は使われず、VOICEVOX はモーラタイムライン（Mora）、
+Gemini TTS は振幅解析（Amplitude）、Web Speech API は推定時間（Simulated）の
+各リップシンクモードに切り替わる（詳細は Voice Synthesis System 章）。
 
 #### 動作フロー
 
 ```
 CharacterController.HandleChatResponse()
   └─ response.HasMessage → LipSyncController.StartSpeaking(message)
-       ├─ テキスト長 × moraSpeed で発話推定時間を計算
-       ├─ モーラ周期で aa/ee をランダム切替しながら開閉
+       ├─ テキスト長 × simulatedMoraSpeed で発話推定時間を計算
+       ├─ モーラ周期で 5母音（aa/ih/ou/ee/oh）を順番に巡回しながら開閉
        └─ 推定時間経過後に自動停止（Lerp でフェードアウト）
 ```
 
 #### 口パクパターン（1モーラ周期）
 
 ```
-|←── moraSpeed (default 0.12s) ──→|
+|←── simulatedMoraSpeed (default 0.12s) ──→|
 |    開く (60%)    |  閉じる (40%)  |
-|   Aa or Ee      |      0.0      |
-                  ↑モーラ境界で Aa/Ee ランダム切替
+|   現在の母音     |      0.0      |
+                  ↑モーラ境界で次の母音へ巡回（aa→ih→ou→ee→oh→aa...）
 ```
 
 #### パラメータ
 
 | パラメータ | デフォルト | 説明 |
 |-----------|----------|------|
-| `moraSpeed` | 0.12s | 1モーラの周期（口パク速度） |
-| `maxWeight` | 0.7 | 口の最大開き（ExpressionWeight 0-1） |
-| `transitionSpeed` | 15 | 開閉の滑らかさ（Lerp 速度） |
+| `simulatedMoraSpeed` | 0.12s | 1モーラの周期（口パク速度） |
+| `intensity` | 0.8 | 口の最大開き（ExpressionWeight 0-1） |
+| `speed` | 10 | 開閉の滑らかさ（Lerp 速度） |
 
 #### 感情Expression・Facial Timelineとの共存
 
@@ -1776,6 +1819,10 @@ WebGL 公開時にユーザーがブラウザから API エンドポイントを
 | `WebLLMProvider` | WebLLM（ブラウザ内LLM via WebGPU）ILLMProvider実装。WebLLMBridge経由でweb-llm APIを呼び出し。StreamSeparatorProcessorでJSONパース |
 | `WebLLMBridge` | WebLLM jslib C#ブリッジ（MonoBehaviour Singleton）。DllImport宣言 + SendMessageコールバック受信。C#イベントで外部に公開 |
 | `FirstRunController` | 初回起動ポップアップUI + WebLLMモデルダウンロード進捗表示 |
+| `LlmStreamHandlerBase` | SSE/NDJSONストリームハンドラの共通基底（`SseStreamHandlerBase` / `LineStreamHandlerBase`）。各プロバイダーのストリームハンドラの親クラス |
+| `ExternalActionFeedController` | 外部アクションフィード（受動制御）。外部URLの応答JSON購読 + context/camera公開（詳細は「外部アクションフィード」節） |
+| `CronScheduler` | cron形式の定期LLMリクエスト（StreamingAssets/cron/のJSONジョブ定義） |
+| `IdleChatController` | 放置時の自律リクエスト（クールダウン方式、定期実行マスター配下） |
 | `StreamSeparatorProcessor` | JSONストリームの逐次パース処理。IncrementalJsonFieldParserによる逐次パース統合、messageフィールドのストリーミング転送。プロバイダー間で共有 |
 | `IncrementalJsonFieldParser` | ストリーミングJSONの逐次フィールドパーサー。トップレベルフィールド完了ごとにイベント発火。StreamingFieldName指定フィールドはチャンク単位でOnStringValueChunk発火。シングルクォート正規化対応 |
 | `LlmResponseHeader` | ストリーミングヘッダーのデータクラス（JSON全体からパース。reaction含む） |
@@ -1787,7 +1834,7 @@ WebGL 公開時にユーザーがブラウザから API エンドポイントを
 | `UIController` | チャット入出力・ストリーミング逐次表示・入力モード切替（JSON/Chat）・マイクボタン（VoiceInputController連動）・TTSクレジット表示 |
 | `SettingsMenuController` | 上部アイコンメニューバー、ホバーツールチップ、パネル展開/折り畳みアニメーション |
 | `AvatarSettingsPanel` | アバター設定（VRMモデル選択、カメラ高さ、カメラルックアット、プロンプト（キャラ設定/レスポンスフォーマット）、Save/Reload） |
-| `LLMSettingsPanel` | LLM設定（API設定、Vision、IdleChat、Sleep、WebCam、Save/TestConnection） |
+| `LLMSettingsPanel` | LLM設定（API設定、Extra Params、Vision、定期実行マスター、IdleChat、Sleep、Outing、Cron、外部アクションフィード、WebCam、ScreenCapture、Save/TestConnection） |
 | `VoiceSettingsPanel` | 音声設定（VOICEVOX / Gemini TTS / Web Speech API + 音声入力） |
 | `WebSpeechRecognition` | Web Speech API C#ラッパー（WebGL専用、音声認識） |
 | `VoiceInputController` | 音声入力統合管理（WebSpeechRecognition + VAD + UIController接続）、`OnEnabledChanged`イベントでUI同期 |
@@ -1799,11 +1846,11 @@ WebGL 公開時にユーザーがブラウザから API エンドポイントを
 | `CronJobData` | cronジョブ定義のデータクラス（JSONデシリアライズ用） |
 | `DebugKeyController` | デバッグキー一括管理（W/A/D歩行・旋回、C/V Talk、F/G/Hインタラクション）。UIトグルでON/OFF可能 |
 | `StatusOverlay` | ステータスオーバーレイ（FPS・キャラクターステート・再生中タイムライン・JSヒープメモリを常時表示）。DebugSettingsPanel のトグルで表示切替。LLMエラー発生時は赤字でエラーメッセージを一定時間表示（`ShowError()`） |
-| `FrameRateLimiter` | フレームレート制限（Inspector設定可能、デフォルト60FPS）。`Application.targetFrameRate` + `vSyncCount=0` |
+| `FrameRateLimiter` | フレームレート制限（Inspector設定可能、デフォルト60FPS）。`Application.targetFrameRate` + `vSyncCount=0`。MOBILE_WEB_BUILD時は`MobileWebBootstrap.TargetFrameRate`(30)でクランプ |
 
 ### 会話履歴永続化
 
-ChatManager の `_conversationHistory`（最大 `maxHistoryLength` 件、デフォルト10）を PlayerPrefs に保存・復元する。
+ChatManager の `_conversationHistory`（最大 `maxHistoryLength` 件、デフォルト6）を PlayerPrefs に保存・復元する。
 アプリを閉じても直近の会話履歴が保持され、次回起動時にLLMが前回の会話を参照できる。
 
 #### 保存タイミング
@@ -1890,18 +1937,31 @@ WebGL では PlayerPrefs が内部的に IndexedDB を使用するため、ブ�
 [Serializable]
 public class LLMConfig
 {
-    public string apiEndpoint = "http://localhost:11434/api/generate";
-    public string modelName = "gemma2";
-    public float temperature = 0.7f;
-    public float topP = 0.9f;          // Top P（Nucleus Sampling）
-    public int topK = 40;              // Top K
-    public int numPredict = 512;       // 最大応答トークン数（-1=無制限）
-    public int numCtx = 4096;          // コンテキスト長（VRAM消費に直結）
-    public float repeatPenalty = 1.1f; // 繰り返しペナルティ（1.0=無効）
-    public bool think = false;         // Thinkingモード（推論モデル用）
-    public float timeout = 60f;
-    public LLMApiType apiType = LLMApiType.Ollama;
-    public string apiKey = "";  // Dify/OpenAI用 Bearer トークン
+    // 各フィールドの初期値は宣言時ではなく GetDefault() に集約されている
+    public string apiEndpoint;     // 既定: "http://localhost:11434/api/generate"
+    public string modelName;       // 既定: "gemma2"
+    public float temperature;      // 既定: 0.7
+    public float topP;             // Top P（Nucleus Sampling）既定: 0.9
+    public int topK;               // Top K 既定: 40
+    public int numPredict;         // 最大応答トークン数（-1=無制限）既定: 512
+    public int numCtx;             // コンテキスト長（VRAM消費に直結）既定: 4096
+    public float repeatPenalty;    // 繰り返しペナルティ（1.0=無効）既定: 1.1
+    public bool think;             // Thinkingモード（Ollama専用）
+    public float timeout;          // 既定: 60
+    public LLMApiType apiType;     // 既定: Ollama
+    public string apiKey;          // Dify/OpenAI/Claude/Gemini用
+    public string extraParamsJson; // 追加リクエストパラメータ（JSONオブジェクト、LM Studio/OpenAI用の上級者設定）
+
+    // extraParamsJson から外側 {} を除いた中身を取り出す（Newtonsoft JObject.Parse で
+    // 正規パース→再シリアライズ。不正なJSONは false）。LMStudio/OpenAI のリクエスト
+    // ボディ末尾にトップレベルマージされる（chat_template_kwargs 等のサーバー固有設定用）
+    public static bool TryGetExtraParamsBody(string extraParamsJson, out string body);
+
+    // 実効APIキー解決。空の場合 UNITYROOM_BUILD では UnityroomConfig の内蔵キーへフォールバック
+    public string ResolveApiKey();
+
+    public static LLMConfig GetDefault();          // Ollama用デフォルト
+    public static LLMConfig GetUnityroomDefault(); // unityroom版デフォルト（Gemini + 内蔵キー運用）
 }
 
 public enum LLMApiType
@@ -1958,9 +2018,11 @@ public interface ILLMProvider
         Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
         Action onComplete, Action<string> onError,
         List<string> imagesBase64 = null, Action<string> onRequestBody = null,
-        Action<string, string> onField = null);
+        Action<string, string> onField = null,
+        Action<string, string> onParseError = null);
     bool SupportsStreaming { get; }
     IEnumerator TestConnection(LLMConfig config, Action<bool, string> callback);
+    void SetInputs(Dictionary<string, string> inputs);  // Dify用の動的inputs（他プロバイダーは空実装）
     void ClearConversation();
 }
 ```
@@ -1977,7 +2039,7 @@ LLMClient は `OnRequestBodySent` イベントとして外部に公開する。
 |----------|-----|---------------|-------------------|------|
 | `OllamaProvider` | Ollama `/api/generate` | NDJSON (`stream: true`) | `images` フィールド（base64直接） | systemPrompt対応、会話状態なし、生成パラメータ（`options`）+ `think`対応 |
 | `LMStudioProvider` | OpenAI互換 `/v1/chat/completions` | SSE (`stream: true`) | OpenAI Vision形式（`image_url`） | messages配列形式、temperature/top_p/max_tokens/frequency_penalty対応 |
-| `DifyProvider` | Dify `/chat-messages` | SSE (`response_mode: "streaming"`) | `/files/upload` → `files` フィールド | Bearer認証、conversation_id管理、systemPromptをquery先頭に付与 |
+| `DifyProvider` | Dify `/chat-messages` | SSE (`response_mode: "streaming"`) | `/files/upload` → `files` フィールド | Bearer認証、conversation_id管理、queryはuserMessageのみ（systemPromptはDifyアプリ側で設定、送信しない） |
 | `OpenAIProvider` | OpenAI `/v1/chat/completions` | SSE (`stream: true`) | OpenAI Vision形式（`image_url`） | Bearer認証必須、LMStudioと同じAPI形式、`max_completion_tokens`使用（gpt-4o以降必須）、CORSプロキシ自動経由 |
 | `ClaudeProvider` | Anthropic `/v1/messages` | SSE (`stream: true`) | Claude Vision形式（`base64` source） | x-api-key認証、system別フィールド、max_tokens必須、top_k対応、CORSプロキシ自動経由 |
 | `GeminiProvider` | Gemini `models/{model}:generateContent` | SSE (`alt=sse`) | `inline_data` 形式（base64直接） | x-goog-api-key認証、URL内モデル名、contents+parts配列、generationConfig |
@@ -2025,14 +2087,20 @@ LLMClient は `OnRequestBodySent` イベントとして外部に公開する。
   "temperature": 0.7,
   "top_p": 0.9,
   "max_tokens": 512,
-  "frequency_penalty": 0.1
+  "frequency_penalty": 0.1,
+  "chat_template_kwargs": {"enable_thinking": false}  // extraParamsJson のトップレベルマージ（設定時のみ）
 }
 ```
 
 - OllamaとはAPI形式が異なる（`prompt`/`system` → `messages`配列、`options`オブジェクト → トップレベルパラメータ）
 - `num_predict` → `max_tokens` にマッピング（-1=無制限の場合は省略）
 - `repeat_penalty` → `frequency_penalty` に近似マッピング（`repeat_penalty - 1.0`）
-- `think`, `top_k`, `num_ctx` はOpenAI互換APIでは非対応のため送信しない（UIには表示されるが無視）
+- `think`, `top_k`, `num_ctx` はOpenAI互換APIでは非対応のため送信しない
+  （think トグルは Ollama 選択時のみ UI 表示。OpenAI互換サーバーの thinking 制御は Extra Params で行う）
+- **Extra Params（上級者設定）**: `extraParamsJson` が有効な JSON オブジェクトの場合、
+  `LLMConfig.TryGetExtraParamsBody()` で検証・正規化した中身をリクエストボディ末尾に
+  トップレベルマージする（llama.cpp の `chat_template_kwargs` 等、UIに無いサーバー固有
+  パラメータを送るための逃げ道）。不正な値は警告ログを出して無視
 - Vision画像: OpenAI形式の`image_url`（`data:image/jpeg;base64,...`）で埋め込み
 - ストリーミング: SSE形式（`data: {"choices":[{"delta":{"content":"..."}}]}`）
 - 接続テスト: `/v1/models` エンドポイントへGET
@@ -2041,8 +2109,10 @@ LLMClient は `OnRequestBodySent` イベントとして外部に公開する。
 
 LMStudioProviderと同じOpenAI Chat Completions API形式。主な違いは認証ヘッダーの追加のみ。
 
-- 全リクエストに `Authorization: Bearer {apiKey}` ヘッダーを付与
-- リクエストJSON構造はLMStudioProviderと同一（messages配列、temperature、top_p、max_tokens、frequency_penalty）
+- 全リクエストに `Authorization: Bearer {apiKey}` ヘッダーを付与（キー空欄時はヘッダーなし）
+- リクエストJSON構造はLMStudioProviderとほぼ同一（messages配列、temperature、top_p、frequency_penalty）。
+  ただし最大トークン数は `max_tokens` ではなく **`max_completion_tokens`** を送信（gpt-4o以降の必須仕様）
+- `extraParamsJson` のトップレベルマージにも対応（LMStudioと同じ仕組み）
 - SSEストリーミングハンドラは `LMStudioSseStreamHandler` を共有
 - 接続テスト: `/v1/models` エンドポイントへGET（Bearer認証付き）
 - 401レスポンス時に「Authentication failed (invalid API Key)」を表示
@@ -2170,6 +2240,10 @@ APIタイプ切替時にLLMSettingsPanelが自動でエンドポイントを切�
 - 許可ヘッダー（`Content-Type`, `Authorization`, `x-api-key`, `anthropic-version`, `x-goog-api-key`）を転送
 - リクエストボディ転送
 - SSEストリーミング中継
+- **転送先ホワイトリスト（SSRF対策）**: `build/proxy-allowlist.txt` に列挙されたホストのみ転送を許可
+  （既定: api.openai.com / api.anthropic.com / generativelanguage.googleapis.com / localhost / 127.0.0.1。
+  ファイルが無ければ既定値で自動生成。編集はサーバー再起動なしで反映。非許可ホストは 403 Forbidden +
+  追記案内メッセージを返す）
   - PowerShell版: `SendChunked = true` + 4KBバッファ逐次書き込み + `Flush()`
   - Node.js版: `req.pipe(upstreamReq)` / `upstreamRes` の `data` イベントを `res.write()` で逐次転送（chunked自動）
 - エラーレスポンスもボディ含めて転送（コンソールにエラーボディ表示）
@@ -2242,11 +2316,7 @@ Difyアプリ側の Chatflow Start ノードで入力変数を定義し、LLMノ
 
 | 変数名 | Dify型 | 推奨最大長 | 内容 | 備考 |
 |--------|--------|-----------|------|------|
-| `character_name` | テキスト入力 | 48 | キャラクター名 | CharacterTemplateData |
-| `character_description` | 段落 | 2000 | キャラクター設定テキスト | CharacterTemplateData |
-| `character_id` | テキスト入力 | 48 | キャラクターID（例: chr001） | CharacterTemplateData |
 | `current_datetime` | テキスト入力 | 48 | 現在日時 | `yyyy-MM-dd HH:mm (ddd)` 形式、約25文字 |
-| `current_room` | テキスト入力 | 48 | 現在の部屋ID | デフォルト: "room01" |
 | `current_pose` | テキスト入力 | 48 | 現在のaction | "idle", "move" 等 |
 | `current_emotion` | テキスト入力 | 128 | 現在の感情 | "neutral", "happy" 等 |
 | `bored` | テキスト入力 | 8 | 退屈ポイント | 0-100 の整数文字列 |
@@ -2254,6 +2324,9 @@ Difyアプリ側の Chatflow Start ノードで入力変数を定義し、LLMノ
 | `available_furniture` | 段落 | 2000 | 利用可能家具リスト | FurnitureManager出力。1家具あたり約60文字 |
 | `available_room_targets` | 段落 | 1000 | ルームターゲットリスト | RoomTargetManager出力。1ターゲットあたり約20文字 |
 | `visible_objects` | 段落 | 1000 | 視界内オブジェクト説明リスト | VisibleObjectsProvider出力。Vision有効かつSleep/Outing中でない場合のみ。1オブジェクトあたり約30〜50文字 |
+
+※ 送信されるのは上記8変数のみ。キャラクター名・設定等（`character_*`）は Unity から送信されず、
+Dify アプリ側のプロンプトに直接記述する想定（キャラクター人格は Dify 側で管理）。
 
 > **注意:** Dify の `inputs` に未定義の変数を送信すると 400 Bad Request エラーになる。
 > 短い変数は「テキスト入力」、長い変数（JSON・リスト等）は「段落 (Paragraph)」を使用すること。
@@ -2977,24 +3050,24 @@ action が `ignore` でも emote / emotion は反映される。
 #### デフォルトのidle promptメッセージ
 
 ```
-[SYSTEM]: ユーザーは黙っています。
-話しかけても、一人で行動しても、何もしなくても構いません。
-あなたの今の気分に合った行動を選んでください。
+[SYSTEM]: ユーザーは黙っています。何か話しかけますか？
+話さない場合は action を "ignore" にしてください。
 ```
 
-**ポイント**: 「話すか話さないか」の二択ではなく、行動（move/interact_sit等）も選択肢として提示する。
-これにより idle 中でもキャラクターが散歩したり座ったりする自律行動が発生する。
+（メッセージは設定パネルから自由に書き換え可能。行動 move/interact_sit 等も選択肢として
+提示する文面にすると、idle 中の散歩・着席などの自律行動が発生しやすくなる）
 
 #### 設定の保存
 
 **PlayerPrefs キー:**
-- `idleChatEnabled` (int): 自律リクエストON/OFF（1=ON, 0=OFF）
+- `periodic_enabled` (int): 定期実行マスタートグル（IdleChat/Sleep/Outing 共通。旧 `idleChatEnabled` から自動移行）
 - `idleChatCooldown` (float): クールダウン秒数
 - `idleChat_message` (string): 自律リクエストメッセージ
 
 **Unity Lifecycle:**
 - **Start()**: `LoadSettings()` で PlayerPrefs から全設定を読み込み
-- 各 Set メソッド (`SetEnabled`, `SetIdleTimeout`, `SetCooldownDuration`, `SetIdlePromptMessage`) は変更時に自動的に PlayerPrefs に保存
+- 各 Set メソッド (`SetEnabled`, `SetCooldownDuration`, `SetIdlePromptMessage`) は変更時に自動的に PlayerPrefs に保存
+  （ON/OFF は `PeriodicExecutionSettings.SetEnabled()` 経由で共有キーに保存）
 
 ### 退屈ポイント（BoredomController）
 
@@ -3073,7 +3146,7 @@ BoredomControllerとIdleChatControllerは独立して動作するが、相補的
 [ユーザー無入力]
     ↓
 BoredomController: bored値が時間経過で自然増加
-IdleChatController: idleTimeout後にSendAutoRequest()
+IdleChatController: cooldownDuration経過後にSendAutoRequest()
     ↓
 LLMリクエスト時: プロンプトに {bored} = 高い値
     ↓
@@ -3143,7 +3216,7 @@ LLMが `action:interact_sleep` を返した時に開始される睡眠状態の�
 | `defaultSleepDuration` | int | 30 | `sleep_duration` 未指定時のデフォルト値（分） |
 | `minSleepDuration` | int | 5 | `sleep_duration` の最小値（分） |
 | `maxSleepDuration` | int | 480 | `sleep_duration` の最大値（分） |
-| `dreamInterval` | float | 300 | 夢メッセージの送信間隔（秒） |
+| `dreamInterval` | float | 5 | 夢メッセージの送信間隔（**分**。内部で×60して秒換算） |
 | `dreamPromptMessage` | string | ※下記 | 夢メッセージのシステムプロンプト |
 | `wakeUpSystemMessage` | string | ※下記 | 起床時にユーザーメッセージに付与するメッセージ |
 
@@ -3168,7 +3241,7 @@ LLMが `action:interact_sleep` を返した時に開始される睡眠状態の�
 | `SetDefaultSleepDuration(int minutes)` | デフォルト睡眠時間を設定（最小1分）+ PlayerPrefs保存 |
 | `SetMinSleepDuration(int minutes)` | 最小睡眠時間を設定（最小1分）+ PlayerPrefs保存 |
 | `SetMaxSleepDuration(int minutes)` | 最大睡眠時間を設定（最小1分）+ PlayerPrefs保存 |
-| `SetDreamInterval(float seconds)` | 夢メッセージ間隔を設定（最小60秒）+ PlayerPrefs保存 |
+| `SetDreamInterval(float minutes)` | 夢メッセージ間隔を設定（**分**単位、0以下で無効化）+ PlayerPrefs保存 |
 | `SetDreamPromptMessage(string message)` | 夢メッセージプロンプトを設定 + PlayerPrefs保存 |
 | `SetWakeUpSystemMessage(string message)` | 起床時システムメッセージを設定 + PlayerPrefs保存 |
 
@@ -3182,7 +3255,7 @@ LLMが `action:interact_sleep` を返した時に開始される睡眠状態の�
 | `sleep_defaultDuration` | int | デフォルト睡眠時間（分） |
 | `sleep_minDuration` | int | 最小睡眠時間（分） |
 | `sleep_maxDuration` | int | 最大睡眠時間（分） |
-| `sleep_dreamInterval` | float | 夢メッセージ間隔（秒） |
+| `sleep_dreamInterval` | float | 夢メッセージ間隔（分） |
 | `sleep_dreamMessage` | string | 夢メッセージプロンプト |
 | `sleep_wakeUpMessage` | string | 起床時システムメッセージ |
 
@@ -3695,7 +3768,6 @@ AvatarSettingsPanelのロックトグル（デフォルトON）で `responseForm
 | `{character_description}` | `CharacterTemplateData.characterDescription` | キャラクター設定 |
 | `{character_id}` | `CharacterTemplateData.templateId` | キャラクターID（例: chr001） |
 | `{current_datetime}` | `DateTime.Now` | 現在の日時（例: `2026-02-12 15:30 (Thu)`） |
-| `{current_room}` | `FurnitureManager.currentRoomId` | 現在の部屋ID |
 | `{current_pose}` | ChatManager内部状態 | 現在のaction（例: ignore, move） |
 | `{current_emotion}` | ChatManager内部状態 | 現在の支配的感情（例: happy, neutral） |
 | `{available_furniture}` | `FurnitureManager.GenerateFurnitureListForPrompt()` | 部屋内の利用可能家具リスト |
@@ -3944,6 +4016,11 @@ VRMモデル、カメラ、プロンプトの設定。
 - **Response Format**: ChatManager.responseFormatPrompt の編集（MultiLine InputField）
   - JSON出力形式の指示を記述
   - ロックトグル（デフォルトON）で `interactable = false` にして誤編集を防止
+- **Sleep Duration**: 睡眠時間の3設定（「キャラクター性の設定」として LLMSettingsPanel から移動）
+  - `defaultSleepDurationInputField`: デフォルト睡眠時間（分）
+  - `minSleepDurationInputField`: 最小睡眠時間（分）
+  - `maxSleepDurationInputField`: 最大睡眠時間（分）
+  - `onEndEdit` で `SleepController` の setter 経由即時反映（PlayerPrefs保存は SleepController の責務）
 - **Save**: VRMファイル名/プロンプト/退屈レート/感情係数/ロック状態をPlayerPrefsに保存、カメラ設定は `DynamicCameraController.SaveSettings()` に委譲
   - AvatarSettingsPanelが保存: `avatar_vrmFileName` (string), `avatar_characterPrompt` (string), `avatar_responseFormat` (string), `avatar_responseFormatLocked` (int), `avatar_boredRate` (float), `avatar_boredFactorHappy` (float), `avatar_boredFactorRelaxed` (float), `avatar_boredFactorAngry` (float), `avatar_boredFactorSad` (float), `avatar_boredFactorSurprised` (float)
   - DynamicCameraControllerが保存: `camera_height` (float), `camera_lookAtEnabled` (int), `camera_minFov` (float), `camera_maxFov` (float)
@@ -3963,50 +4040,61 @@ VRMモデル、カメラ、プロンプトの設定。
 
 #### LLMSettingsPanel
 
-LLM API設定、生成パラメータ、Vision、IdleChat、Sleep、WebCamの設定。
+LLM API設定、生成パラメータ、Vision、定期実行（IdleChat/Sleep/Outing）、外部アクションフィード、WebCamの設定。
 
 **機能:**
 - **API Config**: AI Service / Endpoint / API Key / Model（UIControllerから移植）
-  - `apiTypeDropdown`: Ollama / LM Studio / Dify / OpenAI / Claude / Gemini
+  - `apiTypeDropdown`: Ollama / LM Studio (OpenAI-compatible) / Dify / OpenAI / Claude / Gemini / WebLLM (Browser) の7種
+    （表示名は `GetApiTypeLabel()` で解決。UNITYROOM_BUILD では [Gemini, WebLLM] の2種のみで、
+    enum値とdropdown indexがずれるため `_availableApiTypes` による間接マッピングを使用）
   - API Keyフィールドは Dify/OpenAI/Claude/Gemini 選択時のみ表示
+    （UNITYROOM_BUILD では endpoint/model/apiKey とも常時非表示＝体験版はユーザー入力禁止）
   - **エンドポイント自動切替**: APIタイプ変更時、エンドポイントが別タイプのデフォルト値なら新タイプのデフォルトに自動更新（手動編集済みの場合は維持）
   - **Dify注釈テキスト**: Dify選択時のみ表示（`difyAnnotationText`）。inputs変数の設定方法等をユーザーに案内
 - **Generation Parameters**: 生成パラメータ設定（`generationParamsSection`）
-  - **Dify選択時は非表示**（Difyはサーバー側で管理するため）
+  - **Dify選択時は非表示**（Difyはサーバー側で管理するため。WebLLMでは表示する）
   - `temperatureInputField`: Temperature（0.0-2.0、デフォルト0.7）
   - `topPInputField`: Top P（0.0-1.0、デフォルト0.9）
   - `topKInputField`: Top K（0-100、デフォルト40）
   - `numPredictInputField`: 最大応答トークン数（-1=無制限、デフォルト512）
   - `numCtxInputField`: コンテキスト長（VRAM消費に直結、デフォルト4096）
   - `repeatPenaltyInputField`: 繰り返しペナルティ（1.0=無効、デフォルト1.1）
-  - `thinkToggle`: Thinkingモード（推論モデル用、デフォルトOFF）
+  - `thinkToggle`: Thinkingモード（**Ollama選択時のみ行ごと表示**。他プロバイダーでは意味を持たないため非表示。OpenAI互換のthinking制御はExtra Paramsで行う）
+  - `extraParamsInputField`: **Extra Params (JSON)**（LM Studio/OpenAI選択時のみ表示）。
+    リクエストへトップレベルマージする追加JSONオブジェクト。Save時にJSON検証し、不正ならエラー表示で保存拒否
   - 全パラメータは`LLMConfig`に含まれ、`llm_config` PlayerPrefsキーでJSON一括保存
 - **Max History**: `ChatManager.maxHistoryLength`（会話履歴保持数）
 - **Use Vision**: `ChatManager.useVision` + カメラプレビュー表示
   - `cameraPreviewToggle`: ON時に`CharacterCameraController.GetRenderTexture()`を`RawImage`に設定
   - プレビュー初期化は`RetryCameraPreview()`コルーチンでVRM読み込み完了を待機（最大10回、0.5秒間隔）
-- **Idle Chat**: 自律リクエスト機能
-  - `idleChatToggle`: ON/OFF
+- **定期実行（マスタートグル）**: `periodicToggle` + `periodicDetailsGroup`
+  - PlayerPrefs `periodic_enabled`（デフォルトOFF、旧 `idleChatEnabled` から自動移行）
+  - ON/OFF を IdleChat / Sleep（夢・自動起床）/ Outing の3コントローラーへ一括反映
+  - OFF時は詳細セクションを非表示。各機能の interval 0 以下は個別無効の統一ルール
+- **Idle Chat**（定期実行配下）:
   - `cooldownInputField`: クールダウン秒数
   - `idleChatMessageInputField`: 自律リクエストメッセージ（`IdleChatController.idlePromptMessage`）
+- **Sleep**（定期実行配下）:
+  - `dreamIntervalInputField`: 夢メッセージ間隔（分）
+  - `dreamPromptInputField`: 夢メッセージプロンプト
+  - `wakeUpMessageInputField`: 起床時システムメッセージ
+  - ※ Default/Min/Max Sleep Duration は「キャラクター性の設定」として **AvatarSettingsPanel に移動済み**
+- **Outing**（定期実行配下）:
+  - `outingIntervalInputField`: 外出中メッセージ間隔（分）
+  - `outingPromptInputField`: 外出中プロンプト
+  - `entryPromptInputField`: 起動時Entryプロンプト（空欄で送信無効。定期実行OFFでも送信される点に注意＝入室演出の一部として意図的）
 - **Cron Scheduler**: 定期リクエスト機能（上級者向け）
   - `cronSchedulerToggle`: ON/OFF（ジョブ定義はStreamingAssets/cron/のJSONファイルで管理）
   - `cronReloadButton`: ジョブファイル手動リロード
   - `cronAutoReloadInputField`: 自動リロード間隔（分）。0=無効
-- **Sleep**: 睡眠システム設定（IdleChatと同様のレイアウト）
-  - `defaultSleepDurationInputField`: デフォルト睡眠時間（分）
-  - `minSleepDurationInputField`: 最小睡眠時間（分）
-  - `maxSleepDurationInputField`: 最大睡眠時間（分）
-  - `dreamIntervalInputField`: 夢メッセージ間隔（秒）
-  - `dreamPromptInputField`: 夢メッセージプロンプト
-  - `wakeUpMessageInputField`: 起床時システムメッセージ
-  - 各フィールドは `onEndEdit` で即時反映（`SleepController` のsetterメソッド経由でPlayerPrefs保存）
+- **External Action Feed**: 外部アクションフィード設定（詳細は「外部アクションフィード」節）
+  - `feedToggle` / `feedDetailsGroup` / action購読URL / context・camera公開URL / 各間隔 / ヘルプボタン
 - **Web Cam**: `WebCamDisplayController` ON/OFF
 - **Screen Capture / Camera**: `ScreenCaptureDisplayController` ON/OFF（PC: 画面共有ダイアログ、モバイル: 背面カメラ。ラベルはモバイル時「Camera」に自動変更）
-- **Save**: 全ての設定をPlayerPrefsに保存
-  - `LLMClient.SaveAndApplyConfig()` でAPI設定保存
-  - 追加で保存: `llm_useVision`, `llm_maxHistory`, `llm_cameraPreview`, `llm_webCam`, `llm_screenCapture`, `idleChat_message`
-- **Test Connection**: `LLMClient.TestConnection()` で接続テスト
+- **Save**: **LLM API設定（`llm_config`）の検証+適用+保存専用**
+  - `LLMClient.SaveAndApplyConfig()` を呼ぶのみ
+  - Vision/カメラ系トグル/MaxHistory/IdleChatメッセージ等の他項目は変更した瞬間に各ハンドラ/コントローラー側で即保存される（Saveボタンの対象外）
+- **Test Connection**: `LLMClient.TestConnection()` で接続テスト（UNITYROOM_BUILDでは内蔵設定に強制正規化してからテスト）
 
 **Unity Lifecycle:**
 - 保存済み設定の復元はパネルでは行わない（パネルの初期アクティブ状態に依存させないため）。
@@ -4111,9 +4199,11 @@ UIController上のTTSクレジット表示を更新する:
   - メモリ: WebGL=JSヒープ（Chrome限定、`performance.memory`）、Editor=Unityマネージドメモリ
 - **Settings Import/Export**: 全設定のJSON形式エクスポート・インポート
   - `exportSettingsButton`: 全PlayerPrefs設定をJSONファイルとしてダウンロード
-  - `importSettingsButton`: JSONファイルを選択してPlayerPrefsにインポート
+  - `importSettingsButton`: JSONファイルを選択してPlayerPrefsにインポート（UNITYROOM_BUILDでは封鎖）
   - `importExportStatusText`: 操作結果のステータス表示
   - `SettingsExporter` コンポーネント経由で実行
+- **Verbose Logs**: `verboseLogsToggle` — 詳細ログの出力ON/OFF（LogVerbosityController）
+- **Export Log**: `exportLogButton` — PerformanceLoggerのバッファリング済みログをファイル出力
 - **License**: ライセンス情報の表示
   - `licenseButton`: トグル表示（クリックで開閉）
   - `licensePanel`: スクロール可能なライセンス表示パネル
@@ -4221,7 +4311,9 @@ unityroom は **`Build` フォルダ4ファイル + `StreamingAssets` のみア�
 `DebugSettingsPanel` のボタンから操作する。
 
 **エクスポート:**
-- `AllSettings` 配列に定義された全キー（41項目）をPlayerPrefsから読み取り
+- `AllSettings` 配列に定義された全キー（60項目）をPlayerPrefsから読み取り
+- **APIキーは除去してエクスポート**: `gemini_tts_apiKey` は明示スキップ、`llm_config` 内の `apiKey` も空文字化
+  （エクスポートJSONの共有・流出でキーが漏れないため）
 - 整形済みJSON（インデント付き）を生成
 - WebGL: `FileIO.jslib` の `FileIO_Download()` でブラウザダウンロード
 - Editor: `GUIUtility.systemCopyBuffer` でクリップボードにコピー
@@ -4232,25 +4324,30 @@ unityroom は **`Build` フォルダ4ファイル + `StreamingAssets` のみア�
 - Editor: クリップボードから読み込み
 - ホワイトリスト方式（`AllSettings` に定義されたキーのみインポート対象）
 - インポート後はページリロードで全設定が反映される
+- UNITYROOM_BUILD ではインポート封鎖（Exportは可）
 
 **対象設定カテゴリ:**
 
 | カテゴリ | キー数 | 主なキー |
 |---------|--------|---------|
-| Avatar | 5 | `avatar_vrmFileName`, `avatar_characterPrompt`, `avatar_responseFormat`, `avatar_boredRate` 等 |
+| Avatar | 10 | `avatar_vrmFileName`, `avatar_characterPrompt`, `avatar_responseFormat`, `avatar_boredRate`, `avatar_boredFactor*`（感情係数5種）等 |
 | Camera | 4 | `camera_height`, `camera_lookAtEnabled`, `camera_minFov`, `camera_maxFov` |
 | LLM | 6 | `llm_config`, `llm_useVision`, `llm_maxHistory`, `llm_cameraPreview`, `llm_webCam`, `llm_screenCapture` |
-| IdleChat | 3 | `idleChatEnabled`, `idleChatCooldown`, `idleChat_message` |
+| 定期実行 | 1 | `periodic_enabled` |
+| IdleChat | 3 | `idleChatCooldown`, `idleChat_message`, `idleChatEnabled`（旧エクスポートのインポート互換用に残存） |
 | Cron Scheduler | 2 | `cronSchedulerEnabled`, `cronAutoReloadInterval` |
+| External Action Feed | 6 | `feed_enabled`, `feed_actionUrl`, `feed_subscribeInterval`, `feed_contextUrl`, `feed_cameraUrl`, `feed_publishInterval` |
 | Sleep | 6 | `sleep_defaultDuration`, `sleep_minDuration`, `sleep_maxDuration`, `sleep_dreamInterval`, `sleep_dreamMessage`, `sleep_wakeUpMessage` |
-| Voice TTS | 2 | `voice_ttsEnabled`, `voice_ttsEngine` |
+| Outing | 3 | `outing_messageInterval`, `outing_promptMessage`, `outing_entryPromptMessage` |
+| Voice TTS | 3 | `voice_ttsEnabled`, `voice_ttsEngine`, `voice_echoPrevention` |
 | Voice WebSpeech | 3 | `voice_webSpeechVoiceURI`, `voice_webSpeechRate`, `voice_webSpeechPitch` |
 | Voice VOICEVOX | 5 | `voice_apiUrl`, `voice_speakerId`, `voice_speedScale`, `voice_pitchScale`, `voice_intonationScale` |
-| Voice Gemini TTS | 4 | `gemini_tts_apiKey`, `gemini_tts_model`, `gemini_tts_voiceName`, `gemini_tts_stylePrompt` |
+| Voice Gemini TTS | 4 | `gemini_tts_apiKey`（※エクスポート時はスキップ）, `gemini_tts_model`, `gemini_tts_voiceName`, `gemini_tts_stylePrompt` |
 | Voice Input | 3 | `voice_micEnabled`, `voice_inputLanguage`, `voice_silenceThreshold` |
 | UI | 1 | `ui_locale` (Locale Code: `ja` / `en`) |
 
 ※ ランタイム状態（`sleep_state`, `sleep_wake_time`, `sleep_furniture_id`）と会話履歴（`conversation_history`）はエクスポート対象外
+※ カテゴリ名・キーの正確な一覧は `Core/SettingsExporter.cs` の `AllSettings` が唯一の情報源
 
 **FileIO.jslib** (`Plugins/WebGL/`):
 
@@ -4560,7 +4657,7 @@ public enum ChatState
    └─ ChatManager.HandleStreamField():
        ├─ Thinking解除判定（HandleThinkingExitOnField）:
        │   ├─ emotion/target/reaction → StopThinking()（graceful: ed再生）
-       │   ├─ emote → ForceStopThinking()（即座キャンセル）
+       │   ├─ emote → StopThinking()（graceful、他フィールドと統一）
        │   └─ action → Thinking継続（target/emote待ち）
        ├─ emotion → ExpressionController: 表情を即座に適用
        ├─ reaction → OnStreamingReactionReceived: UI即座表示 + 音声合成
@@ -4605,7 +4702,7 @@ public enum ChatState
    │       └─ LLMClient.OnStreamParseError → ChatManager.HandleStreamParseError():
    │           ├─ _parseErrorHandled = true
    │           ├─ Thinking解除、ChatState → Idle
-   │           ├─ OnParseError → UIController: 色付きエラー + 生テキスト表示
+   │           ├─ OnParseError → UIController: エラーはStatusOverlay、生テキストはメッセージ欄
    │           ├─ VoiceSynthesis: rawText を TTS（エラーメッセージは除外）
    │           └─ OnChatResponseReceived(fallback) → CharacterController
    ├─ Provider.onComplete → LLMClient.OnResponseReceived イベント発火
@@ -4654,8 +4751,9 @@ HTMLテンプレートに依存しないため、Unityroomなど独自HTMLを使
 - ストリーミング/非ストリーミング両方で `<think>` タグをフィルタ除去
 - 生成中に新リクエストが来た場合、`interruptGenerate()` で前回の生成を中断
 - WebLLMライブラリはjslib内で動的にCDNから読み込み（HTMLテンプレート非依存、Unityroom等のサードパーティホスティングでも動作）
-- `LLMConfigManager.IsValid()` はWebLLM選択時にエンドポイント未設定でもtrueを返す
-- `LLMSettingsPanel` はWebLLM選択時にendpoint/apiKey/modelName/generationParamsを非表示にする
+- `LLMConfig.IsValid()`（インスタンスメソッド）はWebLLM選択時にエンドポイント未設定でもtrueを返す
+- `LLMSettingsPanel` はWebLLM選択時にendpoint/apiKey/modelNameを非表示にする
+  （generationParams は表示される。非表示になるのは Dify 選択時）
 
 ### 初回起動フロー（First-Run Flow）
 
@@ -4808,7 +4906,7 @@ Walk/Run/Interact等で共通のパターン。
 #### Walk Timeline例
 
 ```
-TL_Walk
+TL_common_walk01
 │
 ├─ AnimationTrack
 │   ├─ [0F-30F] walk01_st              ← 歩き開始
@@ -4847,7 +4945,7 @@ TL_interact_sit01
 │
 ├─ ActionCancelTrack
 │   └─ [360F-400F] ActionCancelClip    ← ed終盤にキャンセル可能（立ち上がりスキップ）
-│       └─ allowedTransitions: [TL_Idle, TL_Walk]
+│       └─ allowedTransitions: [TL_common_idle01, TL_common_walk01]
 │
 ├─ PositionBlendTrack
 │   └─ [0F-60F] PositionBlendClip
@@ -5131,8 +5229,8 @@ x(t) = Target(t) + Offset(t)
 | 実行コンポーネント | InertialBlendHelper（MonoBehaviour） |
 | 適用対象 | Humanoidボーン（InertialBlendClipのInspectorから選択） |
 | 座標系 | ローカル座標（localPosition / localRotation） |
-| 減衰方式 | Critical Damping（臨界減衰, ζ=1.0） |
-| 収束タイミング | ブレンド時間終了時に99%収束 |
+| 減衰方式 | 5次多項式（quintic polynomial）による減衰 |
+| 収束タイミング | t≥t₁ で厳密に x(t)=0 に到達（旧実装の臨界減衰は99%収束でポップの原因となったため置換） |
 | ExecutionOrder | 20000（UniVRM SpringBone処理より後） |
 | ボーン参照方式 | Awake時キャッシュ（後述のTransformキャッシュパターン） |
 
@@ -5152,10 +5250,12 @@ x(t) = Target(t) + Offset(t)
    └─ ControlRigがAnimator出力をボーンに上書き（localRotation直接代入）
 
 4. InertialBlendPrePass [ExecutionOrder 11005]
-   └─ IB動作中: クリーンポーズ保存→IB補正済みポーズ適用
-      ├── WaitingFirstFrame: 前ポーズを適用
-      └── Blending: IBオフセットを計算・適用（IB.LateUpdateと同じ減衰計算）
-      （SpringBoneが新Timelineの未補正ポーズで計算するのを全期間で防止）
+   ├─ IB動作中: クリーンポーズ保存→IB補正済みポーズ適用
+   │   ├── WaitingFirstFrame: 前ポーズを適用
+   │   └── Blending: IBオフセットを計算・適用（IB.LateUpdateと同じ減衰計算）
+   │   （SpringBoneが新Timelineの未補正ポーズで計算するのを全期間で防止）
+   └─ 続けて AdditiveOverrideHelper.ApplyRestoreNow() も実行
+      （SpringBone(11010)に「最終見た目と一致するポーズ」を渡すため、AO復元もこの時点で前倒し適用）
 
 5. FastSpringBoneService [ExecutionOrder 11010]
    └─ SpringBone計算（PrePassで補正済みのポーズを入力として使用）
@@ -5345,8 +5445,12 @@ private struct BoneBlendData
     public Transform transform;           // Awakeでキャッシュした参照
     public Vector3 previousLocalPosition; // 遷移元ポーズ
     public Quaternion previousLocalRotation;
-    public Vector3 initialPositionOffset; // 初期差分
-    public Quaternion initialRotationOffset;
+    // v₀（初速）計算用の2フレーム前ポーズ
+    public Vector3 prevPrevLocalPosition;
+    public Quaternion prevPrevLocalRotation;
+    public bool hasPrevPrev;
+    // 5次多項式の係数（位置: posX0/posBaseVec/posV0/posT1/posA0/posA/posB/posC、
+    //                 回転: rotX0/rotAxis/rotV0/rotT1/rotA0/rotA/rotB/rotC）
     public Vector3 cleanLocalPosition;    // Animatorが設定したクリーン値
     public Quaternion cleanLocalRotation;
 }
@@ -5486,8 +5590,12 @@ Updateでクリーン位置に復元することで蓄積を防止する。
 | `ApplyPrePassIfNeeded()` | PrePass用：SpringBone計算前にIBポーズ補正を適用（WaitingFirstFrame/Blending） |
 | `IsActive` | 慣性補間が動作中かどうか |
 | `InvalidatePrevCleanPose()` | クリーンポーズキャッシュを無効化し次回IB開始時にv₀=0フォールバックを強制 |
-| `CaptureVisualStateIfActive()` | 旧IB動作中の新IB開始時にビジュアル状態を保存（偽v₀防止） |
+| `SnapshotCurrentPoseAsClean()` | 現在の見た目ポーズをクリーンポーズとして保存（AO停止時等） |
+| `RebuildBoneCache()` | ボーンキャッシュ再構築（VRM差し替え時） |
 | `TryGetCleanPose(bone, out pos, out rot)` | 指定ボーンのAnimator出力値（クリーン値）を取得 |
+
+※ 旧IB動作中の新IB開始時のビジュアル状態保存（偽v₀防止）は private の
+`CaptureVisualStateIfActive()` が `StartInertialBlend()` 内部で自動実行する（外部APIではない）。
 
 #### 関連ファイル
 
@@ -5506,6 +5614,10 @@ Updateでクリーン位置に復元することで蓄積を防止する。
 IB動作中のポーズ補正をFastSpringBoneService(11010)の前に適用するプリパスコンポーネント。
 WaitingFirstFrameだけでなく、**Blending状態でも動作**し、IB全期間にわたって
 SpringBoneがIB補正済みの滑らかなポーズで計算できるようにする。
+
+IB補正に続けて **`AdditiveOverrideHelper.ApplyRestoreNow()` もこのコンポーネントが実行**する
+（AO復元のLateUpdate(20050)を待つとSpringBoneが復元前ポーズで計算してしまうため、
+SpringBoneに最終見た目と一致するポーズを渡す目的で前倒し適用）。
 
 **解決する問題:**
 IB(20000)がボーンを補正する処理はSpringBone(11010)より後に実行される。
@@ -5674,8 +5786,8 @@ Timeline上にキャンセル可能な区間を定義するカスタムトラッ
 │ ActionCancelClip                │
 │                                 │
 │ Allowed Transitions:            │
-│   [0] TL_Idle          [x]     │
-│   [1] TL_Walk          [x]     │
+│   [0] TL_common_idle01 [x]     │
+│   [1] TL_common_walk01 [x]     │
 │   [+] Add                      │
 └─────────────────────────────────┘
 ```
@@ -5808,23 +5920,20 @@ private void SetupBlendTracks(TimelineAsset timeline, InteractionRequest request
 
 インタラクション中の当たり判定制御。
 
+対象 Collider はトラックバインディング（`playerData`）経由で受け取り、
+実際の有効/無効切替は **`ColliderControlMixerBehaviour`** が担う:
+
 ```csharp
 public class ColliderControlBehaviour : PlayableBehaviour
 {
-    public Collider targetCollider;  // 家具のコライダー
     public bool disableCollider = true;
+    // ProcessFrame(playerData) で Collider を取得し info.weight > 0.5f で制御
+}
 
-    public override void OnBehaviourPlay(...)
-    {
-        if (targetCollider != null)
-            targetCollider.enabled = !disableCollider;
-    }
-
-    public override void OnBehaviourPause(...)
-    {
-        if (targetCollider != null)
-            targetCollider.enabled = true;
-    }
+public class ColliderControlMixerBehaviour : PlayableBehaviour
+{
+    // クリップ開始時に元の enabled 状態 (_originalEnabled) を記録し、
+    // クリップ終了時（OnBehaviourPause）は true 固定ではなく元の状態に復元する
 }
 ```
 
@@ -6645,14 +6754,15 @@ public void ExitLoop()
 }
 
 // ExitLoopWithCallback → ed再生後にコールバック実行
-// Thinking/Emote再生中はForceStopしてからed再生
-// CancelRegionがある場合はRequestCancelAtRegionも設定（skipCancelRegion=falseの場合）
 public void ExitLoopWithCallback(Action onComplete, bool skipCancelRegion = false)
 {
     _pendingAction = onComplete;
-    // ForceStopThinking/ForceStopEmote → RequestEndPhase
-    // skipCancelRegion == false && HasCancelRegions == true の場合: RequestCancelAtRegion() を併用
-    // skipCancelRegion == true の場合: CancelRegionを無視しed全体を再生（Sleep起床用）
+    // Thinking/Emote再生中: ForceStopThinkingToEnd()/ForceStopEmoteToEnd()
+    //   （resumeAtEnd で ed 開始位置へ直接ジャンプ）を呼び、alreadyInEndPhase = true と
+    //   なるため RequestCancelAtRegion() / RequestEndPhase() は呼ばれない
+    // 通常時（Thinking/Emoteなし）:
+    //   skipCancelRegion == false && HasCancelRegions == true: RequestCancelAtRegion() を併用
+    //   skipCancelRegion == true: CancelRegionを無視しed全体を再生（Sleep起床用）
     // Interact状態に復帰していない場合は即座にOnInteractionComplete
 }
 
@@ -6681,7 +6791,7 @@ animationController.OnCancelRegionReached += OnAnimCancelRegionReached;
 | Walk lp中 | StopWalkWithEndPhase + Talk | → 即時遷移（walk_edスキップ） | PlayState(Talk)がwalk_edを中断（Talkでは姿勢が変わるため） |
 | Walk lp中 | StopMoving/CancelMovement | → Idle（walk_edなし） | 強制停止、ReturnToIdle()直接呼び出し |
 | Walk lp中 | ExecuteCancel | → 指定Timeline | 即時遷移 |
-| Interact + Emote/Thinking | ExitLoopWithCallback | → ForceStop → ed → callback | Thinking/Emote停止→Interact復帰→ed再生→コールバック |
+| Interact + Emote/Thinking | ExitLoopWithCallback | → ForceStop*ToEnd → ed → callback | Thinking/Emote停止（resumeAtEndでed開始位置へ直接ジャンプ）→ed再生→コールバック |
 | Emote lp中 | emoteHoldDuration経過 | → emote_ed → 復帰 | テキスト表示完了後に自動RequestEndPhase |
 | Emote再生中 | PlayThinkingWithReturn | → Thinking | Emoteキャンセル→Thinking再生（復帰先継承） |
 | Thinking再生中 | StopThinkingAndReturn | → thinking_ed → 復帰 | ed再生 → OnThinkingEndPhaseComplete |
@@ -6693,9 +6803,18 @@ animationController.OnCancelRegionReached += OnAnimCancelRegionReached;
 ```
 Assets/
 ├── Scripts/
-│   ├── Core/           - 基盤クラス、インターフェース、属性定義
+│   ├── Core/           - 基盤クラス、データ定義、共通ユーティリティ
+│   │   ├── LLMResponseData.cs / CharacterTemplateData.cs / CronJobData.cs
+│   │   ├── FurnitureTypeData.cs / FurnitureCategoryData.cs
 │   │   ├── SettingsExporter.cs          ← 全設定JSON形式Import/Export
-│   │   └── FrameRateLimiter.cs          ← フレームレート制限（Inspector設定可能）
+│   │   ├── SettingsKeys.cs              ← PlayerPrefsキー定数
+│   │   ├── PeriodicExecutionSettings.cs ← 定期実行マスタートグル（periodic_enabled）
+│   │   ├── FrameRateLimiter.cs          ← フレームレート制限（モバイルではクランプ）
+│   │   ├── MobileWebBootstrap.cs        ← MOBILE_WEB_BUILD専用起動処理（Quality切替+30FPS）
+│   │   ├── UnityroomConfig.cs           ← unityroom版内蔵設定（ScriptableObject、gitignore対象）
+│   │   ├── TTSEngineType.cs / JsonEscape.cs / LogVerbosityController.cs
+│   │   ├── HumanBoneSelectAttribute.cs / SceneObjectDescriptor.cs
+│   │   └── WebCamDisplayController.cs / ScreenCaptureDisplayController.cs
 │   ├── Character/      - キャラクター制御
 │   │   ├── CharacterAnimationController.cs
 │   │   ├── CharacterCameraController.cs  ← Vision カメラ（Headボーン追従・画像キャプチャ）
@@ -6711,15 +6830,18 @@ Assets/
 │   │   ├── DynamicTargetController.cs  ← 動的ターゲット（clock/distance/height）
 │   │   ├── RoomTargetManager.cs       ← 名前付きターゲット管理（mirror, window等）
 │   │   ├── SleepController.cs        ← 睡眠状態管理・夢タイマー・起床処理・PlayerPrefs永続化
+│   │   ├── OutingController.cs       ← 外出状態管理・入退室アニメーション
+│   │   ├── BoredomController.cs      ← 退屈度管理
+│   │   ├── RootMotionForwarder.cs / TimelineBindingData.cs / TransitionRuleData.cs
 │   │   ├── CharacterSetup.cs         ← VRM読み込み・全コンポーネント初期化・接続・Rendering Layer Mask/Culling Layer設定
 │   │   └── VrmLoader.cs
 │   ├── Camera/         - カメラ制御 (namespace: CyanNook.CameraControl)
 │   │   └── DynamicCameraController.cs  ← MainCamera動的制御（FOV距離連動、Y軸ルックアット）
-│   ├── Chat/           - LLM通信、JSONパース、ストリーミング
+│   ├── Chat/           - LLM通信、JSONパース、ストリーミング、自動リクエスト
 │   │   ├── LLMClient.cs                ← LLM通信統合（ブロッキング/ストリーミング両対応）
 │   │   ├── ILLMProvider.cs             ← プロバイダーIF（SendRequest/SendStreamingRequest）
 │   │   ├── OllamaProvider.cs           ← Ollama（NDJSONストリーミング対応）
-│   │   ├── LMStudioProvider.cs        ← LM Studio（OpenAI互換API、SSEストリーミング対応）
+│   │   ├── LMStudioProvider.cs        ← LM Studio/OpenAI互換API（SSEストリーミング対応）
 │   │   ├── DifyProvider.cs             ← Dify Chat Messages API（SSEストリーミング対応）
 │   │   ├── OpenAIProvider.cs           ← OpenAI API（Bearer認証 + Chat Completions API）
 │   │   ├── ClaudeProvider.cs           ← Anthropic Claude API（x-api-key認証 + Messages API）
@@ -6727,16 +6849,24 @@ Assets/
 │   │   ├── WebLLMProvider.cs           ← WebLLM（ブラウザ内LLM via WebGPU）
 │   │   ├── WebLLMBridge.cs             ← WebLLM jslib C#ブリッジ（Singleton MonoBehaviour）
 │   │   ├── LlmStreamHandler.cs         ← StreamSeparatorProcessor（JSON逐次パース）
+│   │   ├── LlmStreamHandlerBase.cs     ← SSE/NDJSONストリームハンドラ共通基底
 │   │   ├── IncrementalJsonFieldParser.cs ← ストリーミングJSON逐次フィールドパーサー
 │   │   ├── LlmResponseHeader.cs        ← ストリーミングヘッダーデータクラス
 │   │   ├── ChatManager.cs              ← プロンプト生成、会話履歴、ストリーミング対応
+│   │   ├── CronScheduler.cs            ← cron形式の定期LLMリクエスト
+│   │   ├── IdleChatController.cs       ← 放置時の自律リクエスト
+│   │   ├── ExternalActionFeedController.cs ← 外部アクションフィード（購読/公開）
 │   │   ├── SpatialContextProvider.cs   ← 空間認識JSON生成（NavMesh/家具/ターゲット）
+│   │   ├── VisibleObjectsProvider.cs   ← 視界内オブジェクト検出
 │   │   └── LLMConfigManager.cs         ← API設定保存（PlayerPrefs）
 │   ├── Furniture/      - 家具システム + 部屋環境制御
+│   │   ├── FurnitureManager.cs / FurnitureInstance.cs
+│   │   ├── FurnitureAnimationController.cs / FurnitureTimelineBindingData.cs
 │   │   └── RoomLightController.cs    ← ライトON/OFF + Emission + Lightmap連動（初回起動・Sleep等で共通利用）
 │   ├── Timeline/       - カスタムTimelineトラック、ループ制御、キャンセル制御、慣性補間、emote/thinking再生判定、加算オーバーライド、移動速度カーブ制御
 │   ├── DebugTools/     - デバッグ用コンポーネント
-│   │   └── DebugKeyController.cs       ← デバッグキー一括管理
+│   │   ├── DebugKeyController.cs       ← デバッグキー一括管理
+│   │   └── PerformanceLogger.cs        ← ログバッファリング + エクスポート
 │   ├── UI/             - UI関連
 │   │   ├── UIController.cs             ← チャット入出力・ストリーミング表示
 │   │   ├── SettingsMenuController.cs   ← アイコンメニューバー・パネル開閉
@@ -6746,44 +6876,74 @@ Assets/
 │   │   ├── DebugSettingsPanel.cs       ← デバッグ設定パネル（設定Import/Export含む）
 │   │   ├── FirstRunController.cs      ← 初回起動ポップアップ・WebLLMダウンロード進捗
 │   │   ├── MultiLineInputFieldFix.cs  ← マルチラインInputField改行修正
+│   │   ├── MobileKeyboardAdjuster.cs  ← モバイル仮想キーボードのUI退避
+│   │   ├── ClipboardBridge.cs / LocaleSelector.cs
 │   │   └── StatusOverlay.cs           ← ステータスオーバーレイ（FPS・ステート・Timeline・メモリ）
-│   ├── Utilities/      - ユーティリティ
+│   ├── Voice/          - 音声合成・音声入力
+│   │   ├── VoiceSynthesisController.cs ← TTS統合管理（3エンジン、順序保証再生バッファ）
+│   │   ├── VoicevoxClient.cs / GeminiTtsClient.cs
+│   │   ├── WebSpeechSynthesis.cs / WebSpeechRecognition.cs
+│   │   ├── VoiceInputController.cs / VoiceActivityDetector.cs
+│   │   └── WavUtility.cs
+│   ├── Animation/      - （空、予約フォルダ）
+│   ├── Utilities/      - （空、予約フォルダ）
 │   └── CyanNook.asmdef - アセンブリ定義 (Unity.Timeline参照)
 ├── Resources/
-│   └── LicenseText.txt               ← ライセンス表示用テキスト（TextAsset）
+│   ├── LicenseText.txt               ← ライセンス表示用テキスト（TextAsset）
+│   └── UnityroomConfig.asset         ← unityroom版内蔵キー・モデル設定（gitignore対象、リポジトリに含まれない）
 ├── ScriptableObjects/
-│   ├── Furniture/      - 家具カテゴリ定義
-│   └── Characters/     - キャラクターテンプレート
+│   ├── AnimationSets/      - アニメーションセット定義
+│   ├── CharacterTemplates/ - キャラクターテンプレート
+│   └── FurnitureCategories/- 家具カテゴリ定義
 ├── Prefabs/
 │   ├── Characters/
 │   ├── Furniture/
+│   ├── Nook/           - 部屋プレハブ（Nook01）+ FurnitureTypeData
 │   └── UI/
 ├── Animations/
-│   └── chr001/                         - キャラクターごと
-│       ├── FBX/                        - BlenderからのFBX
-│       ├── Clips/                      - 抽出されたAnimationClip
-│       ├── Timelines/                  - Timelineアセット
-│       └── chr001_TimelineBindings.asset
+│   ├── chr001/                         - キャラクターごと
+│   │   ├── FBX/                        - BlenderからのFBX
+│   │   ├── Clips/                      - 抽出されたAnimationClip
+│   │   ├── Timelines/                  - Timelineアセット
+│   │   ├── TimelinesFacial/            - Facial Timelineアセット
+│   │   ├── chr001_TimelineBindings.asset
+│   │   ├── chr001_TimelineFacialBindings.asset
+│   │   └── chr001_TransitionRules.asset  - Transition Viewer用手書きルール
+│   └── Furniture/                      - 家具側アニメーション（Door01等）
 ├── StreamingAssets/
 │   ├── VRM/            - VRMファイル配置
-│   └── Config/         - 設定ファイル
+│   ├── cron/           - Cronジョブ定義JSON
+│   └── file_manifest.json - WebGL用ファイル一覧（ビルド時自動生成）
+├── Settings/
+│   └── Build Profiles/ - ビルドプロファイル3種（WebGL - GitHub / Unityroom / Mobile）
 ├── Plugins/
-│   └── WebGL/
+│   └── WebGL/          - jslib 9種
 │       ├── WebLLM.jslib               ← WebLLM jslibブリッジ（CDN動的読み込み、web-llm API呼び出し、XGrammar）
-│       └── StatusOverlay.jslib        ← JSヒープメモリ取得（performance.memory、Chrome限定）
+│       ├── StatusOverlay.jslib        ← JSヒープメモリ取得（performance.memory、Chrome限定）
+│       ├── WebSpeechAPI.jslib / WebSpeechSynthesis.jslib ← Web Speech API（STT/TTS）
+│       ├── FileIO.jslib               ← 設定Import/Export用ファイルダイアログ
+│       ├── Clipboard.jslib / MobileKeyboard.jslib / MobileCamera.jslib / ScreenCapture.jslib
 ├── WebGLTemplates/
-│   └── CyanNook/
-│       └── index.html                 ← カスタムWebGLテンプレート
+│   ├── CyanNook/       - PC向けカスタムWebGLテンプレート
+│   └── CyanNookMobile/ - モバイル向け（devicePixelRatio固定）
+├── Localization/       - Unity Localization（ja/en文字列テーブル）
+├── Fonts/ / Shader/ / Sound/ / TextMesh Pro/ / AddressableAssetsData/
 ├── Scenes/
-├── Editor/             - エディタ拡張
-│   ├── AnimationClipExtractor.cs   - FBXからClip抽出
+├── link.xml            - IL2CPPコードストリッピング保護（Input System）
+├── Editor/             - エディタ拡張（詳細は Editor Tools 章）
+│   ├── AnimationClipExtractor.cs   - FBX/家具からClip抽出
 │   ├── TimelineCreator.cs          - Timeline自動生成
+│   ├── FurnitureTimelineCreator.cs - 家具Timeline自動生成
 │   ├── VrmTestSceneSetup.cs        - テストシーン構築
+│   ├── TransitionViewerWindow.cs   - 遷移フロー可視化ウィンドウ
+│   ├── LocalizationBakeToTMP.cs    - 日本語ベイク（unityroom対応）
+│   ├── StreamingAssetsManifestGenerator.cs - file_manifest.json自動生成
+│   ├── VrmShaderIncluder.cs        - VRMシェーダーAlways Included登録
+│   ├── UnityroomBuildMenu.cs       - UnityroomConfig作成メニュー
 │   ├── HumanBoneSelectDrawer.cs    - HumanoidボーンAdvancedDropdown選択UI
 │   ├── BoneTemplateUtility.cs      - ボーンテンプレートボタン共有ユーティリティ
-│   ├── InertialBlendClipEditor.cs - InertialBlendClipカスタムEditor
-│   ├── EmotePlayableClipEditor.cs - EmotePlayableClipカスタムEditor
-│   ├── ThinkingPlayableClipEditor.cs - ThinkingPlayableClipカスタムEditor
+│   ├── InertialBlendClipEditor.cs / EmotePlayableClipEditor.cs
+│   ├── ThinkingPlayableClipEditor.cs / VrmExpressionClipEditor.cs
 │   └── CyanNook.Editor.asmdef
 └── DESIGN.md           - このドキュメント
 ```
@@ -6807,7 +6967,7 @@ Assets/
 ### Phase 3
 - Dify連携拡張（自律思考、Workflow API）
 - RAG記憶システム
-- ~~TTS対応~~ → Phase 1で実装済み（VOICEVOX / Web Speech API デュアルエンジン、リップシンク4モード）
+- ~~TTS対応~~ → Phase 1で実装済み（VOICEVOX / Gemini TTS / Web Speech API の3エンジン、リップシンク4モード）
 - Blenderリターゲットテンプレート配布
 
 ---
@@ -6820,7 +6980,11 @@ Assets/
 |------|-------------|
 | Extract All Animation Clips | 全キャラクターのFBXからClipを抽出 |
 | Extract Clips for Selected Character | 選択キャラクターのClipを抽出 |
+| Extract All Furniture Animation Clips | 全家具のFBXからClipを抽出 |
+| Extract Clips for Selected Furniture | 選択家具のClipを抽出 |
+| Disable Animation Import for FBX in Selected Folder | 選択フォルダFBXのアニメーションインポート無効化 |
 | Create Timelines for Character | Timeline + TimelineBindingDataを生成 |
+| Create Timelines for All Furniture / Selected Furniture | 家具Timeline + バインディング生成 |
 | Rebake All VRM Expression Curves | 全TimelineのVrmExpressionClipカーブを一括再Bake |
 | Transition Viewer | アニメーション遷移フロー可視化ウィンドウ（閲覧専用） |
 | Create Default Transition Rules (chr001) | chr001用の初期遷移ルールアセット生成 |
@@ -6857,21 +7021,34 @@ Timeline駆動のアニメーション遷移は `TalkController` / `InteractionC
 | Setup VRM Test Scene | VRMテストシーンを自動構築 |
 | Add VRM Test Components to Selected | 選択オブジェクトにテストコンポーネント追加 |
 
-### Build Tools (CyanNook)
+### Build Tools
 
 | Menu | Description |
 |------|-------------|
-| Generate StreamingAssets Manifest | StreamingAssetsのファイル一覧マニフェストを生成（WebGLビルド前に自動実行） |
-| Add VRM Shaders to Always Included | VRMランタイム読み込みに必要なシェーダーをAlways Included Shadersに追加 |
+| CyanNook > Generate StreamingAssets Manifest | StreamingAssetsのファイル一覧マニフェストを生成（ビルド前に全プラットフォームで自動実行） |
+| CyanNook > Add VRM Shaders to Always Included | VRMランタイム読み込みに必要なシェーダーをAlways Included Shadersに追加 |
+| CyanNook > Build > Create or Open Unityroom Config | UnityroomConfig.asset（内蔵キー設定、gitignore対象）を作成/表示 |
+
+**ビルド種別の切替は `Window > Build Profiles` の3プロファイルで行う**（WebGL - GitHub / Unityroom / Mobile。
+define・テクスチャ圧縮・WebGLテンプレートはプロファイル側が保持。詳細は「WebGL Build Support」章）。
+
+### Localization Tools (CyanNook > Localization)
+
+| Menu | Description |
+|------|-------------|
+| Bake Japanese to Active Scene TMPs | アクティブシーンの LocalizeStringEvent から日本語訳を解決し TMP_Text にベイク（unityroom対応） |
 
 ---
 
 ## Dependencies
 
-- Unity 6 LTS (6000.3.0f1)
-- UniVRM 1.0
-- Unity Timeline (Unity標準パッケージ)
-- (Optional) UniTask - 非同期処理効率化
+- Unity 6 (6000.3.x — ProjectVersion.txt が正)
+- UniVRM（com.vrmc.vrm 0.131.x 埋め込みパッケージ、VRM 1.0仕様対応）
+- Universal Render Pipeline (URP)
+- Unity Timeline / Input System / AI Navigation / Localization / TextMeshPro（Unity公式パッケージ）
+- Newtonsoft Json (com.unity.nuget.newtonsoft-json) — Extra Params検証等
+- WebGLInput (kou-yeung, git) — WebGLのIME入力対応
+- (Optional) UniTask - 非同期処理効率化（未導入）
 
 ---
 
@@ -7419,7 +7596,7 @@ BlendPivotがワールド座標で補間、VRMはローカル座標でRoot Motio
 `CharacterAnimationController`に画面左上デバッグ表示機能を実装。
 
 ```
-Timeline: TL_Walk
+Timeline: TL_common_walk01
 Frame: 45 / 120
 Time: 0.750 / 2.000
 State: Walk (Walk)
@@ -7566,7 +7743,7 @@ VoiceSynthesisController (TTSEngineType分岐)
     │   GeminiTtsClient ─→ generativelanguage  │
     │   ↓ (raw PCM16 24kHz mono)               │
     │                                          ┘
-    │   ↓ AudioSource (順次再生キュー)
+    │   ↓ AudioSource (順序保証バッファ→連番順再生)
     │   ↓ (再生中イベント)
     │   LipSyncController
     │     ├─ Moraモード（VOICEVOX: モーラあり）
@@ -7582,8 +7759,22 @@ LipSyncController → Vrm10Instance.Expression (aa, ih, ou, ee, oh)
 ```
 
 VOICEVOX と Gemini TTS は両方とも `(AudioClip, List<MoraEntry>?)` を返すため、
-`VoiceSynthesisController` 内では共通の `_audioClipQueue` で再生制御される。
+`VoiceSynthesisController` 内では共通の**順序保証バッファ**（`_orderedClipBuffer`）で再生制御される。
 モーラタイムラインの有無で `LipSyncController` のモードが自動切替される。
+
+#### 順序保証バッファ（再生順とテキスト順の一致保証）
+
+文単位のTTS合成は並列実行されるため、短い文の合成が長い文を追い越して先に完成することがある。
+完成順に再生すると「表示テキストと音声の文順が入れ替わる」問題が起きるため、以下の方式で順序を保証する:
+
+- 合成依頼時（await より前の同期区間）に連番 `_nextSynthesisSequence` を採番
+- 完成した AudioClip は `Dictionary<int, AudioClipQueueEntry> _orderedClipBuffer` に番号付きで登録
+- `Update()` は `_nextPlaybackSequence` の番号が揃うまで待って**必ず連番順に再生**
+  （後の番号が先に完成していても待つ。並列合成による低レイテンシは維持）
+- 合成失敗・例外時は `clip == null` のプレースホルダーを登録して連番の穴を防ぎ、Update側で読み飛ばす
+- `Stop()` でバッファと連番をリセット（世代カウンタ `_stopGeneration` で遅延結果の後追い登録も破棄）
+- 合成リクエストにはタイムアウトを設定（VOICEVOX 30秒 / Gemini TTS 60秒）。
+  ハングで連番の穴が空くと以降の文が全て再生されなくなるため必須
 
 ### Components
 
@@ -7790,9 +7981,9 @@ public enum TTSEngineType
 
 **主要機能**:
 - TTS ON/OFF（デフォルトOFF、PlayerPrefs永続化）
-- TTSエンジン切替（WebSpeechAPI / VOICEVOX）
+- TTSエンジン切替（WebSpeechAPI / VOICEVOX / GeminiTTS）
 - ストリーミング応答時の文区切り検出（。！？…\n）
-- VOICEVOX時: AudioClip + モーラタイムライン再生キュー
+- VOICEVOX/Gemini TTS時: AudioClip（+モーラタイムライン）を順序保証バッファで連番順再生
 - WebSpeechAPI時: JS側キューにEnqueue、イベントでリップシンク制御
 - エンジン設定のPlayerPrefs保存
 - **TTS-STTエコー防止**: TTS再生中はSTT（音声認識）を自動抑制し、全再生完了＋クールダウン後に再開（ON/OFF切替可能、ヘッドセット使用時はOFF推奨）
@@ -7829,19 +8020,21 @@ void UpdateTTSCredit(string speakerName, string styleName); // クレジット�
 | Web Speech API | `"Web Speech API"` |
 | VOICEVOX（スピーカー情報あり） | `"VOICEVOX:ずんだもん(ノーマル)"` |
 | VOICEVOX（スピーカー情報なし） | `"VOICEVOX"` |
+| Gemini TTS（ボイス名あり） | `"Gemini TTS:Kore"` |
+| Gemini TTS（ボイス名なし） | `"Gemini TTS"` |
 
 **PlayerPrefs キー**:
 - `voice_ttsEnabled` (int) - TTS ON/OFF（1=ON, 0=OFF、デフォルトOFF）
-- `voice_ttsEngine` (int) - 0=WebSpeechAPI, 1=VOICEVOX
+- `voice_ttsEngine` (int) - 0=WebSpeechAPI, 1=VOICEVOX, 2=GeminiTTS
 - `voice_echoPrevention` (int) - エコー防止ON/OFF（1=ON, 0=OFF、デフォルトON）
 
 **動作フロー（ストリーミング時）**:
 1. ChatManager → `OnStreamingTextReceived(chunk)`
 2. バッファに蓄積、文区切り検出
-3. **VOICEVOX時**:
-   - 完成文 → `VoicevoxClient.SynthesizeAsync()`（非同期）
-   - `(AudioClip, List<MoraEntry>)` 取得 → VOICEVOXキューに追加
-   - AudioSource再生 + `LipSyncController.StartMoraLipSync(moraTimeline)`
+3. **VOICEVOX / Gemini TTS時**:
+   - 完成文 → 連番採番 → `VoicevoxClient/GeminiTtsClient.SynthesizeAsync()`（非同期・並列）
+   - `(AudioClip, List<MoraEntry>?)` 取得 → 順序保証バッファに番号付きで登録
+   - 連番順に AudioSource再生 + `LipSyncController.StartMoraLipSync(moraTimeline)`（モーラ無しはAmplitude）
 4. **WebSpeechAPI時**:
    - 完成文 → `WebSpeechSynthesis.Enqueue(text)`
    - JS側で順次発話、`OnSpeechStarted`コールバックで`LipSyncController.StartSimulatedLipSync()`
@@ -8017,9 +8210,9 @@ ChatManager.HandleStreamText(chunk)
             ↓
         WAVデータ + モーラタイムライン取得
             ↓
-        VOICEVOXキューに追加 (AudioClip + List<MoraEntry>)
+        順序保証バッファに登録 (連番 + AudioClip + List<MoraEntry>)
             ↓
-        AudioSource.Play() (順次再生)
+        AudioSource.Play() (連番順再生)
             ↓
         LipSyncController.StartMoraLipSync(moraTimeline)
             ↓
@@ -8154,7 +8347,7 @@ Unity WebGL → Node.jsプロキシ → VOICEVOX API (localhost:50021)
 - **感情表現**: EmotionData → VOICEVOXスタイル自動選択
 - **VOICEVOX WebGL対応**: JavaScript Bridge + Node.jsプロキシサーバー
 - **音声キャッシュ**: 頻出フレーズのWAVファイルキャッシュ
-- **より高度なJSON処理**: Newtonsoft.Json 等のサードパーティライブラリ導入
+- **より高度なJSON処理**: Newtonsoft.Json は導入済み（Extra Params検証で使用中）。VOICEVOX の audio_query 処理への適用は未着手
 
 ### トラブルシューティング
 
@@ -8468,15 +8661,15 @@ TTS音声をマイクが拾い、キャラクターの発話内容がそのま�
 - OFF切替時: 抑制中のSTTを即座に再開、以降のTTS再生でもSTTを停止しない
 
 **抑制タイミング**（`echoPreventionEnabled == true` 時のみ動作）:
-- TTS再生開始時（VOICEVOX `PlayNextVoicevox()` / Web Speech API `OnWebSpeechStarted()`）
+- TTS再生開始時（VOICEVOX/Gemini `PlayNextAudioClip()` / Web Speech API `OnWebSpeechStarted()`）
 - `VoiceSynthesisController` → `VoiceInputController.SuppressForTTS()`
 
 **再開条件（`TryResumeSTT()` で一元判定）**:
 以下の**全条件**を満たした時、`sttResumeCooldown`（デフォルト1.0秒）後にSTTを再開:
 1. `_isPlaying == false` — TTS再生中でない
 2. `_isStreaming == false` — LLMストリーミング完了
-3. `_pendingSynthesisCount == 0` — VOICEVOX合成リクエストなし
-4. `_voicevoxQueue.Count == 0` — 再生キュー空
+3. `_pendingSynthesisCount == 0` — 合成リクエストなし
+4. `_orderedClipBuffer.Count == 0` — 順序保証バッファ空
 
 **クールダウン**:
 - TTS再生完了後、即座にSTTを再開するとスピーカーの残響をマイクが拾うため、`sttResumeCooldown`秒の待機後に再開
@@ -8491,7 +8684,7 @@ TTS音声をマイクが拾い、キャラクターの発話内容がそのま�
 ```
 TTS再生開始
   ↓
-VoiceSynthesisController.PlayNextVoicevox() / OnWebSpeechStarted()
+VoiceSynthesisController.PlayNextAudioClip() / OnWebSpeechStarted()
   ↓ CancelSTTResumeCooldown()
   ↓ voiceInputController.SuppressForTTS()
 VoiceInputController._isSuppressedByTTS = true
@@ -8618,8 +8811,6 @@ WebGLビルド固有の制約に対応するための仕組み。
 ```json
 {
     "files": [
-        "Config/llm_response_schema.json",
-        "Config/system_prompt_template.txt",
         "VRM/chr001_w001_model.vrm",
         "cron/example_morning_greeting.json",
         "cron/example_hourly_comment.json"
@@ -8835,7 +9026,11 @@ Vrm10.LoadBytesAsync(awaitCaller: ...)
 1. ✅ `CyanNook > Add VRM Shaders to Always Included` を実行済み（初回のみ）
 2. ✅ `Assets/link.xml` が存在すること（Input System型ストリッピング防止）
 3. ✅ StreamingAssets/VRM/ にVRMファイルを配置
-4. ✅ Player Settings > WebGL Template で `CyanNook` を選択（WebLLM CDN読み込みはjslib内で行うためテンプレート選択は必須ではないが、UIレイアウトのため推奨）
+4. ✅ `Window > Build Profiles` で用途に応じたプロファイルを選択:
+   - **WebGL - GitHub**: 通常配布用（DXT、テンプレート CyanNook）
+   - **WebGL - Unityroom**: 体験版（UNITYROOM_BUILD、DXT。UnityroomConfig.asset の事前作成が必要）
+   - **WebGL - Mobile**: モバイル向け（MOBILE_WEB_BUILD、ASTC、テンプレート CyanNookMobile。
+     出力先はPC用 `build/` と別フォルダにすること）
 5. ビルド実行（マニフェストは自動生成される）
 6. HTTPS またはlocalhost でホスティング（Web Speech API / WebGPU等のセキュアコンテキストが必要）
 
@@ -8906,6 +9101,8 @@ iOS SafariでのFPS低下等の問題を調査するためのログ基盤。
 | `[PERF] LLM request complete` | LLMClient.cs | ストリーミング完了 |
 | `[PERF] VOICEVOX synth start` | VoicevoxClient.cs | 音声合成開始 |
 | `[PERF] VOICEVOX synth complete` | VoicevoxClient.cs | 音声合成完了 |
+| `[PERF] Gemini TTS synth start` | GeminiTtsClient.cs | 音声合成開始 |
+| `[PERF] Gemini TTS synth complete` | GeminiTtsClient.cs | 音声合成完了 |
 | `[PERF] TTS sentence queued` | VoiceSynthesisController.cs | 文区切り検出→合成キューイング |
 
 #### セーフエリア対応（CSS）
