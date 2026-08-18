@@ -60,7 +60,9 @@ namespace CyanNook.Furniture
         /// </summary>
         private void CollectPoints()
         {
-            _actionToPoints = new Dictionary<string, Transform[]>();
+            // キーの大文字小文字を無視（"Sit"登録でも"sit"検索が一致。
+            // Blender側の命名の大小文字に依存させない）
+            _actionToPoints = new Dictionary<string, Transform[]>(System.StringComparer.OrdinalIgnoreCase);
 
             var allChildren = GetComponentsInChildren<Transform>(true);
             var interactionList = new List<Transform>();
@@ -129,7 +131,10 @@ namespace CyanNook.Furniture
         /// </summary>
         private string ExtractActionFromPointName(string pointName)
         {
-            if (!pointName.StartsWith("Interact_")) return null;
+            // 収集側（CollectPoints）と同じく大文字小文字を無視する。
+            // 旧実装は区別していたため、小文字命名のポイントが収集はされるのに
+            // アクション別分類に入らず、複数アクション家具でポイント選択が壊れていた
+            if (!pointName.StartsWith("Interact_", System.StringComparison.OrdinalIgnoreCase)) return null;
 
             // "Interact_"を除去
             string remainder = pointName.Substring(9);

@@ -802,11 +802,9 @@ public class FurnitureInstance : MonoBehaviour
 | `Interact_entry` | 入室位置（NavMesh外可） | `Interact_entry01` |
 | `Interact_lookattarget` | 視線ターゲット | `Interact_lookattarget01` |
 
-**注意（大文字/小文字の扱い・現状は不完全）**: ポイントの**収集**（`CollectPoints`）は
-case-insensitive だが、**アクション分類**（`ExtractActionFromPointName` の `StartsWith("Interact_")`）は
-case-sensitive。そのため小文字命名（`interact_sit01` 等）だと収集はされるがアクション別分類に
-入らず、複数アクション家具（bed の sit/sleep）でポイント選択が全ポイントfallbackになる。
-Blender 側では **`Interact_` の大文字始まりで命名すること**（分類も case-insensitive にする修正は判断保留中）。
+**注意**: 接頭辞・アクション名とも大文字/小文字は区別しない（case-insensitive）。
+Blender側での命名が小文字（`interact_sit01` 等）でも収集・アクション別分類ともに正しくマッチする
+（収集/分類/辞書キーのすべてを `OrdinalIgnoreCase` で統一済み）。
 
 ---
 
