@@ -1,6 +1,6 @@
 ---
 name: fix-item
-description: Cyan-Nook のコード修正を定型フローで実施する（説明→承認→実装→コンパイル確認→レビュー→テスト→コミット→メモリ更新）。バグ修正・監査項目対応・小〜中規模の機能変更のとき使う。
+description: Cyan-Nook のコード修正を定型フローで実施する（説明→承認→実装→コンパイル確認→レビュー→テスト→DESIGN.md追従→コミット→メモリ更新）。バグ修正・監査項目対応・小〜中規模の機能変更のとき使う。
 argument-hint: "[修正する項目の説明]"
 ---
 
@@ -25,7 +25,7 @@ Cyan-Nook プロジェクトで確立された修正フロー。以下の順に�
 
 - `refresh_unity`（compile=request）→ `read_console`（error のみ）で確認
 - 新規 .cs ファイル追加時はアセット未インポートでエラーが出ることがある → `refresh_unity mode=force scope=all`
-- `#if UNITYROOM_BUILD` を触った場合は両ビルド構成でコンパイル確認する（define 切替メニュー使用。**終わったら GitHub 版に戻して File > Save Project まで実行**。忘れると ProjectSettings.asset に define が残る）
+- `#if UNITYROOM_BUILD` / `#if MOBILE_WEB_BUILD` を触った場合は該当プロファイルでもコンパイル確認する（`Window > Build Profiles` でアクティブ切替 + `CompilationPipeline.RequestScriptCompilation()`。**終わったら WebGL - GitHub プロファイルに戻す**）
 
 ## 4. レビュー
 
@@ -38,7 +38,13 @@ Cyan-Nook プロジェクトで確立された修正フロー。以下の順に�
 - ユーザーが実施する具体的なテスト手順（何をして、何が起これば OK か）を提示する
 - **ユーザーのテスト確認を待つ。確認前にコミットしない**
 
-## 6. コミット
+## 6. DESIGN.md 追従確認
+
+- DESIGN.md の該当節を確認し、今回の変更で古くなる記述があれば更新する（コミットに含める）
+- 対象: 挙動・クラス責務・設定項目・許容値・メニューパス等の変更。該当節が無い新機能は節を追加
+- 食い違いが無ければ更新不要（確認は必須、更新は食い違い時のみ）
+
+## 7. コミット
 
 - テスト OK の返答を受けてから、**関連ファイルのみ**を `git add`（パス指定。`git add -A` 禁止）
 - 含めないもの: `build/` 成果物、AddressableAssetSettings.asset、ProjectSettings.asset、modern_ceiling_globe.mat、.claude/settings.json（意図した変更でない限り）
@@ -46,7 +52,7 @@ Cyan-Nook プロジェクトで確立された修正フロー。以下の順に�
 - 末尾に `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 - **プッシュはユーザーが行う。git push しない**
 
-## 7. メモリ更新
+## 8. メモリ更新
 
 - 対応した項目が監査メモ等に記載されている場合、✅+コミットハッシュ+運用注意（今後気を付けるべき点）を追記する
 - 修正過程で判明した非自明な事実（ハマりどころ・設計判断）は自動メモリに保存する
