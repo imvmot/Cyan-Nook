@@ -743,9 +743,10 @@ room01_chair_01
 | door | exit, entry | entry | 出入り口（exit=退室インタラクション、entry=入室ポイント） |
 
 ※ bookshelf（look/take）は将来候補で未実装。実在する FurnitureTypeData は chair/bed/door の3種のみ。
-※ door の「キャラクター位置による exit/enter 自動判定」（`SelectBestAction`）は、判定結果の
-文字列 `"enter"` がアセット側の許容アクション `"entry"` と綴り不一致のため現状機能しておらず、
-常に defaultAction（entry）へフォールバックする（既知の問題、修正判断は保留中）。
+※ door の「キャラクター位置による exit/entry 自動判定」（`SelectBestAction` → `SelectDoorAction`）:
+ドアの forward とキャラクター位置の内積で内側=exit / 外側=entry を返す。
+（旧実装は外側判定を `"enter"` と綴っており許容リストに弾かれていたが、defaultAction が
+偶然 entry だったため結果は一致していた。綴りは修正済み）
 
 ### データ構造
 

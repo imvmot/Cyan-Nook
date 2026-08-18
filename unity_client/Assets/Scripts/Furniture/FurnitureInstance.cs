@@ -180,8 +180,11 @@ namespace CyanNook.Furniture
             float dot = Vector3.Dot(transform.forward, toCharacter);
 
             // キャラクターがドアの前（内側）にいる場合は exit
-            // ドアの後ろ（外側）にいる場合は enter
-            return dot > 0 ? "exit" : "enter";
+            // ドアの後ろ（外側）にいる場合は entry
+            // （FurnitureTypeData.availableActions の登録名 "entry" と一致させること。
+            //   旧実装の "enter" は綴り不一致で GetValidAction に弾かれ、
+            //   defaultAction が偶然 entry だったため潜在化していた）
+            return dot > 0 ? "exit" : "entry";
         }
 
         /// <summary>

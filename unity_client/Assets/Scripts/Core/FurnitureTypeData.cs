@@ -22,7 +22,7 @@ namespace CyanNook.Core
         public string description;
 
         [Header("Actions")]
-        [Tooltip("利用可能なアクション一覧 (sit, sleep, look, exit, enter など)")]
+        [Tooltip("利用可能なアクション一覧 (sit, sleep, look, exit, entry など)")]
         public string[] availableActions = new string[] { };
 
         [Tooltip("デフォルトアクション")]
