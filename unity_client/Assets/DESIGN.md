@@ -3069,6 +3069,86 @@ action が `ignore` でも emote / emotion は反映される。
 - 各 Set メソッド (`SetEnabled`, `SetCooldownDuration`, `SetIdlePromptMessage`) は変更時に自動的に PlayerPrefs に保存
   （ON/OFF は `PeriodicExecutionSettings.SetEnabled()` 経由で共有キーに保存）
 
+### 外部アクションフィード（External Action Feed）
+
+外部の LLM 系統（AIエージェント、Dify ワークフロー、自作スクリプト等）が公開する HTTP エンドポイントを
+定期購読し、受信した「完成済みの応答JSON」（既存 LLM レスポンスと同一スキーマ）をキャラクターへ適用する
+**受動制御**の入力源。「Ghost（魂）を外部システムに委ね、アプリは Shell（身体表現）に徹する」構成を
+実現する。デフォルトOFF・上級者向け。
+
+#### 位置づけ（並列トリガー・排他ではない）
+
+```
+キャラクター駆動トリガー（各々独立 ON/OFF）:
+  ・ ユーザー入力（チャット欄）          ← 常時有効
+  ・ Cron スケジューラ
+  ・ IdleChat / Sleep / Outing（定期実行マスター配下）
+  ・ 外部アクションフィード（HTTP購読）  ← デフォルトOFF
+```
+
+既存の能動系（チャット/Cron/IdleChat = 「プロンプトをLLMに送る」）とは方式が異なり、
+フィードは「完成済み応答を受け取って適用する」。多端末運用（外部エージェントが常時稼働、
+アプリは表示窓）では「フィードON + 定期実行OFF」の組み合わせで二重発火を防ぐ。
+
+#### アーキテクチャ（publish/subscribe 対称構造）
+
+```
+Cyan-Nook ── PUT ──▶ context.json + camera.jpg   （キャラの状態・視界を公開）
+                          │
+                          ▼
+                    外部LLM系統（エージェント等）
+                          │
+                          ▼
+Cyan-Nook ◀── GET ── action.json                 （行動指示を購読）
+```
+
+| エンドポイント | 書き手 | 読み手 | 内容 |
+|---|---|---|---|
+| action（購読URL） | 外部システム | Cyan-Nook | 既存LLMレスポンスJSON（emotion/action/target/emote/message等） |
+| context（公開URL） | Cyan-Nook | 外部システム | timestamp / chat_state / is_sleeping / is_outside / spatial_context / visible_objects / camera_image_url / camera_image_fresh |
+| camera（公開URL） | Cyan-Nook | 外部システム | キャラクター視点画像（image/jpeg、512×512） |
+
+バックエンドはホスト非依存（REST で PUT/GET できれば何でもよい）。
+リファレンス構成として nginx (`dav_methods PUT`) の例を **`examples/feed-server/`** に、
+外部エージェント側の連携例（action JSON の組み立てとPUT手順）を **`examples/hermes-agent/`** に同梱。
+
+#### ExternalActionFeedController（`Scripts/Chat/`）
+
+**購読（受信→適用）:**
+- `subscribeInterval` 秒毎に `UnityWebRequest.Get(actionSubscribeUrl)`（キャッシュバスティング + no-cacheヘッダ付き）
+- **変更検知**: 前回適用した生JSONと同一文字列なら何もしない（外部側が timestamp/uuid を含めれば毎回変化し再適用される）
+- `{` 始まりの軽量チェック + `JsonUtility.FromJson` 直接呼びで壊れたJSON/HTMLエラーページを確実に破棄
+  （`LLMResponseData.FromJson` は失敗時にフォールバックを返してしまうため使わない）
+- 適用は `ChatManager.ApplyExternalResponse(LLMResponseData)`:
+  - 既存のブロッキング応答確定処理を通すため、UI表示・TTS・感情・アニメ・履歴追加まで一気通貫で動く
+  - ビジー（応答待ち/Thinking/睡眠中/外出中/Entry再生中/初回Entry完了前）は false を返しスキップ
+    → `_lastAppliedRawJson` を更新せず次ポーリングで再試行（その間に外部が新しい応答を出せば最新に収束）
+
+**公開（publish）:**
+- `publishInterval` 秒毎の heartbeat で context JSON（+カメラJPEG）を PUT
+- LLM応答適用直後は `_publishTimer = min(timer, 1f)` で前倒し publish（状態変化を早く外部へ伝える）
+- カメラ画像は睡眠中・外出中は抑制（既存Visionと同じ方針）。context の `camera_image_fresh` で鮮度を通知
+- **画面共有画像は publish しない**（常時公開はオンデマンド送信とプライバシーの質が異なるため。
+  必要なら外部システム側で直接キャプチャする方針）
+- context/camera どちらか一方のURLだけでも稼働可
+
+**PlayerPrefs キー（SettingsExporter対象）:**
+`feed_enabled` / `feed_actionUrl` / `feed_subscribeInterval` / `feed_contextUrl` / `feed_cameraUrl` / `feed_publishInterval`
+
+**UI**: LLMSettingsPanel のフィードセクション（トグル + 各URL/間隔 + ヘルプページボタン）
+
+**UNITYROOM_BUILD では完全停止**（`Start()` で `feedEnabled=false; enabled=false`。
+UIを隠すだけでは PlayerPrefs 復元や Import で有効化され得るため機能側で塞ぐ）
+
+**WebGL の CORS 注意**: PUT はプリフライトが飛ぶため、サーバー側に
+`Access-Control-Allow-Methods: PUT` と `Access-Control-Allow-Headers: Content-Type` が必要
+（Editor では成功するので WebGL で初めて発覚しやすい。Cyan-Nook は GET に Cache-Control/Pragma
+ヘッダを付けるため、これらも Allow-Headers に必要）。examples/feed-server の nginx 設定は対応済み。
+
+**起動時 Entry Prompt との関係**: 起動時 Entry プロンプトは定期実行マスターOFFでも送信される
+（入室演出の一部として意図的）。フィード運用で内蔵LLMの挨拶を止めたい場合は
+Entry プロンプト欄を空にする（空欄で送信無効）。
+
 ### 退屈ポイント（BoredomController）
 
 キャラクターの「退屈度」を数値で管理し、LLMの行動選択に影響を与えるシステム。
@@ -8123,6 +8203,12 @@ VoiceSettingsPanel
 │  ├─ Speaker: [ずんだもん (ノーマル) ▼]
 │  ├─ Speed/Pitch/Intonation sliders
 │  └─ [Test Connection] [▶ Test Play]
+├─ GeminiTtsSettingsSection (GameObject)  ← TTS ON + GeminiTTS選択時のみ表示
+│  ├─ API Key: [........]                 ← hideOnUnityroomBuild（unityroomでは内蔵キー運用のため非表示）
+│  ├─ Model:   [gemini-2.5-flash-preview-tts ▼] ← unityroomではUnityroomConfig.geminiTtsModelに固定・行非表示
+│  ├─ Voice:   [Kore ▼]                   ← GeminiVoiceNames 30種
+│  ├─ Style Prompt: [声のスタイル指示]     ← テキスト先頭に付与される自然文の演技指示
+│  └─ [▶ Test Play]                       ← HasUsableApiKey（内蔵キーフォールバック含む）で活性判定
 ├─ Voice Input (STT) セクション（常時表示）
 │  ├─ [☐ Microphone]                     ← microphoneToggle
 │  ├─ [☑ Echo Prevention]                ← echoPreventionToggle（デフォルトON）
@@ -8136,8 +8222,7 @@ VoiceSettingsPanel
 - `UpdateTTSSettingsVisibility()`: TTS ON/OFFとエンジン選択に応じてセクション表示を制御
 - TTS OFF時: エンジンドロップダウン操作不可、両エンジン設定セクション非表示
 - TTS ON時: `UpdateTTSEngineUI()`でエンジンに応じたセクション表示
-  - WebSpeechAPI選択時: `webSpeechSettingsSection`表示、`voicevoxSettingsSection`非表示
-  - VOICEVOX選択時: 逆
+  （WebSpeech / VOICEVOX / GeminiTTS の3セクションのうち選択中エンジンのもののみ表示）
 
 **保存ロジック（OnSaveClicked）**:
 - VOICEVOX API URLは常に保存（エンジン切替後に使えるように）
@@ -8324,8 +8409,19 @@ Unity WebGL → Node.jsプロキシ → VOICEVOX API (localhost:50021)
 - ✅ ストリーミング時のキュー再生（JS側キュー管理）
 - ✅ 全設定のPlayerPrefs保存・復元
 
+**Gemini TTS 対応**（3エンジン化）:
+- ✅ GeminiTtsClient（`models/{model}:generateContent` の音声モダリティ、raw PCM16 24kHz mono受信 → AudioClip化）
+- ✅ VoiceSettingsPanel: Gemini設定セクション（APIキー/モデル/ボイス30種/スタイルプロンプト/テスト再生）
+- ✅ モーラ情報がないため Amplitude リップシンクにフォールバック
+- ✅ UNITYROOM_BUILD 対応（内蔵キーフォールバック `ResolveApiKey()`、モデルは UnityroomConfig.geminiTtsModel に固定）
+- ✅ PlayerPrefs 4キー保存（gemini_tts_apiKey / model / voiceName / stylePrompt）
+
+**再生順序保証**（順序保証バッファ導入）:
+- ✅ 並列合成の完成順ズレによる「表示テキストと音声の文順入れ替わり」を連番採番+連番順再生で解消
+- ✅ 合成リクエストのタイムアウト設定（VOICEVOX 30秒 / Gemini 60秒、ハングによる全停止防止）
+
 **動作確認環境**:
-- Unity 6 (WebGL Build) - Web Speech API
+- Unity 6 (WebGL Build) - Web Speech API / VOICEVOX（LAN内サーバー） / Gemini TTS
 - Unity 6 (Windows Standalone) - VOICEVOX
 - VOICEVOX 0.25.1 (localhost:50021)
 
@@ -9033,6 +9129,119 @@ Vrm10.LoadBytesAsync(awaitCaller: ...)
      出力先はPC用 `build/` と別フォルダにすること）
 5. ビルド実行（マニフェストは自動生成される）
 6. HTTPS またはlocalhost でホスティング（Web Speech API / WebGPU等のセキュアコンテキストが必要）
+
+### ビルドプロファイル（Build Profiles）
+
+ビルド種別の切替は Unity 6 の `Window > Build Profiles` に一本化されている
+（`Assets/Settings/Build Profiles/` の3アセット。かつての define 手動切替メニューは廃止済み）。
+
+| プロファイル | Scripting Defines | テクスチャ圧縮 | WebGLテンプレート | 用途 |
+|---|---|---|---|---|
+| WebGL - GitHub | （なし） | DXT | CyanNook | 通常配布（PC向け） |
+| WebGL - Unityroom | `UNITYROOM_BUILD` | DXT | CyanNook | unityroom体験版 |
+| WebGL - Mobile | `MOBILE_WEB_BUILD` | ASTC | CyanNookMobile | モバイルブラウザ向け |
+
+- define・テクスチャ圧縮・テンプレートはプロファイル側が保持するため、
+  「define の戻し忘れが ProjectSettings に残留する」事故は構造的に起きない
+- **Mobile プロファイルのみ Player Settings のオーバーライド（完全コピー）を持つ**。
+  グローバルの Player Settings を変更した際は Mobile 側への反映を確認すること
+- Mobile の Player Settings オーバーライド内容: WebGLテンプレート=CyanNookMobile、
+  `webGLInitialMemorySize` 256MB（後述）
+
+### モバイルWebビルド対応（MOBILE_WEB_BUILD）
+
+スマートフォン・タブレットのブラウザで動作させるための専用ビルド。
+PC向けビルドをモバイルで開くと以下の問題があるため、専用プロファイルで対応する。
+
+#### 背景: モバイルで問題になる3要素
+
+1. **テクスチャ圧縮形式の非互換**: PC GPU は DXT/BC、モバイル GPU（Mali/Apple）は ASTC/ETC しか
+   直接扱えない。非対応形式はクラッシュせず **CPU で無圧縮 RGBA に展開**され、メモリが数倍化する
+   （RAM 4GB級タブレットでは wasm ヒープ拡張失敗 → OOM でロード停止。実機で確認済み）。
+   → Mobile プロファイルは ASTC でビルド。逆に ASTC を PC で開くと同じ展開ペナルティを PC が払う
+   （PC は RAM に余裕があるため動くが、ローカルLLMとのVRAM/RAM同居方針に反する）ので統一はしない
+2. **DevicePixelRatio**: 高DPI端末（iPhone は DPR=3）では CSS サイズの DPR² 倍のピクセルを描画して
+   GPU 負荷が激増する。→ CyanNookMobile テンプレートが `config.devicePixelRatio = 1` に固定
+   （テンプレート冒頭の `MOBILE_DEVICE_PIXEL_RATIO` 定数で調整可、例: 1.5）
+3. **メモリの崖**: wasm ヒープは「少しずつ拡張 → 断片化した頃に拡張拒否 → OOM」のパターンで死ぬ。
+   → Mobile プロファイルの `webGLInitialMemorySize` を 256MB に設定し、起動直後（メモリが最も潤沢な
+   瞬間）に一括確保する。**512MB は 4GB 端末で一括コミット過大となりタブ強制終了を招いた実測があり、
+   256MB が現在の適値**（32=断片化OOM / 512=即死 / 256=安定）
+
+#### MobileWebBootstrap（起動時軽量化）
+
+`Scripts/Core/MobileWebBootstrap.cs`（`#if MOBILE_WEB_BUILD` でファイル全体をガード、
+PC/unityroom ビルドにはコンパイルされない）:
+
+- `RuntimeInitializeOnLoadMethod(BeforeSceneLoad)` で Quality を **「Cyan-nook Mobile」** レベルへ切替
+  （名前検索。見つからない場合は警告を出して既定のまま動く安全設計）
+- `Application.targetFrameRate = 30`（public const。「窓」用途では滑らかさより省電力・発熱・安定を優先）
+- シーン上の `FrameRateLimiter`（Awakeで60を設定）が後から上書きするため、
+  FrameRateLimiter 側に `#if MOBILE_WEB_BUILD` 分岐があり `MobileWebBootstrap.TargetFrameRate` でクランプする
+
+#### Quality レベルと軽量URPアセット
+
+Quality レベルは **「Cyan-nook」（PC用・デフォルト）と「Cyan-nook Mobile」の2つのみ**。
+（旧 Very Low〜Ultra の6レベルは削除済み。URPはQuality登録済みの全URPアセットのシェーダー
+バリアントをビルドに含めるため、未使用レベルの削除でビルド内Shaderが23.4→16.1MBに減少した）
+
+Cyan-nook Mobile 用の `Cyan-nook_Mobile_Universal Render Pipeline Asset` の差分（PC用比）:
+
+| 項目 | PC (Cyan-nook) | Mobile |
+|---|---|---|
+| HDR | ON | **ON（切ってはいけない・下記注意）** |
+| MSAA | 4x | Disabled |
+| メインライトシャドウ解像度 | 2048 | 1024 |
+| 追加ライトシャドウ | ON | OFF |
+| ソフトシャドウ | ON | OFF |
+| シャドウ距離 | 50 | 25 |
+| スキニング（Qualityレベル側） | 4 Bones | 2 Bones |
+
+**注意: HDR は OFF にしない**。Mali系GPU（Fire HD等）で HDR OFF にするとシーンライトが
+反映されなくなる相性問題を実機で確認済み（iPhone/PCでは再現しない）。
+
+#### 実機知見
+
+- VRM はランタイムロードのため**テクスチャは常に無圧縮**で、ビルドのテクスチャ圧縮設定の対象外。
+  低メモリ端末ではVRM側テクスチャの解像度がメモリ支配的要因になる
+  （2048²テクスチャ1枚 ≒ 展開後21MB。サムネイルの高解像度化にも注意）
+- Fire HD 10 (2021, RAM 4GB) 級で 30FPS 動作を確認。それでもメモリは際どく、
+  端末状態によっては OOM しうる（再起動+単独タブで回復）
+
+### unityroom体験版ビルド（UNITYROOM_BUILD）
+
+unityroom 向けの体験版。**Gemini（内蔵APIキー）+ WebLLM のみ**で動作し、セキュリティ・悪用リスクの
+ある機能を封鎖する。封鎖は**二重防御が原則**: UI非表示（各パネルの `hideOnUnityroomBuild` 配列）+
+コントローラー側の `#if UNITYROOM_BUILD` 実行停止（UIを隠すだけでは PlayerPrefs 復元・Import・
+既定値から動いてしまうため）。
+
+#### UnityroomConfig.asset
+
+`Resources/UnityroomConfig.asset`（ScriptableObject、**gitignore対象＝リポジトリに含まれない**）に
+内蔵キー・モデル設定を保持: `geminiApiKey` / `geminiEndpoint` / `geminiModelName` / `geminiTtsModel`。
+`CyanNook > Build > Create or Open Unityroom Config` で作成。
+実行時は `LLMConfig.ResolveApiKey()` / `GeminiTtsClient.ResolveApiKey()` が
+「ユーザーキーが空なら内蔵キーへフォールバック」する（UIには常に空欄表示）。
+
+#### 封鎖項目一覧
+
+| 対象 | 封鎖内容 | 実装 |
+|---|---|---|
+| LLMプロバイダー | Gemini / WebLLM の2択に限定 | LLMSettingsPanel `_availableApiTypes` |
+| endpoint/model/apiKey入力 | 常時非表示 + Save/TestConnection時に内蔵設定へ強制正規化 | LLMSettingsPanel |
+| Cronスケジューラ | 完全停止 | CronScheduler `#if` |
+| 外部アクションフィード | 完全停止（悪意URL登録によるcontext/カメラ画像の外部送信防止） | ExternalActionFeedController `#if` |
+| WebCam / 画面共有 | UI非表示 + 機能停止 | hideOnUnityroomBuild + 各コントローラー |
+| 設定Import | 封鎖（Exportは可） | DebugSettingsPanel |
+| Gemini TTS モデル | UnityroomConfig.geminiTtsModel に固定、モデル行非表示 | GeminiTtsClient / VoiceSettingsPanel |
+| VOICEVOX / Web Speech TTS | 非表示（Gemini TTSのみ） | VoiceSettingsPanel |
+
+#### 関連の特殊対応
+
+- unityroom は `settings.json` という名前のファイル配信を404でブロックするため、
+  Localization が初期化できない → `CyanNook > Localization > Bake Japanese to Active Scene TMPs`
+  で日本語をシーンに焼き付けてからビルドする（詳細は Localization 節）
+- リリース手順は `.claude/skills/unityroom-release/SKILL.md` にチェックリスト化済み
 
 ### iOS Safari対応
 
