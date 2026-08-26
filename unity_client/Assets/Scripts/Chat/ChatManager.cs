@@ -68,6 +68,10 @@ namespace CyanNook.Chat
         [Tooltip("LLMエラー後にIdle状態へ自動復帰するまでの秒数。復帰しないとIdleChat/Cron/夢/外出メッセージ等の自律動作が全停止する")]
         public float errorRecoveryDelay = 3f;
 
+        [Header("External Feed")]
+        [Tooltip("外部フィードのthinking（考え中）アクションの最大継続秒数。本応答が届かないままこの時間が過ぎたら自動でThinkingを解除する（外部側の失敗で考え中のまま固まるのを防ぐ）。0以下でタイムアウト無効（非推奨）")]
+        public float externalThinkingTimeout = 120f;
+
         [Header("Vision")]
         [Tooltip("キャラクターカメラの画像をリクエストに含める")]
         public bool useVision = false;
@@ -198,6 +202,14 @@ namespace CyanNook.Chat
         private bool _incrementalFieldsApplied;
         private bool _isThinkingActive;
         private bool _parseErrorHandled;
+
+        // 外部フィード起点のThinking（action:"thinking"）が演出中か。
+        // trueの間はApplyExternalResponseのThinkingガードを緩め、
+        // 後続の本応答がThinkingを解除して適用されるようにする
+        private bool _isExternalThinkingActive;
+
+        // 外部Thinkingのタイムアウト監視コルーチン（StartExternalThinkingで開始）
+        private Coroutine _externalThinkingTimeoutCoroutine;
 
         // Error状態からIdleへ自動復帰するコルーチン（HandleLLMErrorで開始）
         private Coroutine _errorRecoveryCoroutine;
@@ -1212,7 +1224,8 @@ namespace CyanNook.Chat
 
             // Thinking演出中（起床ed/Entry再生中はIdleでも_isThinkingActive=trueのことがある）はスキップ。
             // HandleLLMResponseはThinkingを止めないため、割り込むと考え中演出が残る恐れがある。
-            if (_isThinkingActive)
+            // ただし外部フィード起点のThinking中は例外で、後続の本応答を通して下で解除する
+            if (_isThinkingActive && !_isExternalThinkingActive)
             {
                 Debug.Log("[ChatManager] ApplyExternalResponse skipped (thinking active)");
                 return false;
@@ -1250,6 +1263,26 @@ namespace CyanNook.Chat
                 return false;
             }
 
+            // action:"thinking" は「本応答の前触れ」の特別扱い。
+            // 外部リスナー（herald等）が推論開始時にPUTすることで、
+            // 応答待ちの間キャラクターに考え中モーションをさせる。
+            // 状態遷移のみ行い、message等の他フィールドは使わない
+            if (response.action != null &&
+                response.action.Trim().Equals("thinking", StringComparison.OrdinalIgnoreCase))
+            {
+                StartExternalThinking();
+                return true;
+            }
+
+            // 外部Thinking中に本応答が届いた場合、解除は内部フローと同じ
+            // 「適用 → Thinking解除」の順序で行う（下のHandleLLMResponse後）。
+            // ここではタイムアウト監視の停止とフラグ解除のみ予約する
+            bool wasExternalThinking = _isExternalThinkingActive;
+            if (wasExternalThinking)
+            {
+                CancelExternalThinking(stopAnimation: false);
+            }
+
             // null/空フィールドにデフォルト補填（手動構築されたresponseへの安全策。
             // FromJson経由なら既に補填済みだがFillDefaultsは冪等なので害はない）
             response.FillDefaults();
@@ -1264,7 +1297,89 @@ namespace CyanNook.Chat
 
             Debug.Log($"[ChatManager] Applying external feed response: action={response.action}, message={response.message}");
             HandleLLMResponse(response);
+
+            // 外部Thinkingの解除（内部フローのHandleRequestCompletedに相当）。
+            // HandleLLMResponseはThinkingを止めないため、ここで明示的に解除する
+            if (wasExternalThinking && _isThinkingActive)
+            {
+                if (talkController != null)
+                {
+                    talkController.StopThinking();
+                }
+                _isThinkingActive = false;
+                OnThinkingEnded?.Invoke();
+            }
             return true;
+        }
+
+        /// <summary>
+        /// 外部フィードのaction:"thinking"で考え中モーションに入る。
+        /// 既に外部Thinking中の再受信（連続ウェイクワード等）はタイムアウトの延長のみ行う。
+        /// 本応答が届かない場合に備え、externalThinkingTimeout秒で自動解除する
+        /// </summary>
+        private void StartExternalThinking()
+        {
+            if (!_isExternalThinkingActive)
+            {
+                if (talkController != null)
+                {
+                    talkController.StartThinking();
+                    _isThinkingActive = true;
+                }
+                _isExternalThinkingActive = true;
+                OnThinkingStarted?.Invoke();
+                Debug.Log("[ChatManager] External thinking started");
+            }
+
+            // タイムアウトを（再）セット。0以下は「即時解除」ではなく「監視無効」とする
+            if (_externalThinkingTimeoutCoroutine != null)
+            {
+                StopCoroutine(_externalThinkingTimeoutCoroutine);
+                _externalThinkingTimeoutCoroutine = null;
+            }
+            if (externalThinkingTimeout > 0f)
+            {
+                _externalThinkingTimeoutCoroutine = StartCoroutine(ExternalThinkingTimeoutCoroutine());
+            }
+        }
+
+        private IEnumerator ExternalThinkingTimeoutCoroutine()
+        {
+            yield return new WaitForSeconds(externalThinkingTimeout);
+            _externalThinkingTimeoutCoroutine = null;
+
+            if (_isExternalThinkingActive)
+            {
+                Debug.LogWarning("[ChatManager] External thinking timed out, stopping");
+                CancelExternalThinking(stopAnimation: true);
+            }
+        }
+
+        /// <summary>
+        /// 外部Thinkingを終了する。
+        /// stopAnimation=falseは所有権の移譲（内部リクエスト開始時・本応答の適用前）用で、
+        /// 演出は止めず既存の解除経路（HandleRequestCompleted等）に任せる
+        /// </summary>
+        private void CancelExternalThinking(bool stopAnimation)
+        {
+            if (_externalThinkingTimeoutCoroutine != null)
+            {
+                StopCoroutine(_externalThinkingTimeoutCoroutine);
+                _externalThinkingTimeoutCoroutine = null;
+            }
+
+            if (!_isExternalThinkingActive) return;
+            _isExternalThinkingActive = false;
+
+            if (stopAnimation && _isThinkingActive)
+            {
+                if (talkController != null)
+                {
+                    talkController.StopThinking();
+                }
+                _isThinkingActive = false;
+                OnThinkingEnded?.Invoke();
+            }
         }
 
         /// <summary>
@@ -1308,6 +1423,13 @@ namespace CyanNook.Chat
         /// </summary>
         private void HandleLLMError(string error)
         {
+            // 外部Thinkingの所有権解除。
+            // 通常はSetState(WaitingForResponse)で移譲済みだが、プロバイダー未設定等で
+            // OnRequestStartedを経ずに即エラーになる経路ではフックを通らないため、
+            // ここでも解除してフラグ残留（次回thinkingがモーション無しになる）を防ぐ。
+            // 演出はRecoverFromErrorAfterDelayの既存解除に任せる
+            CancelExternalThinking(stopAnimation: false);
+
             // リクエスト種別をリセット
             // （残留すると次回リクエストがauto扱いになり、Thinking遷移や履歴追加が壊れる）
             // 注意: WakeUp / CronEntry はここでリセットしない（ClearCompletedRequestKindが維持する）。
@@ -1457,6 +1579,15 @@ namespace CyanNook.Chat
         /// </summary>
         private void SetState(ChatState newState)
         {
+            // 内部LLMリクエストの開始で外部Thinkingの所有権を内部フローへ移す。
+            // 演出は止めない（_isThinkingActiveを維持し、HandleRequestCompleted等の
+            // 既存の解除経路に任せる）。タイムアウト監視は止めないと、
+            // 内部リクエスト中に発火してThinkingを勝手に解除してしまう
+            if (newState == ChatState.WaitingForResponse)
+            {
+                CancelExternalThinking(stopAnimation: false);
+            }
+
             if (_currentState != newState)
             {
                 _currentState = newState;

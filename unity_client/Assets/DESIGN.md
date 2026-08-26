@@ -3122,6 +3122,16 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
   - 既存のブロッキング応答確定処理を通すため、UI表示・TTS・感情・アニメ・履歴追加まで一気通貫で動く
   - ビジー（応答待ち/Thinking/睡眠中/外出中/Entry再生中/初回Entry完了前）は false を返しスキップ
     → `_lastAppliedRawJson` を更新せず次ポーリングで再試行（その間に外部が新しい応答を出せば最新に収束）
+    （例外: 下記の外部 thinking 起点の Thinking 中は本応答を通す）
+  - **`action:"thinking"` は特別扱い（本応答の前触れ）**: message 等の他フィールドは使わず、
+    考え中モーション（Thinking 状態）に入るだけ。外部リスナー（herald 等）が LLM 推論開始時に
+    `{"action":"thinking","timestamp":...}` を PUT すると、本応答が届くまでキャラクターが考え中演出をする
+    （timestamp は変更検知に必要）。後続の本応答は Thinking ガードの例外として通り、
+    内部フローと同じ「適用 → Thinking 解除」の順序で処理される。
+    本応答が届かない場合は `ChatManager.externalThinkingTimeout`（既定120秒、0以下で監視無効・非推奨）で自動解除。
+    外部 Thinking 中に内部 LLM リクエスト（チャット入力等）が始まった場合は所有権を内部フローへ移譲し、
+    演出の解除は既存経路（HandleRequestCompleted 等）に任せる。
+    連続受信（timestamp 違いの thinking 再受信）はタイムアウトの延長のみ行う
 
 **公開（publish）:**
 - `publishInterval` 秒毎の heartbeat で context JSON（+カメラJPEG）を PUT

@@ -72,7 +72,7 @@ Cyan-Nook（Unity 製 3D キャラクター表示アプリ）は、フィード�
 | `timestamp` | 現在時刻 (ISO 8601)。**毎回必ず変える**。アプリは「前回と同一の生 JSON」を無視するため、これが再適用のトリガーになる |
 | `emotion.*` | 0.0〜1.0 の数値 5 種 (happy / relaxed / angry / sad / surprised)。表情と仕草に反映される |
 | `reaction` | 短い相槌 (省略可、`""` でよい)。message と合わせて読み上げられる |
-| `action` | `move` / `interact_sit` / `interact_sleep` / `interact_exit` / `ignore` のいずれか |
+| `action` | `move` / `interact_sit` / `interact_sleep` / `interact_exit` / `ignore` のいずれか。**`thinking` は予約済みの特別値**（下記注意参照）で、通常の行動としては使わない |
 | `target.type` | `talk` (ユーザーの方へ来る) / `dynamic` (clock 等で座標指定) / `mirror` / `screencapture` (部屋の名所) / `interact_sit` (椅子) / `interact_sleep` (ベッド) |
 | `target.clock` | 1〜12 (dynamic 時のみ。キャラ基準の方角、12=正面) |
 | `target.distance` | `near` / `mid` / `far` (dynamic 時のみ) |
@@ -94,3 +94,7 @@ Cyan-Nook（Unity 製 3D キャラクター表示アプリ）は、フィード�
 - JSON は必ずオブジェクト単体。`{` で始まらないレスポンスや壊れた JSON はアプリ側で破棄され、キャラクターは無反応になる（エラーは返らない）
 - emotion と emote は矛盾させない（例: happy が最大なら emote は `happy01` か `Neutral`）
 - アプリが応答処理中・睡眠中・外出中の投稿は即時適用されず、状態が解けた時に最新の 1 件だけが適用される
+- **`action: "thinking"` は「考え中」演出専用の予約値**。推論を始める側（音声リスナー等）が
+  `{"action":"thinking","timestamp":"..."}` を PUT すると、次の本応答が届くまでキャラクターが考え中モーションをする
+  （本応答が来ない場合は一定時間で自動解除）。**最終的な応答の action に `thinking` を書いてはいけない**
+  （本応答が来ないためキャラクターが考え込んだままタイムアウトまで固まる）
