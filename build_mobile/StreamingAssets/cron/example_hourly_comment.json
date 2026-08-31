@@ -1,0 +1,8 @@
+{
+    "id": "hourly_comment",
+    "name": "毎時コメント",
+    "enabled": false,
+    "schedule": "0 * * * *",
+    "prompt": "[SYSTEM]: 1時間が経過しました。時間帯に応じた一言を話してください。話さない場合は action を \"ignore\" にしてください。",
+    "cancelSleepOrOuting": false
+}
