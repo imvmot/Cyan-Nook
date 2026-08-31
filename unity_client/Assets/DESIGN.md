@@ -9198,16 +9198,19 @@ Cyan-nook Mobile 用の `Cyan-nook_Mobile_Universal Render Pipeline Asset` の�
 
 | 項目 | PC (Cyan-nook) | Mobile |
 |---|---|---|
-| HDR | ON | **ON（切ってはいけない・下記注意）** |
-| MSAA | 4x | Disabled |
-| メインライトシャドウ解像度 | 2048 | 1024 |
+| HDR | ON | OFF（下記注意） |
+| MSAA | 4x | 4x |
+| メインライトシャドウ | ON（2048） | OFF |
 | 追加ライトシャドウ | ON | OFF |
-| ソフトシャドウ | ON | OFF |
-| シャドウ距離 | 50 | 25 |
+| ソフトシャドウ | ON | ON（Low） |
+| シャドウ距離 | 50 | 5 |
+| Mixed Lighting | ON | OFF |
 | スキニング（Qualityレベル側） | 4 Bones | 2 Bones |
 
-**注意: HDR は OFF にしない**。Mali系GPU（Fire HD等）で HDR OFF にするとシーンライトが
-反映されなくなる相性問題を実機で確認済み（iPhone/PCでは再現しない）。
+**HDR の注意**: 旧ライティング構成（Shadowmask 方式）では Mali系GPU（Fire HD等）で
+HDR OFF にするとシーンライトが反映されなくなる相性問題があった（iPhone/PCでは再現しない）。
+ライティングのベイク再構成（Shadowmask 廃止 → Baked Indirect + AO ベイク、2026-09）に伴い
+Mobile は HDR OFF で運用。Mali系実機で表示異常が出た場合はまず HDR ON を疑うこと。
 
 #### 実機知見
 
