@@ -3,12 +3,16 @@ using UnityEngine;
 namespace CyanNook.Core
 {
     /// <summary>
-    /// unityroom版ビルド用の秘密設定。
-    /// Resources/UnityroomConfig.asset に配置し、.gitignoreで除外する。
-    /// ビルドに含まれるがGitHubリポジトリには公開されない。
+    /// unityroom版ビルド用のデフォルトAPIキー設定。
+    /// Resources/UnityroomConfig.asset に配置し、アセット自体は.gitignoreで除外する。
     ///
-    /// GitHub版ビルドではこのアセットが存在しないため、
-    /// Resources.Load は null を返し、デフォルトキーなしで動作する。
+    /// 注意: Resources配下のアセットは全ビルドに収録されるため、
+    /// キーは unityroom版だけでなく GitHub版・Mobile版のビルド成果物にも
+    /// 埋め込まれる（リポジトリの build/ 等に含まれ、ツールで抽出可能）。
+    /// 漏洩許容の無料枠キーで運用する前提。有料キーは絶対に入れないこと。
+    ///
+    /// アセットを作らずに運用した場合、Resources.Load は null を返し
+    /// デフォルトキーなしで動作する。
     /// </summary>
     [CreateAssetMenu(fileName = "UnityroomConfig", menuName = "CyanNook/Unityroom Config")]
     public class UnityroomConfig : ScriptableObject
