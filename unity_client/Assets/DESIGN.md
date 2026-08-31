@@ -9207,10 +9207,11 @@ Cyan-nook Mobile 用の `Cyan-nook_Mobile_Universal Render Pipeline Asset` の�
 | Mixed Lighting | ON | OFF |
 | スキニング（Qualityレベル側） | 4 Bones | 2 Bones |
 
-**HDR の注意**: 旧ライティング構成（Shadowmask 方式）では Mali系GPU（Fire HD等）で
-HDR OFF にするとシーンライトが反映されなくなる相性問題があった（iPhone/PCでは再現しない）。
-ライティングのベイク再構成（Shadowmask 廃止 → Baked Indirect + AO ベイク、2026-09）に伴い
-Mobile は HDR OFF で運用。Mali系実機で表示異常が出た場合はまず HDR ON を疑うこと。
+**Mali系のライト不反映について**: 旧ライティング構成では Mali系GPU（Fire HD等）で
+シーンライトが反映されない問題があった（iPhone/PCでは再現しない）。当初 HDR OFF が原因と
+見えたが、**真因は影の設定**（Shadowmask 方式まわり）。影とライトベイクの再構成
+（Shadowmask 廃止 → Baked Indirect + AO ベイク、2026-09）で解消し、HDR OFF でも
+問題ないことを Fire HD 実機で確認済み。Mali系で表示異常が出た場合はまず影設定を疑うこと。
 
 #### 実機知見
 
