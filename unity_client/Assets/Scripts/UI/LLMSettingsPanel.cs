@@ -126,6 +126,12 @@ namespace CyanNook.UI
         [Tooltip("公開間隔（秒、0で無効）")]
         public TMP_InputField feedPublishIntervalInputField;
 
+        [Tooltip("フィード音声(voice.wav)再生トグル")]
+        public Toggle feedVoiceToggle;
+
+        [Tooltip("フィード音声(voice.wav)購読URL入力（空でアクションURLから自動導出）")]
+        public TMP_InputField feedVoiceUrlInputField;
+
         [Tooltip("解説ページを開くボタン")]
         public Button feedHelpButton;
 
@@ -416,6 +422,10 @@ namespace CyanNook.UI
                 feedCameraUrlInputField.onEndEdit.RemoveListener(OnFeedCameraUrlChanged);
             if (feedPublishIntervalInputField != null)
                 feedPublishIntervalInputField.onEndEdit.RemoveListener(OnFeedPublishIntervalChanged);
+            if (feedVoiceToggle != null)
+                feedVoiceToggle.onValueChanged.RemoveListener(OnFeedVoiceToggleChanged);
+            if (feedVoiceUrlInputField != null)
+                feedVoiceUrlInputField.onEndEdit.RemoveListener(OnFeedVoiceUrlChanged);
             if (feedHelpButton != null)
                 feedHelpButton.onClick.RemoveListener(OnFeedHelpClicked);
             if (cronSchedulerToggle != null)
@@ -1274,6 +1284,16 @@ namespace CyanNook.UI
             {
                 feedPublishIntervalInputField.onEndEdit.AddListener(OnFeedPublishIntervalChanged);
             }
+
+            if (feedVoiceToggle != null)
+            {
+                feedVoiceToggle.onValueChanged.AddListener(OnFeedVoiceToggleChanged);
+            }
+
+            if (feedVoiceUrlInputField != null)
+            {
+                feedVoiceUrlInputField.onEndEdit.AddListener(OnFeedVoiceUrlChanged);
+            }
             if (feedHelpButton != null)
             {
                 feedHelpButton.onClick.AddListener(OnFeedHelpClicked);
@@ -1318,6 +1338,16 @@ namespace CyanNook.UI
             if (feedPublishIntervalInputField != null && externalActionFeedController != null)
             {
                 feedPublishIntervalInputField.text = externalActionFeedController.publishInterval.ToString("F0");
+            }
+
+            if (feedVoiceToggle != null && externalActionFeedController != null)
+            {
+                feedVoiceToggle.SetIsOnWithoutNotify(externalActionFeedController.voiceEnabled);
+            }
+
+            if (feedVoiceUrlInputField != null && externalActionFeedController != null)
+            {
+                feedVoiceUrlInputField.text = externalActionFeedController.voiceSubscribeUrl;
             }
         }
 
@@ -1375,6 +1405,20 @@ namespace CyanNook.UI
                 externalActionFeedController.SetPublishInterval(seconds);
                 Debug.Log($"[LLMSettingsPanel] Feed publish interval: {(seconds > 0f ? $"{seconds}s" : "OFF")}");
             }
+        }
+
+        private void OnFeedVoiceToggleChanged(bool isOn)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetVoiceEnabled(isOn);
+            Debug.Log($"[LLMSettingsPanel] Feed voice playback: {(isOn ? "ON" : "OFF")}");
+        }
+
+        private void OnFeedVoiceUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetVoiceSubscribeUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed voice URL updated");
         }
 
         private void OnFeedHelpClicked()

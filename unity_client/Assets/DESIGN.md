@@ -3104,6 +3104,7 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
 | エンドポイント | 書き手 | 読み手 | 内容 |
 |---|---|---|---|
 | action（購読URL） | 外部システム | Cyan-Nook | 既存LLMレスポンスJSON（emotion/action/target/emote/message等） |
+| voice（購読URL、任意） | 外部システム | Cyan-Nook | 合成済み音声 voice.wav（外部側TTS。actionと同じ場所に置く規約） |
 | context（公開URL） | Cyan-Nook | 外部システム | timestamp / chat_state / is_sleeping / is_outside / spatial_context / visible_objects / camera_image_url / camera_image_fresh |
 | camera（公開URL） | Cyan-Nook | 外部システム | キャラクター視点画像（image/jpeg、512×512） |
 
@@ -3133,6 +3134,27 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
     演出の解除は既存経路（HandleRequestCompleted 等）に任せる。
     連続受信（timestamp 違いの thinking 再受信）はタイムアウトの延長のみ行う
 
+**フィード音声（voice.wav）の取得・再生:**
+- `voiceEnabled`（デフォルトOFF）で有効化。外部側（herald等）がTTS合成した voice.wav を
+  Cyan-Nook が取得して再生する（Cyan-Nook 自前のTTS合成の代わり）
+- **外部側の契約**: ①voice.wav → action.json の順で PUT（json が変更検知トリガーのため、
+  json 更新時点で wav が揃っている） ②wav の PUT に成功した時だけ json に
+  `voice_timestamp`（timestamp と同値）を入れる（これが「音声あり」の印。
+  wav 失敗時や thinking には付かない）
+- URL は `voiceSubscribeUrl`。空なら actionSubscribeUrl と同じ場所の `voice.wav` を自動導出。
+  取得時は `?t=<voice_timestamp>` をキャッシュバスターに付ける
+- 適用前に wav を取得してから `ApplyExternalResponse(response, clip)` に渡すため、
+  メッセージ表示・アニメ・音声再生が同時に始まる
+- **優先ルール**: 音声付き応答（voice_timestamp あり + 取得成功）は ttsEnabled のON/OFFに
+  依らず wav を再生し、自前合成はしない。wav なし・取得失敗時は従来どおり
+  （ttsEnabled ON なら自前合成）にフォールバック
+- 再生は `VoiceSynthesisController.PlayExternalClip`: 進行中の合成・再生を打ち切って
+  新しい応答を優先。エコー防止（STT抑制）は既存TTSと同じ。リップシンクは
+  Amplitude（波形振幅）モード。クリップは再生完了・停止・差し替え時に明示Destroy
+  （長時間運用でのメモリ蓄積防止）
+- 既知の限界: json取得とwav取得の間に外部が次の応答をPUTすると「旧テキスト+新音声」の
+  窓が理論上ある（次ポーリングで自然回復するため許容）
+
 **公開（publish）:**
 - `publishInterval` 秒毎の heartbeat で context JSON（+カメラJPEG）を PUT
 - LLM応答適用直後は `_publishTimer = min(timer, 1f)` で前倒し publish（状態変化を早く外部へ伝える）
@@ -3142,9 +3164,9 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
 - context/camera どちらか一方のURLだけでも稼働可
 
 **PlayerPrefs キー（SettingsExporter対象）:**
-`feed_enabled` / `feed_actionUrl` / `feed_subscribeInterval` / `feed_contextUrl` / `feed_cameraUrl` / `feed_publishInterval`
+`feed_enabled` / `feed_actionUrl` / `feed_subscribeInterval` / `feed_contextUrl` / `feed_cameraUrl` / `feed_publishInterval` / `feed_voiceEnabled` / `feed_voiceUrl`
 
-**UI**: LLMSettingsPanel のフィードセクション（トグル + 各URL/間隔 + ヘルプページボタン）
+**UI**: LLMSettingsPanel のフィードセクション（トグル + 各URL/間隔 + 音声再生トグル/音声URL + ヘルプページボタン）
 
 **UNITYROOM_BUILD では完全停止**（`Start()` で `feedEnabled=false; enabled=false`。
 UIを隠すだけでは PlayerPrefs 復元や Import で有効化され得るため機能側で塞ぐ）

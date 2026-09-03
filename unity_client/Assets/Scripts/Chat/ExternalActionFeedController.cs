@@ -26,6 +26,8 @@ namespace CyanNook.Chat
         private const string PrefKey_ContextUrl = "feed_contextUrl";
         private const string PrefKey_CameraUrl = "feed_cameraUrl";
         private const string PrefKey_PublishInterval = "feed_publishInterval";
+        private const string PrefKey_VoiceEnabled = "feed_voiceEnabled";
+        private const string PrefKey_VoiceUrl = "feed_voiceUrl";
 
         [Header("References")]
         public ChatManager chatManager;
@@ -49,6 +51,14 @@ namespace CyanNook.Chat
 
         [Tooltip("公開間隔（秒）。0以下で無効")]
         public float publishInterval = 30f;
+
+        [Header("Voice Settings")]
+        [Tooltip("フィードの合成済み音声（voice.wav）を取得して応答と同時に再生する。" +
+                 "有効時、音声付きの応答では自前TTS合成より wav を優先する")]
+        public bool voiceEnabled = false;
+
+        [Tooltip("voice.wav の購読URL（HTTP GET）。空の場合はアクション購読URLと同じ場所の voice.wav を使う")]
+        public string voiceSubscribeUrl = "";
 
         // 購読タイマー
         private float _timer;
@@ -200,6 +210,25 @@ namespace CyanNook.Chat
         }
 
         /// <summary>
+        /// フィード音声（voice.wav）再生のON/OFF切替
+        /// </summary>
+        public void SetVoiceEnabled(bool enable)
+        {
+            voiceEnabled = enable;
+            SaveSettings();
+            Debug.Log($"[ExternalActionFeed] Voice playback: {(enable ? "ON" : "OFF")}");
+        }
+
+        /// <summary>
+        /// voice.wav の購読URLを設定（空でアクションURLから自動導出）
+        /// </summary>
+        public void SetVoiceSubscribeUrl(string url)
+        {
+            voiceSubscribeUrl = url != null ? url.Trim() : "";
+            SaveSettings();
+        }
+
+        /// <summary>
         /// 公開間隔を設定（秒）。0以下で無効
         /// </summary>
         public void SetPublishInterval(float seconds)
@@ -218,82 +247,211 @@ namespace CyanNook.Chat
         private IEnumerator FetchAndApply()
         {
             _isFetching = true;
-            string rawJson = null;
+            // wav取得（yield）を挟んでも多重起動しないよう、フラグ解除はfinallyの単一箇所で行う
+            // （途中停止＝イテレータDispose時もfinallyは実行される）
+            try
+            {
+                string rawJson = null;
 
-            // キャッシュバスティング（ブラウザキャッシュ回避）
-            _cacheBustCounter++;
-            string url = AppendCacheBust(actionSubscribeUrl, _cacheBustCounter);
+                // キャッシュバスティング（ブラウザキャッシュ回避）
+                _cacheBustCounter++;
+                string url = AppendCacheBust(actionSubscribeUrl, _cacheBustCounter);
 
-            using (var request = UnityWebRequest.Get(url))
+                using (var request = UnityWebRequest.Get(url))
+                {
+                    request.SetRequestHeader("Cache-Control", "no-cache");
+                    request.SetRequestHeader("Pragma", "no-cache");
+
+                    yield return request.SendWebRequest();
+
+                    if (request.result == UnityWebRequest.Result.Success)
+                    {
+                        rawJson = request.downloadHandler.text;
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"[ExternalActionFeed] Fetch failed: {request.error}");
+                    }
+                }
+
+                // フェッチ完了。次回まで間隔を空ける
+                _timer = subscribeInterval;
+
+                // フェッチ中にOFF/URL変更/間隔0化された場合は適用しない
+                if (!IsActive) yield break;
+                if (string.IsNullOrWhiteSpace(rawJson)) yield break;
+
+                // 変更検知: 前回適用分と同一なら何もしない
+                // （外部側がtimestamp/uuidを含めればrawが変わり再適用される。
+                //   含めない場合は同一内容の連投を自然に抑制する）
+                if (rawJson == _lastAppliedRawJson) yield break;
+
+                // JSONらしさの軽いバリデーション（HTMLエラーページ・プロキシエラー等を弾く）。
+                // JSONオブジェクトは '{' で始まる。
+                string trimmed = rawJson.TrimStart();
+                if (trimmed.Length == 0 || trimmed[0] != '{')
+                {
+                    Debug.LogWarning("[ExternalActionFeed] Response is not a JSON object, skipping");
+                    yield break;
+                }
+
+                // パース。LLMResponseData.FromJsonは失敗時に例外を投げずGetFallback（無難な応答）を
+                // 返してしまうため、ここではJsonUtilityを直接呼んで不正JSONの失敗を確実に検出する。
+                // catch節内ではyieldできないため、成否をフラグで受けてからyield breakする
+                LLMResponseData response = null;
+                bool parseFailed = false;
+                try
+                {
+                    response = JsonUtility.FromJson<LLMResponseData>(rawJson);
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"[ExternalActionFeed] Failed to parse response JSON: {e.Message}");
+                    parseFailed = true;
+                }
+
+                if (parseFailed || response == null) yield break;
+
+                // フィード音声（voice.wav）の取得。
+                // jsonのvoice_timestamp（外部側がwav PUT成功時のみ付ける印）がある場合のみ取得し、
+                // 適用前に済ませることで応答表示と音声再生を同時に始める。
+                // 取得失敗時はnullのまま渡し、従来の自前TTSにフォールバックする
+                AudioClip voiceClip = null;
+                if (voiceEnabled)
+                {
+                    string voiceTs = ExtractVoiceTimestamp(rawJson);
+                    if (!string.IsNullOrEmpty(voiceTs))
+                    {
+                        yield return FetchVoiceClip(voiceTs, clip => voiceClip = clip);
+                    }
+                }
+
+                // wav取得中にOFF/URL変更された場合は適用しない
+                if (!IsActive)
+                {
+                    if (voiceClip != null) Destroy(voiceClip);
+                    yield break;
+                }
+
+                // 適用（ApplyExternalResponse内でFillDefaults補填）。
+                // ビジー（応答待ち/Thinking/睡眠中/外出中）ならfalseが返るので
+                // _lastAppliedRawJsonを更新せず、次ポーリングで再試行する（wavも次回取得し直す）。
+                // その間に外部側がより新しい応答を出せばrawが変わり最新を適用する（最新へ収束）。
+                bool applied = chatManager.ApplyExternalResponse(response, voiceClip);
+                if (applied)
+                {
+                    _lastAppliedRawJson = rawJson;
+                    Debug.Log("[ExternalActionFeed] Applied external response");
+                }
+                else
+                {
+                    if (voiceClip != null) Destroy(voiceClip);
+                    Debug.Log("[ExternalActionFeed] Apply skipped (busy/sleep/outing), will retry next poll");
+                }
+            }
+            finally
+            {
+                _isFetching = false;
+            }
+        }
+
+        // voice_timestamp だけを取り出す部分パース用（他フィールドは無視される）
+        [System.Serializable]
+        private struct VoiceMarker
+        {
+            public string voice_timestamp;
+        }
+
+        /// <summary>
+        /// 生JSONから voice_timestamp を抽出。無ければ null/空
+        /// </summary>
+        private static string ExtractVoiceTimestamp(string rawJson)
+        {
+            try
+            {
+                return JsonUtility.FromJson<VoiceMarker>(rawJson).voice_timestamp;
+            }
+            catch (System.Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// voice.wav の実効URLを返す。設定が空ならアクション購読URLと同じ場所の voice.wav を使う
+        /// （外部側（herald）が action.json の隣に voice.wav を置く規約に対応）
+        /// </summary>
+        private string ResolveVoiceUrl()
+        {
+            if (!string.IsNullOrEmpty(voiceSubscribeUrl)) return voiceSubscribeUrl;
+            if (string.IsNullOrEmpty(actionSubscribeUrl)) return null;
+
+            int slash = actionSubscribeUrl.LastIndexOf('/');
+            if (slash < 0) return null;
+            return actionSubscribeUrl.Substring(0, slash + 1) + "voice.wav";
+        }
+
+        /// <summary>
+        /// voice.wav を取得してAudioClip化する。失敗時はonLoadedを呼ばず警告のみ
+        /// （呼び出し側が自前TTSにフォールバックする）
+        /// </summary>
+        private IEnumerator FetchVoiceClip(string voiceTimestamp, System.Action<AudioClip> onLoaded)
+        {
+            string baseUrl = ResolveVoiceUrl();
+            if (string.IsNullOrEmpty(baseUrl)) yield break;
+
+            // 外部側の規約に合わせ、jsonのタイムスタンプをキャッシュバスターに使う
+            char separator = baseUrl.Contains("?") ? '&' : '?';
+            string url = $"{baseUrl}{separator}t={UnityWebRequest.EscapeURL(voiceTimestamp)}";
+
+            AudioClip clip = null;
+            using (var request = UnityWebRequestMultimedia.GetAudioClip(url, AudioType.WAV))
             {
                 request.SetRequestHeader("Cache-Control", "no-cache");
                 request.SetRequestHeader("Pragma", "no-cache");
 
                 yield return request.SendWebRequest();
 
-                if (request.result == UnityWebRequest.Result.Success)
+                if (request.result != UnityWebRequest.Result.Success)
                 {
-                    rawJson = request.downloadHandler.text;
+                    Debug.LogWarning($"[ExternalActionFeed] Voice fetch failed (fallback to TTS): {request.error}");
+                    yield break;
                 }
-                else
+
+                try
                 {
-                    Debug.LogWarning($"[ExternalActionFeed] Fetch failed: {request.error}");
+                    clip = DownloadHandlerAudioClip.GetContent(request);
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"[ExternalActionFeed] Voice decode failed (fallback to TTS): {e.Message}");
                 }
             }
 
-            // フェッチ完了。次回まで間隔を空け、多重起動フラグを解除（単一箇所でリセット）。
-            _timer = subscribeInterval;
-            _isFetching = false;
+            if (clip == null) yield break;
 
-            // フェッチ中にOFF/URL変更/間隔0化された場合は適用しない
-            if (!IsActive) yield break;
-            if (string.IsNullOrWhiteSpace(rawJson)) yield break;
-
-            // 変更検知: 前回適用分と同一なら何もしない
-            // （外部側がtimestamp/uuidを含めればrawが変わり再適用される。
-            //   含めない場合は同一内容の連投を自然に抑制する）
-            if (rawJson == _lastAppliedRawJson) yield break;
-
-            // JSONらしさの軽いバリデーション（HTMLエラーページ・プロキシエラー等を弾く）。
-            // JSONオブジェクトは '{' で始まる。
-            string trimmed = rawJson.TrimStart();
-            if (trimmed.Length == 0 || trimmed[0] != '{')
+            // WebGLではブラウザ側デコードが非同期で、loadStateがLoadingにならず
+            // Unloadedのまま進む（完了後もLoadedにならない場合がある）ため、
+            // 「Loadedになる or クリップ長が確定する（デコード完了の実質的な印）」を
+            // タイムアウト付きで待つ。Failedは即失敗
+            float deadline = Time.realtimeSinceStartup + 10f;
+            while (clip.loadState != AudioDataLoadState.Loaded &&
+                   clip.loadState != AudioDataLoadState.Failed &&
+                   clip.length <= 0f)
             {
-                Debug.LogWarning("[ExternalActionFeed] Response is not a JSON object, skipping");
+                if (Time.realtimeSinceStartup > deadline) break;
+                yield return null;
+            }
+
+            if (clip.loadState == AudioDataLoadState.Failed ||
+                (clip.loadState != AudioDataLoadState.Loaded && clip.length <= 0f))
+            {
+                Debug.LogWarning($"[ExternalActionFeed] Voice clip failed to load (fallback to TTS, state={clip.loadState}, length={clip.length})");
+                Destroy(clip);
                 yield break;
             }
 
-            // パース。LLMResponseData.FromJsonは失敗時に例外を投げずGetFallback（無難な応答）を
-            // 返してしまうため、ここではJsonUtilityを直接呼んで不正JSONの失敗を確実に検出する。
-            // catch節内ではyieldできないため、成否をフラグで受けてからyield breakする
-            LLMResponseData response = null;
-            bool parseFailed = false;
-            try
-            {
-                response = JsonUtility.FromJson<LLMResponseData>(rawJson);
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning($"[ExternalActionFeed] Failed to parse response JSON: {e.Message}");
-                parseFailed = true;
-            }
-
-            if (parseFailed || response == null) yield break;
-
-            // 適用（ApplyExternalResponse内でFillDefaults補填）。
-            // ビジー（応答待ち/Thinking/睡眠中/外出中）ならfalseが返るので
-            // _lastAppliedRawJsonを更新せず、次ポーリングで再試行する。
-            // その間に外部側がより新しい応答を出せばrawが変わり最新を適用する（最新へ収束）。
-            bool applied = chatManager.ApplyExternalResponse(response);
-            if (applied)
-            {
-                _lastAppliedRawJson = rawJson;
-                Debug.Log("[ExternalActionFeed] Applied external response");
-            }
-            else
-            {
-                Debug.Log("[ExternalActionFeed] Apply skipped (busy/sleep/outing), will retry next poll");
-            }
+            onLoaded(clip);
         }
 
         /// <summary>
@@ -459,6 +617,8 @@ namespace CyanNook.Chat
             PlayerPrefs.SetString(PrefKey_ContextUrl, contextPublishUrl ?? "");
             PlayerPrefs.SetString(PrefKey_CameraUrl, cameraPublishUrl ?? "");
             PlayerPrefs.SetFloat(PrefKey_PublishInterval, publishInterval);
+            PlayerPrefs.SetInt(PrefKey_VoiceEnabled, voiceEnabled ? 1 : 0);
+            PlayerPrefs.SetString(PrefKey_VoiceUrl, voiceSubscribeUrl ?? "");
             PlayerPrefs.Save();
         }
 
@@ -487,6 +647,14 @@ namespace CyanNook.Chat
             if (PlayerPrefs.HasKey(PrefKey_PublishInterval))
             {
                 publishInterval = PlayerPrefs.GetFloat(PrefKey_PublishInterval);
+            }
+            if (PlayerPrefs.HasKey(PrefKey_VoiceEnabled))
+            {
+                voiceEnabled = PlayerPrefs.GetInt(PrefKey_VoiceEnabled) == 1;
+            }
+            if (PlayerPrefs.HasKey(PrefKey_VoiceUrl))
+            {
+                voiceSubscribeUrl = PlayerPrefs.GetString(PrefKey_VoiceUrl);
             }
         }
     }

@@ -95,6 +95,8 @@ namespace CyanNook.Core
             new SettingEntry("feed_contextUrl", PrefType.String),
             new SettingEntry("feed_cameraUrl", PrefType.String),
             new SettingEntry("feed_publishInterval", PrefType.Float),
+            new SettingEntry("feed_voiceEnabled", PrefType.Int),
+            new SettingEntry("feed_voiceUrl", PrefType.String),
 
             // Sleep
             new SettingEntry("sleep_defaultDuration", PrefType.Int),

@@ -122,6 +122,11 @@ namespace CyanNook.Voice
         // Web Speech APIリップシンク用: 現在の文テキスト
         private string _currentWebSpeechText = "";
 
+        // 再生中の外部供給クリップ（PlayExternalClip）。
+        // AudioClipはランタイム生成物でGC回収されないため、再生完了・停止・
+        // 差し替え時に明示的にDestroyする（放置すると受信のたびにメモリが積み上がる）
+        private AudioClip _currentExternalClip;
+
         private void Awake()
         {
             LoadTTSEnabledPreference();
@@ -260,11 +265,23 @@ namespace CyanNook.Voice
         /// </summary>
         public void Stop()
         {
+            StopInternal(resumeStt: true);
+        }
+
+        /// <summary>
+        /// 停止の実体。resumeStt=falseは「直後に別の再生を始める」場合用で、
+        /// STTの再開→即抑制の空振り（ブラウザSpeechRecognitionの0ms start/stop）を避ける
+        /// </summary>
+        private void StopInternal(bool resumeStt)
+        {
             // VOICEVOX停止
             if (audioSource != null)
             {
                 audioSource.Stop();
             }
+
+            // 外部供給クリップの破棄（AudioSourceから外してから）
+            DestroyExternalClipIfAny();
             _orderedClipBuffer.Clear();
             _nextSynthesisSequence = 0;
             _nextPlaybackSequence = 0;
@@ -290,9 +307,63 @@ namespace CyanNook.Voice
             }
 
             // TTS停止時はSTT抑制を即座に解除（ユーザー操作による停止）
-            voiceInputController?.ResumeFromTTS();
+            if (resumeStt)
+            {
+                voiceInputController?.ResumeFromTTS();
+            }
 
             Debug.Log("[VoiceSynthesisController] Stopped");
+        }
+
+        /// <summary>
+        /// 外部供給クリップが残っていれば破棄する（AudioSourceへの割り当ても外す）
+        /// </summary>
+        private void DestroyExternalClipIfAny()
+        {
+            if (_currentExternalClip == null) return;
+
+            if (audioSource != null && audioSource.clip == _currentExternalClip)
+            {
+                audioSource.clip = null;
+            }
+            Destroy(_currentExternalClip);
+            _currentExternalClip = null;
+        }
+
+        /// <summary>
+        /// 外部から供給された合成済みAudioClipを再生する（外部アクションフィードのvoice.wav用）。
+        /// ttsEnabled（自前合成の有効/無効）とは独立に動作する。
+        /// 進行中の合成・再生は打ち切り、新しいクリップを優先する
+        /// </summary>
+        public void PlayExternalClip(AudioClip clip)
+        {
+            if (clip == null || audioSource == null) return;
+
+            // 進行中の合成・再生・キューを打ち切る（前回の外部クリップもここで破棄される。
+            // 直後に再生を始めるためSTTは再開しない）
+            StopInternal(resumeStt: false);
+
+            _currentExternalClip = clip;
+            audioSource.clip = clip;
+            audioSource.Play();
+            _isPlaying = true;
+
+            if (echoPreventionEnabled)
+            {
+                CancelSTTResumeCooldown();
+                voiceInputController?.SuppressForTTS();
+            }
+
+            // 外部wavはモーラ情報を持たないためAmplitude（波形振幅）リップシンク
+            if (lipSyncController != null)
+            {
+                lipSyncController.StartLipSync(clip);
+            }
+
+            CancelPlaybackWait();
+            _playbackWaitCoroutine = StartCoroutine(WaitForPlaybackEnd(clip.length));
+
+            Debug.Log($"[VoiceSynthesisController] Playing external clip ({clip.length:F1}s)");
         }
 
         /// <summary>
@@ -542,6 +613,9 @@ namespace CyanNook.Voice
 
             _playbackWaitCoroutine = null;
             _isPlaying = false;
+
+            // 外部供給クリップの再生完了ならここで破棄（合成クリップの場合はnullでno-op）
+            DestroyExternalClipIfAny();
 
             // リップシンク停止
             if (lipSyncController != null)

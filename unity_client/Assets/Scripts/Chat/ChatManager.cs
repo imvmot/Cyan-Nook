@@ -211,6 +211,11 @@ namespace CyanNook.Chat
         // 外部Thinkingのタイムアウト監視コルーチン（StartExternalThinkingで開始）
         private Coroutine _externalThinkingTimeoutCoroutine;
 
+        // 外部フィードから供給された合成済み音声（voice.wav）。
+        // ApplyExternalResponseでセットし、HandleLLMResponseのTTSブロックが
+        // 自前合成の代わりに再生して消費する
+        private AudioClip _pendingExternalVoiceClip;
+
         // Error状態からIdleへ自動復帰するコルーチン（HandleLLMErrorで開始）
         private Coroutine _errorRecoveryCoroutine;
 
@@ -1159,9 +1164,19 @@ namespace CyanNook.Chat
             // ストリーミング時はHandleStreamText→OnStreamingTextReceivedで文単位合成済み
             // Outing中は抑制（Cron帰宅リクエスト中は通す）
             bool suppressBlockingTTS = outingController != null && outingController.IsOutside && _requestKind != RequestKind.CronEntry;
-            if (!_isStreamingRequest && voiceSynthesisController != null && response.HasMessage && !suppressBlockingTTS)
+            if (!_isStreamingRequest && voiceSynthesisController != null && !suppressBlockingTTS)
             {
-                voiceSynthesisController.SynthesizeAndPlay(response.FullMessage);
+                // 外部フィードの合成済みwavがあれば自前合成より優先して再生
+                // （ttsEnabledのON/OFFに依らず再生される）
+                if (_pendingExternalVoiceClip != null)
+                {
+                    voiceSynthesisController.PlayExternalClip(_pendingExternalVoiceClip);
+                    _pendingExternalVoiceClip = null;
+                }
+                else if (response.HasMessage)
+                {
+                    voiceSynthesisController.SynthesizeAndPlay(response.FullMessage);
+                }
             }
 
             _isStreamingRequest = false;
@@ -1205,8 +1220,11 @@ namespace CyanNook.Chat
         ///    SleepController.IsSleeping / OutingController.IsOutside を明示的にチェックする必要がある。
         /// </summary>
         /// <param name="response">適用するLLMResponseData（LLMResponseData.FromJsonでパース済みを想定）</param>
+        /// <param name="externalVoiceClip">フィードから取得済みの合成音声（voice.wav）。
+        /// nullなら従来どおり自前TTSで合成。非nullなら自前合成の代わりにこれを再生する。
+        /// trueを返した場合クリップの所有権は本メソッドが引き取る（falseなら呼び出し元が破棄）</param>
         /// <returns>適用した場合true、ビジー等でスキップした場合false</returns>
-        public bool ApplyExternalResponse(LLMResponseData response)
+        public bool ApplyExternalResponse(LLMResponseData response, AudioClip externalVoiceClip = null)
         {
             if (response == null)
             {
@@ -1270,6 +1288,11 @@ namespace CyanNook.Chat
             if (response.action != null &&
                 response.action.Trim().Equals("thinking", StringComparison.OrdinalIgnoreCase))
             {
+                // thinkingに音声は付かない想定の保険（付いていたら破棄）
+                if (externalVoiceClip != null)
+                {
+                    Destroy(externalVoiceClip);
+                }
                 StartExternalThinking();
                 return true;
             }
@@ -1295,8 +1318,23 @@ namespace CyanNook.Chat
             _incrementalFieldsApplied = false;
             _parseErrorHandled = false;
 
-            Debug.Log($"[ChatManager] Applying external feed response: action={response.action}, message={response.message}");
-            HandleLLMResponse(response);
+            Debug.Log($"[ChatManager] Applying external feed response: action={response.action}, message={response.message}, voice={(externalVoiceClip != null ? "wav" : "tts")}");
+            _pendingExternalVoiceClip = externalVoiceClip;
+            try
+            {
+                HandleLLMResponse(response);
+            }
+            finally
+            {
+                // TTSブロックで消費されなかった場合の後始末（message空・音声抑制中・
+                // HandleLLMResponse内のイベント購読者の例外等）。
+                // 残したままだと次の内部応答で無関係な音声が再生されてしまう
+                if (_pendingExternalVoiceClip != null)
+                {
+                    Destroy(_pendingExternalVoiceClip);
+                    _pendingExternalVoiceClip = null;
+                }
+            }
 
             // 外部Thinkingの解除（内部フローのHandleRequestCompletedに相当）。
             // HandleLLMResponseはThinkingを止めないため、ここで明示的に解除する
