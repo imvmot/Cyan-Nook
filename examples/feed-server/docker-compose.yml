@@ -1,0 +1,13 @@
+# Cyan-Nook フィード受け渡しサーバー (nginx)
+# 使い方は同じフォルダの README.md を参照
+services:
+  cyan-feed:
+    image: nginx:alpine
+    container_name: cyan-feed
+    restart: unless-stopped
+    ports:
+      # ホスト側ポートは環境に合わせて変更可 (他サービスと被らない番号に)
+      - "8093:80"
+    volumes:
+      - ./nginx-feed.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./feed-data:/data/feed

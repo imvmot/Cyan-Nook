@@ -20,9 +20,6 @@ namespace CyanNook.Furniture
 
         private Dictionary<string, FurnitureInstance> _furnitureRegistry = new Dictionary<string, FurnitureInstance>();
 
-        // 互換性用
-        private Dictionary<string, FurniturePoint> _legacyRegistry = new Dictionary<string, FurniturePoint>();
-
         private void Awake()
         {
             RefreshRegistry();
@@ -34,7 +31,6 @@ namespace CyanNook.Furniture
         public void RefreshRegistry()
         {
             _furnitureRegistry.Clear();
-            _legacyRegistry.Clear();
 
             // FurnitureInstanceを検索
             FurnitureInstance[] instances;
@@ -65,26 +61,7 @@ namespace CyanNook.Furniture
                 }
             }
 
-            // 互換性用: FurniturePointも検索
-            FurniturePoint[] legacyPoints;
-            if (currentNook != null)
-            {
-                legacyPoints = currentNook.GetComponentsInChildren<FurniturePoint>();
-            }
-            else
-            {
-                legacyPoints = FindObjectsByType<FurniturePoint>(FindObjectsSortMode.None);
-            }
-
-            foreach (var point in legacyPoints)
-            {
-                if (!_legacyRegistry.ContainsKey(point.FurnitureId))
-                {
-                    _legacyRegistry.Add(point.FurnitureId, point);
-                }
-            }
-
-            Debug.Log($"[FurnitureManager] Registered {_furnitureRegistry.Count} furniture instances, {_legacyRegistry.Count} legacy points");
+            Debug.Log($"[FurnitureManager] Registered {_furnitureRegistry.Count} furniture instances");
         }
 
         /// <summary>
@@ -107,20 +84,6 @@ namespace CyanNook.Furniture
             }
 
             Debug.LogWarning($"[FurnitureManager] FurnitureInstance not found: {instanceId}");
-            return null;
-        }
-
-        /// <summary>
-        /// IDで家具を取得 (互換性用 - FurniturePoint)
-        /// </summary>
-        public FurniturePoint GetFurniture(string furnitureId)
-        {
-            if (_legacyRegistry.TryGetValue(furnitureId, out var furniture))
-            {
-                return furniture;
-            }
-
-            Debug.LogWarning($"[FurnitureManager] Furniture not found: {furnitureId}");
             return null;
         }
 
@@ -277,15 +240,18 @@ namespace CyanNook.Furniture
             var instances = GetAllFurnitureInstances();
             var lines = new List<string>();
 
+            // occupied状態は spatial_context JSON 側に "occupied": true/false で含まれている。
+            // ここで (使用中) マーカーを出すと、座る/立つたびに available_furniture 文字列が変わり、
+            // プロンプトの mid-position で divergence が発生して LLM 側のプロンプトキャッシュが
+            // 大きく割れる。occupied 情報は spatial_context (末尾配置) のみに集約する。
             foreach (var instance in instances)
             {
-                string status = instance.isOccupied ? " (使用中)" : "";
                 string displayName = instance.typeData?.displayName ?? instance.TypeId;
                 string actions = instance.typeData?.availableActions != null
                     ? string.Join("/", instance.typeData.availableActions)
                     : "";
 
-                lines.Add($"  - {instance.instanceId} ({displayName}) [{actions}]{status}");
+                lines.Add($"  - {instance.instanceId} ({displayName}) [{actions}]");
             }
 
             return string.Join("\n", lines);
@@ -334,54 +300,6 @@ namespace CyanNook.Furniture
             return request;
         }
 
-        // ===========================================
-        // 互換性用メソッド
-        // ===========================================
-
-        /// <summary>
-        /// 現在の部屋の家具一覧を取得 (互換性用)
-        /// </summary>
-        public List<FurniturePoint> GetFurnitureInCurrentRoom()
-        {
-            return _legacyRegistry.Values
-                .Where(f => f.roomId == currentRoomId)
-                .ToList();
-        }
-
-        /// <summary>
-        /// カテゴリで家具をフィルタリング (互換性用)
-        /// </summary>
-        public List<FurniturePoint> GetFurnitureByCategory(string categoryId)
-        {
-            return _legacyRegistry.Values
-                .Where(f => f.CategoryId == categoryId && f.roomId == currentRoomId)
-                .ToList();
-        }
-
-        /// <summary>
-        /// 指定位置から最も近い家具を取得 (互換性用)
-        /// </summary>
-        public FurniturePoint GetNearestFurniture(Vector3 position, string categoryId = null)
-        {
-            var candidates = string.IsNullOrEmpty(categoryId)
-                ? GetFurnitureInCurrentRoom()
-                : GetFurnitureByCategory(categoryId);
-
-            FurniturePoint nearest = null;
-            float minDistance = float.MaxValue;
-
-            foreach (var furniture in candidates)
-            {
-                float distance = Vector3.Distance(position, furniture.GetInteractionPosition());
-                if (distance < minDistance)
-                {
-                    minDistance = distance;
-                    nearest = furniture;
-                }
-            }
-
-            return nearest;
-        }
     }
 
     /// <summary>

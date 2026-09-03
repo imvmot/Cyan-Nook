@@ -151,6 +151,9 @@ Category: common / talk / emote / interact
 - **Transition Viewer** - アニメーション遷移フロー可視化ウィンドウ（閲覧専用）
 - **Create Default Transition Rules (chr001)** - chr001用の初期遷移ルール生成
 
+### CyanNook > Localization
+- **Bake Japanese to Active Scene TMPs** - アクティブシーンの LocalizeStringEvent から日本語訳を解決し TMP_Text にベイク（unityroom版は Localization が機能しないため日本語固定表示の事前焼き付け用。プレハブインスタンスはシーンオーバーライドとして焼き付け）
+
 ### CyanNook
 - **Setup VRM Test Scene** - テストシーン自動構築
 
@@ -198,6 +201,16 @@ Category: common / talk / emote / interact
 ### TextMeshPro
 - デフォルトフォント（LiberationSans SDF）は日本語非対応
 - 日本語表示には日本語対応フォントアセットが必要
+
+## Git 運用ルール
+
+- **実装変更時は DESIGN.md の該当節を確認し、記述と食い違う場合は同じコミットで追従させる**（挙動・クラス責務・設定項目・許容値・メニューパスの変更が対象。該当節が無い新機能は節を追加。食い違いが無ければ更新不要）
+- コミットメッセージは日本語。1行目は「何をしたか (カテゴリタグ)」形式（例: `(監査🟡性能)` `(開発環境)`）、本文に理由と方式を簡潔に
+- 末尾に `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` を付ける
+- **関連ファイルのみパス指定で `git add`**（`git add -A` 禁止）
+- 意図した変更でない限り含めないもの: `build/` 成果物、`AddressableAssetSettings.asset`、`ProjectSettings.asset`、`modern_ceiling_globe.mat`、`.claude/settings.json`
+- **ユーザーのテスト確認前にコミットしない**（コミット依頼を受けてから）
+- **`git push` はユーザーが行う**（Claude は push しない）
 
 ## Current Implementation Status
 

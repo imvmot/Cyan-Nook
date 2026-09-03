@@ -46,6 +46,14 @@ namespace CyanNook.Chat
 
         private void Start()
         {
+#if UNITYROOM_BUILD
+            // unityroom版（体験版）ではCronスケジューラーを完全停止。
+            // 放置タブからの内蔵キー自動消費を防ぐ+深い理解が必要な機能のため。
+            // UIを隠すだけではPlayerPrefs復元やImportで有効化され得るため機能側で塞ぐ
+            schedulerEnabled = false;
+            enabled = false;
+            return;
+#else
             LoadSettings();
 
             if (chatManager != null)
@@ -58,6 +66,7 @@ namespace CyanNook.Chat
             {
                 StartCoroutine(LoadCronJobsAsync());
             }
+#endif
         }
 
         private void OnDestroy()
@@ -306,7 +315,9 @@ namespace CyanNook.Chat
         private void TrySendFromQueue()
         {
             if (_pendingPrompts.Count == 0) return;
-            if (chatManager == null || chatManager.CurrentState != ChatState.Idle) return;
+            // IsBusyで判定（CurrentStateだけ見るとLLMClientコルーチン完了前の窓で
+            // dequeueしたプロンプトがドロップされ失われる）。ビジー時はキューに残す
+            if (chatManager == null || chatManager.IsBusy) return;
 
             string prompt = _pendingPrompts.Dequeue();
             Debug.Log($"[CronScheduler] Sending queued prompt ({_pendingPrompts.Count} remaining)");

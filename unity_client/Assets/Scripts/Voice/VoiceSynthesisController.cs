@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Serialization;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
@@ -41,7 +42,9 @@ namespace CyanNook.Voice
 
         [Header("Settings")]
         [Tooltip("音声合成を有効化")]
-        public bool enabled = false;
+        // 旧名 enabled は MonoBehaviour.enabled を隠蔽していた（CS0108）ためリネーム
+        [FormerlySerializedAs("enabled")]
+        public bool ttsEnabled = false;
 
         [Tooltip("TTS再生中のSTTエコー防止を有効化（ヘッドセット使用時はOFFでよい）")]
         public bool echoPreventionEnabled = true;
@@ -68,14 +71,22 @@ namespace CyanNook.Voice
         private const string PrefKey_TTSEnabled = "voice_ttsEnabled";
         private const string PrefKey_EchoPrevention = "voice_echoPrevention";
 
-        // AudioClip再生キュー（VOICEVOX / Gemini TTS 共通）
+        // AudioClip再生バッファ（VOICEVOX / Gemini TTS 共通）
         // moraTimeline は VOICEVOX のみ提供、Gemini TTS は常に null
+        // clip == null は「合成失敗した文」のプレースホルダー（再生せず読み飛ばす）
         private struct AudioClipQueueEntry
         {
             public AudioClip clip;
             public List<MoraEntry> moraTimeline;
         }
-        private Queue<AudioClipQueueEntry> _audioClipQueue = new Queue<AudioClipQueueEntry>();
+
+        // 順序保証バッファ: 合成は文ごとに並列実行されるため、短い文が長い文を
+        // 追い越して先に完成することがある（合成完了順に再生すると文の順番が
+        // 入れ替わる）。合成依頼時に連番を振り、再生は必ず連番順に消費する。
+        // 次に再生すべき番号がまだ合成中なら、後の番号が完成していても待つ
+        private Dictionary<int, AudioClipQueueEntry> _orderedClipBuffer = new Dictionary<int, AudioClipQueueEntry>();
+        private int _nextSynthesisSequence = 0;
+        private int _nextPlaybackSequence = 0;
 
         /// <summary>
         /// 現在のエンジンがAudioClipベース（VOICEVOX / Gemini TTS）かどうか
@@ -96,8 +107,25 @@ namespace CyanNook.Voice
         // STT再開クールダウン用コルーチン
         private Coroutine _sttResumeCoroutine = null;
 
+        // AudioClip再生終了待ちコルーチン。
+        // Stop()で止めないと、停止後に旧クリップの残り時間で発火して
+        // _isPlaying=false化（次再生と重なる）・リップシンク停止・STT再開が
+        // 新しい再生中に走ってしまう
+        private Coroutine _playbackWaitCoroutine = null;
+
+        // 停止世代カウンタ。Stop()で進める。
+        // 進行中の合成（await SynthesizeAsync）はStop()ではキャンセルできないため、
+        // await後に世代が変わっていたら結果を捨てる（停止済み音声の後追い再生と
+        // _pendingSynthesisCountの負値化を防ぐ）
+        private int _stopGeneration = 0;
+
         // Web Speech APIリップシンク用: 現在の文テキスト
         private string _currentWebSpeechText = "";
+
+        // 再生中の外部供給クリップ（PlayExternalClip）。
+        // AudioClipはランタイム生成物でGC回収されないため、再生完了・停止・
+        // 差し替え時に明示的にDestroyする（放置すると受信のたびにメモリが積み上がる）
+        private AudioClip _currentExternalClip;
 
         private void Awake()
         {
@@ -131,8 +159,25 @@ namespace CyanNook.Voice
 
         private void Update()
         {
-            // AudioClipベースエンジン（VOICEVOX / Gemini TTS）はキューを自動再生
-            if (IsAudioClipBasedEngine && !_isPlaying && _audioClipQueue.Count > 0)
+            // AudioClipベースエンジン（VOICEVOX / Gemini TTS）はバッファを自動再生
+            if (!IsAudioClipBasedEngine) return;
+
+            // 合成失敗した文（clip==nullプレースホルダー）は再生せず読み飛ばし、
+            // 後続の文が永久に待たされないよう連番を進める
+            bool skipped = false;
+            while (_orderedClipBuffer.TryGetValue(_nextPlaybackSequence, out var entry) && entry.clip == null)
+            {
+                _orderedClipBuffer.Remove(_nextPlaybackSequence);
+                _nextPlaybackSequence++;
+                skipped = true;
+            }
+            if (skipped)
+            {
+                TryResumeSTT();
+            }
+
+            // 次に再生すべき番号の文が完成していれば再生（後の番号が先に完成していても待つ）
+            if (!_isPlaying && _orderedClipBuffer.ContainsKey(_nextPlaybackSequence))
             {
                 PlayNextAudioClip();
             }
@@ -144,51 +189,18 @@ namespace CyanNook.Voice
 
         /// <summary>
         /// テキストを即座に音声合成・再生（Blocking Response用）
+        /// 実処理はストリーミングと共通のSynthesizeAndEnqueueに委譲する
+        /// （これにより_pendingSynthesisCountの追跡もストリーミングと揃い、
+        /// 合成中のSTT再開判定が正しく効く）
         /// </summary>
-        public async void SynthesizeAndPlay(string text)
+        public void SynthesizeAndPlay(string text)
         {
-            if (!enabled || string.IsNullOrEmpty(text))
+            if (!ttsEnabled || string.IsNullOrEmpty(text))
             {
                 return;
             }
 
-            try
-            {
-                if (ttsEngineType == TTSEngineType.VOICEVOX)
-                {
-                    if (voicevoxClient == null) return;
-
-                    var (clip, moraTimeline) = await voicevoxClient.SynthesizeAsync(text);
-                    if (clip != null)
-                    {
-                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline });
-                        Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX (blocking): {text.Substring(0, Mathf.Min(20, text.Length))}...");
-                    }
-                }
-                else if (ttsEngineType == TTSEngineType.GeminiTTS)
-                {
-                    if (geminiTtsClient == null) return;
-
-                    var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
-                    if (clip != null)
-                    {
-                        _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = null });
-                        Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS (blocking): {text.Substring(0, Mathf.Min(20, text.Length))}...");
-                    }
-                }
-                else // WebSpeechAPI
-                {
-                    if (webSpeechSynthesis == null) return;
-
-                    _currentWebSpeechText = text;
-                    webSpeechSynthesis.Enqueue(text);
-                    Debug.Log($"[VoiceSynthesisController] Enqueued WebSpeech (blocking): {text.Substring(0, Mathf.Min(20, text.Length))}...");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[VoiceSynthesisController] SynthesizeAndPlay failed: {ex.Message}");
-            }
+            _ = SynthesizeAndEnqueue(text);
         }
 
         /// <summary>
@@ -197,7 +209,7 @@ namespace CyanNook.Voice
         /// </summary>
         public void OnStreamingTextReceived(string chunk)
         {
-            if (!enabled)
+            if (!ttsEnabled)
             {
                 return;
             }
@@ -231,7 +243,7 @@ namespace CyanNook.Voice
         /// </summary>
         public void OnStreamingComplete()
         {
-            if (!enabled)
+            if (!ttsEnabled)
             {
                 _isStreaming = false;
                 return;
@@ -253,12 +265,26 @@ namespace CyanNook.Voice
         /// </summary>
         public void Stop()
         {
+            StopInternal(resumeStt: true);
+        }
+
+        /// <summary>
+        /// 停止の実体。resumeStt=falseは「直後に別の再生を始める」場合用で、
+        /// STTの再開→即抑制の空振り（ブラウザSpeechRecognitionの0ms start/stop）を避ける
+        /// </summary>
+        private void StopInternal(bool resumeStt)
+        {
             // VOICEVOX停止
             if (audioSource != null)
             {
                 audioSource.Stop();
             }
-            _audioClipQueue.Clear();
+
+            // 外部供給クリップの破棄（AudioSourceから外してから）
+            DestroyExternalClipIfAny();
+            _orderedClipBuffer.Clear();
+            _nextSynthesisSequence = 0;
+            _nextPlaybackSequence = 0;
 
             // Web Speech API停止
             if (webSpeechSynthesis != null)
@@ -270,7 +296,9 @@ namespace CyanNook.Voice
             _isPlaying = false;
             _isStreaming = false;
             _pendingSynthesisCount = 0;
+            _stopGeneration++;
 
+            CancelPlaybackWait();
             CancelSTTResumeCooldown();
 
             if (lipSyncController != null)
@@ -279,9 +307,63 @@ namespace CyanNook.Voice
             }
 
             // TTS停止時はSTT抑制を即座に解除（ユーザー操作による停止）
-            voiceInputController?.ResumeFromTTS();
+            if (resumeStt)
+            {
+                voiceInputController?.ResumeFromTTS();
+            }
 
             Debug.Log("[VoiceSynthesisController] Stopped");
+        }
+
+        /// <summary>
+        /// 外部供給クリップが残っていれば破棄する（AudioSourceへの割り当ても外す）
+        /// </summary>
+        private void DestroyExternalClipIfAny()
+        {
+            if (_currentExternalClip == null) return;
+
+            if (audioSource != null && audioSource.clip == _currentExternalClip)
+            {
+                audioSource.clip = null;
+            }
+            Destroy(_currentExternalClip);
+            _currentExternalClip = null;
+        }
+
+        /// <summary>
+        /// 外部から供給された合成済みAudioClipを再生する（外部アクションフィードのvoice.wav用）。
+        /// ttsEnabled（自前合成の有効/無効）とは独立に動作する。
+        /// 進行中の合成・再生は打ち切り、新しいクリップを優先する
+        /// </summary>
+        public void PlayExternalClip(AudioClip clip)
+        {
+            if (clip == null || audioSource == null) return;
+
+            // 進行中の合成・再生・キューを打ち切る（前回の外部クリップもここで破棄される。
+            // 直後に再生を始めるためSTTは再開しない）
+            StopInternal(resumeStt: false);
+
+            _currentExternalClip = clip;
+            audioSource.clip = clip;
+            audioSource.Play();
+            _isPlaying = true;
+
+            if (echoPreventionEnabled)
+            {
+                CancelSTTResumeCooldown();
+                voiceInputController?.SuppressForTTS();
+            }
+
+            // 外部wavはモーラ情報を持たないためAmplitude（波形振幅）リップシンク
+            if (lipSyncController != null)
+            {
+                lipSyncController.StartLipSync(clip);
+            }
+
+            CancelPlaybackWait();
+            _playbackWaitCoroutine = StartCoroutine(WaitForPlaybackEnd(clip.length));
+
+            Debug.Log($"[VoiceSynthesisController] Playing external clip ({clip.length:F1}s)");
         }
 
         /// <summary>
@@ -289,13 +371,13 @@ namespace CyanNook.Voice
         /// </summary>
         public void SetEnabled(bool enable)
         {
-            enabled = enable;
-            if (!enabled)
+            ttsEnabled = enable;
+            if (!ttsEnabled)
             {
                 Stop();
             }
             SaveTTSEnabledPreference();
-            Debug.Log($"[VoiceSynthesisController] Enabled: {enabled}");
+            Debug.Log($"[VoiceSynthesisController] Enabled: {ttsEnabled}");
         }
 
         /// <summary>
@@ -349,7 +431,7 @@ namespace CyanNook.Voice
         /// </summary>
         public void UpdateTTSCredit(string speakerName = null, string styleName = null)
         {
-            if (!enabled)
+            if (!ttsEnabled)
             {
                 TTSCreditText = "OFF";
             }
@@ -386,54 +468,88 @@ namespace CyanNook.Voice
         // ─────────────────────────────────────
 
         /// <summary>
-        /// 音声合成してキューに追加（エンジン分岐）
+        /// 音声合成してキューに追加（エンジン分岐、Blocking/ストリーミング共通）
+        /// 呼び出し元はTaskを破棄する（_ = ...）ため、例外はここで処理する
         /// </summary>
         private async Task SynthesizeAndEnqueue(string text)
         {
-            if (ttsEngineType == TTSEngineType.VOICEVOX)
+            int gen = _stopGeneration;
+            bool counted = false;
+            // 再生順の連番。awaitより前（呼び出し順が保たれる同期区間）で採番することが重要
+            int seq = -1;
+
+            try
             {
-                if (voicevoxClient == null) return;
-
-                _pendingSynthesisCount++;
-                var (clip, moraTimeline) = await voicevoxClient.SynthesizeAsync(text);
-                _pendingSynthesisCount--;
-
-                if (clip != null)
+                if (ttsEngineType == TTSEngineType.VOICEVOX)
                 {
-                    _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline });
-                    Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX (streaming): {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
+                    if (voicevoxClient == null) return;
+
+                    seq = _nextSynthesisSequence++;
+                    _pendingSynthesisCount++;
+                    counted = true;
+                    var (clip, moraTimeline) = await voicevoxClient.SynthesizeAsync(text);
+
+                    // Stop()済み: 結果を捨てる（カウンタ・連番はStopでリセット済みのため触らない）
+                    if (gen != _stopGeneration) return;
+                    _pendingSynthesisCount--;
+                    counted = false;
+
+                    // 合成失敗（clip==null）でもプレースホルダーを登録して連番の穴を空けない
+                    // （穴が空くと後続の文が永久に再生されない）。読み飛ばしはUpdateで行う
+                    _orderedClipBuffer[seq] = new AudioClipQueueEntry { clip = clip, moraTimeline = moraTimeline };
+
+                    if (clip != null)
+                    {
+                        Debug.Log($"[VoiceSynthesisController] Enqueued VOICEVOX: {text.Substring(0, Mathf.Min(20, text.Length))}... (seq={seq}, Buffered: {_orderedClipBuffer.Count})");
+                    }
                 }
-                else
+                else if (ttsEngineType == TTSEngineType.GeminiTTS)
                 {
-                    // 合成失敗時: 他に何も残っていなければSTT再開
-                    TryResumeSTT();
+                    if (geminiTtsClient == null) return;
+
+                    seq = _nextSynthesisSequence++;
+                    _pendingSynthesisCount++;
+                    counted = true;
+                    var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
+
+                    if (gen != _stopGeneration) return;
+                    _pendingSynthesisCount--;
+                    counted = false;
+
+                    _orderedClipBuffer[seq] = new AudioClipQueueEntry { clip = clip, moraTimeline = null };
+
+                    if (clip != null)
+                    {
+                        Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS: {text.Substring(0, Mathf.Min(20, text.Length))}... (seq={seq}, Buffered: {_orderedClipBuffer.Count})");
+                    }
+                }
+                else // WebSpeechAPI
+                {
+                    if (webSpeechSynthesis == null) return;
+
+                    _currentWebSpeechText = text;
+                    webSpeechSynthesis.Enqueue(text);
+                    Debug.Log($"[VoiceSynthesisController] Enqueued WebSpeech: {text.Substring(0, Mathf.Min(20, text.Length))}...");
                 }
             }
-            else if (ttsEngineType == TTSEngineType.GeminiTTS)
+            catch (Exception ex)
             {
-                if (geminiTtsClient == null) return;
-
-                _pendingSynthesisCount++;
-                var (clip, _) = await geminiTtsClient.SynthesizeAsync(text);
-                _pendingSynthesisCount--;
-
-                if (clip != null)
+                // 例外時のカウンタ回収（Stop()済みなら0リセット済みのため触らない）
+                if (counted && gen == _stopGeneration)
                 {
-                    _audioClipQueue.Enqueue(new AudioClipQueueEntry { clip = clip, moraTimeline = null });
-                    Debug.Log($"[VoiceSynthesisController] Enqueued Gemini TTS (streaming): {text.Substring(0, Mathf.Min(20, text.Length))}... (Queue: {_audioClipQueue.Count})");
+                    _pendingSynthesisCount--;
                 }
-                else
-                {
-                    TryResumeSTT();
-                }
-            }
-            else // WebSpeechAPI
-            {
-                if (webSpeechSynthesis == null) return;
 
-                _currentWebSpeechText = text;
-                webSpeechSynthesis.Enqueue(text);
-                Debug.Log($"[VoiceSynthesisController] Enqueued WebSpeech (streaming): {text.Substring(0, Mathf.Min(20, text.Length))}...");
+                // 採番済み・現世代・未登録ならプレースホルダーで連番の穴を塞ぐ
+                // （countedの状態に依存させず、どの経路で例外が起きても穴を残さない）
+                if (seq >= 0 && gen == _stopGeneration && !_orderedClipBuffer.ContainsKey(seq))
+                {
+                    _orderedClipBuffer[seq] = new AudioClipQueueEntry { clip = null, moraTimeline = null };
+                }
+                Debug.LogError($"[VoiceSynthesisController] Synthesis failed: {ex.Message}");
+
+                // 他に何も残っていなければSTTを再開する
+                TryResumeSTT();
             }
         }
 
@@ -442,16 +558,20 @@ namespace CyanNook.Voice
         // ─────────────────────────────────────
 
         /// <summary>
-        /// キューから次のAudioClipを再生（VOICEVOX / Gemini TTS）
+        /// 順序保証バッファから次の連番のAudioClipを再生（VOICEVOX / Gemini TTS）
         /// </summary>
         private void PlayNextAudioClip()
         {
-            if (_audioClipQueue.Count == 0 || audioSource == null)
+            if (audioSource == null ||
+                !_orderedClipBuffer.TryGetValue(_nextPlaybackSequence, out var entry) ||
+                entry.clip == null)
             {
                 return;
             }
 
-            var entry = _audioClipQueue.Dequeue();
+            _orderedClipBuffer.Remove(_nextPlaybackSequence);
+            _nextPlaybackSequence++;
+
             audioSource.clip = entry.clip;
             audioSource.Play();
 
@@ -477,10 +597,11 @@ namespace CyanNook.Voice
                 }
             }
 
-            // 再生終了を監視
-            StartCoroutine(WaitForPlaybackEnd(entry.clip.length));
+            // 再生終了を監視（前の監視が残っていれば止めてから）
+            CancelPlaybackWait();
+            _playbackWaitCoroutine = StartCoroutine(WaitForPlaybackEnd(entry.clip.length));
 
-            Debug.Log($"[VoiceSynthesisController] Playing AudioClip ({entry.clip.length:F1}s, Queue: {_audioClipQueue.Count}, engine={ttsEngineType})");
+            Debug.Log($"[VoiceSynthesisController] Playing AudioClip ({entry.clip.length:F1}s, Buffered: {_orderedClipBuffer.Count}, engine={ttsEngineType})");
         }
 
         /// <summary>
@@ -490,7 +611,11 @@ namespace CyanNook.Voice
         {
             yield return new WaitForSeconds(duration);
 
+            _playbackWaitCoroutine = null;
             _isPlaying = false;
+
+            // 外部供給クリップの再生完了ならここで破棄（合成クリップの場合はnullでno-op）
+            DestroyExternalClipIfAny();
 
             // リップシンク停止
             if (lipSyncController != null)
@@ -561,6 +686,15 @@ namespace CyanNook.Voice
             }
         }
 
+        private void CancelPlaybackWait()
+        {
+            if (_playbackWaitCoroutine != null)
+            {
+                StopCoroutine(_playbackWaitCoroutine);
+                _playbackWaitCoroutine = null;
+            }
+        }
+
         /// <summary>
         /// STT再開条件を一元判定
         /// 再生中でなく、キュー空、合成リクエストなし、ストリーミング完了の全条件を満たした時のみ
@@ -572,7 +706,7 @@ namespace CyanNook.Voice
             if (_isPlaying) return;
             if (_isStreaming) return;
             if (_pendingSynthesisCount > 0) return;
-            if (_audioClipQueue.Count > 0) return;
+            if (_orderedClipBuffer.Count > 0) return;
 
             // 既にクールダウン中なら再スケジュールしない
             if (_sttResumeCoroutine != null) return;
@@ -598,7 +732,7 @@ namespace CyanNook.Voice
             _sttResumeCoroutine = null;
 
             // クールダウン中にTTSが再開されていないか再チェック
-            if (_isPlaying || _isStreaming || _pendingSynthesisCount > 0 || _audioClipQueue.Count > 0)
+            if (_isPlaying || _isStreaming || _pendingSynthesisCount > 0 || _orderedClipBuffer.Count > 0)
             {
                 yield break;
             }
@@ -627,14 +761,14 @@ namespace CyanNook.Voice
         {
             if (PlayerPrefs.HasKey(PrefKey_TTSEnabled))
             {
-                enabled = PlayerPrefs.GetInt(PrefKey_TTSEnabled) == 1;
+                ttsEnabled = PlayerPrefs.GetInt(PrefKey_TTSEnabled) == 1;
             }
-            Debug.Log($"[VoiceSynthesisController] TTS Enabled: {enabled}");
+            Debug.Log($"[VoiceSynthesisController] TTS Enabled: {ttsEnabled}");
         }
 
         private void SaveTTSEnabledPreference()
         {
-            PlayerPrefs.SetInt(PrefKey_TTSEnabled, enabled ? 1 : 0);
+            PlayerPrefs.SetInt(PrefKey_TTSEnabled, ttsEnabled ? 1 : 0);
             PlayerPrefs.Save();
         }
 

@@ -9,7 +9,11 @@
         "Unity.Timeline",
         "Unity.Timeline.Editor",
         "Unity.TextMeshPro",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "Unity.Localization",
+        "Unity.Localization.Editor",
+        "Unity.Addressables",
+        "Unity.ResourceManager"
     ],
     "includePlatforms": [
         "Editor"

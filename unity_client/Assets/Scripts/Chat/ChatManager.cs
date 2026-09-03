@@ -1,5 +1,6 @@
 using UnityEngine;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -63,6 +64,14 @@ namespace CyanNook.Chat
         [Tooltip("ストリーミングモードを使用する")]
         public bool useStreaming = false;
 
+        [Header("Error Recovery")]
+        [Tooltip("LLMエラー後にIdle状態へ自動復帰するまでの秒数。復帰しないとIdleChat/Cron/夢/外出メッセージ等の自律動作が全停止する")]
+        public float errorRecoveryDelay = 3f;
+
+        [Header("External Feed")]
+        [Tooltip("外部フィードのthinking（考え中）アクションの最大継続秒数。本応答が届かないままこの時間が過ぎたら自動でThinkingを解除する（外部側の失敗で考え中のまま固まるのを防ぐ）。0以下でタイムアウト無効（非推奨）")]
+        public float externalThinkingTimeout = 120f;
+
         [Header("Vision")]
         [Tooltip("キャラクターカメラの画像をリクエストに含める")]
         public bool useVision = false;
@@ -75,6 +84,17 @@ namespace CyanNook.Chat
         private ChatState _currentState = ChatState.Idle;
         public ChatState CurrentState => _currentState;
 
+        /// <summary>
+        /// 自動リクエストの送信を受け付けられない状態か。
+        /// 応答処理はLLMClientのコルーチン内コールバックで走るため、応答直後は
+        /// ChatStateがIdleに戻っていてもLLMClient側の_isProcessingがまだtrueの
+        /// 短い窓がある。この間に送信するとLLMClient側でドロップされるのに
+        /// ChatStateだけWaitingForResponseになり永久に固まるため、両方を見る
+        /// </summary>
+        public bool IsBusy =>
+            _currentState != ChatState.Idle ||
+            (llmClient != null && llmClient.IsProcessing);
+
         [SerializeField]
         private string _currentPose = "idle";
 
@@ -83,21 +103,37 @@ namespace CyanNook.Chat
 
         private List<ConversationEntry> _conversationHistory = new List<ConversationEntry>();
 
-        // 自律リクエスト（IdleChat）用フラグ
-        private bool _isAutoRequest;
+        /// <summary>
+        /// 実行中LLMリクエストの種別。
+        /// 種別は排他（1件のリクエストが複数種別を兼ねることはない）のため、
+        /// 独立boolの組み合わせではなくenum 1つで管理する。
+        /// 注意: WakeUp / CronEntry はリクエスト完了後も並行する演出
+        /// （起床ed / 帰宅Entry）が終わるまで維持され、
+        /// それぞれの完了コールバックでNoneに戻る
+        /// </summary>
+        private enum RequestKind
+        {
+            None,       // リクエストなし
+            User,       // ユーザー発言（通常チャット）
+            Auto,       // 自律リクエスト（IdleChat / 夢 / 外出メッセージ）
+            WakeUp,     // 起床リクエスト（睡眠中のユーザー発言 / Cron起床）。ed完了まで維持
+            CronEntry   // Cron帰宅リクエスト。Entry完了まで維持
+        }
+
+        private RequestKind _requestKind = RequestKind.None;
 
         // 現在のリクエストがストリーミングかどうか（音声合成の二重実行防止用）
+        // 種別と直交する通信方式の属性のためenumには含めない
         private bool _isStreamingRequest;
-
-        // 起床メッセージリクエスト中フラグ（ed再生中のThinking抑制・レスポンスキュー用）
-        private bool _isWakeUpRequest;
-
-        // Cron帰宅リクエスト中フラグ（Entry再生中のThinking抑制・レスポンスキュー用）
-        private bool _isCronEntryRequest;
 
         // Entry再生中に到着したLLMレスポンスを保持（Cron帰宅・通常Entry共用）。
         // OutingController.OnEntryAnimationCompletedで排出される。
         private LLMResponseData _entryQueuedResponse;
+
+        // 初回Entry（起動時の入室演出）が完了したか。
+        // 完了前はVRMロード中/Entry再生中でキャラクター側が未準備のため、
+        // 外部アクションフィードの適用を抑制する（ApplyExternalResponseで使用）。
+        private bool _hasInitialEntryCompleted;
 
         /// <summary>
         /// sleep/outing中はVision画像キャプチャを抑制
@@ -167,8 +203,72 @@ namespace CyanNook.Chat
         private bool _isThinkingActive;
         private bool _parseErrorHandled;
 
+        // 外部フィード起点のThinking（action:"thinking"）が演出中か。
+        // trueの間はApplyExternalResponseのThinkingガードを緩め、
+        // 後続の本応答がThinkingを解除して適用されるようにする
+        private bool _isExternalThinkingActive;
+
+        // 外部Thinkingのタイムアウト監視コルーチン（StartExternalThinkingで開始）
+        private Coroutine _externalThinkingTimeoutCoroutine;
+
+        // 外部フィードから供給された合成済み音声（voice.wav）。
+        // ApplyExternalResponseでセットし、HandleLLMResponseのTTSブロックが
+        // 自前合成の代わりに再生して消費する
+        private AudioClip _pendingExternalVoiceClip;
+
+        // Error状態からIdleへ自動復帰するコルーチン（HandleLLMErrorで開始）
+        private Coroutine _errorRecoveryCoroutine;
+
         // Difyモード判定（Dify時はconversation_idで履歴管理、inputs で動的変数送信）
         private bool IsDifyMode => llmClient?.CurrentConfig?.apiType == LLMApiType.Dify;
+
+        private void Awake()
+        {
+            LoadPersistedSettings();
+        }
+
+        /// <summary>
+        /// 保存済み設定（Vision/MaxHistory/プロンプト）を復元する。
+        /// 設定パネル（LLMSettingsPanel/AvatarSettingsPanel）ではなく本クラスで行うのは、
+        /// パネルが初期非アクティブに変更されると復元が起動時に走らなくなるため。
+        /// 復元は「設定を使う側＝常時アクティブなコントローラー」の責務とする
+        /// </summary>
+        private void LoadPersistedSettings()
+        {
+            if (PlayerPrefs.HasKey(SettingsKeys.UseVision))
+            {
+                useVision = PlayerPrefs.GetInt(SettingsKeys.UseVision) == 1;
+                Debug.Log($"[ChatManager] Loaded saved useVision: {useVision}");
+            }
+
+            if (PlayerPrefs.HasKey(SettingsKeys.MaxHistory))
+            {
+                maxHistoryLength = PlayerPrefs.GetInt(SettingsKeys.MaxHistory);
+                Debug.Log($"[ChatManager] Loaded saved maxHistory: {maxHistoryLength}");
+            }
+
+            // キャラクター設定プロンプト
+            if (PlayerPrefs.HasKey(SettingsKeys.CharacterPrompt))
+            {
+                string saved = PlayerPrefs.GetString(SettingsKeys.CharacterPrompt);
+                if (!string.IsNullOrEmpty(saved))
+                {
+                    characterPrompt = saved;
+                    Debug.Log("[ChatManager] Loaded saved character prompt");
+                }
+            }
+
+            // レスポンスフォーマットプロンプト
+            if (PlayerPrefs.HasKey(SettingsKeys.ResponseFormat))
+            {
+                string saved = PlayerPrefs.GetString(SettingsKeys.ResponseFormat);
+                if (!string.IsNullOrEmpty(saved))
+                {
+                    responseFormatPrompt = saved;
+                    Debug.Log("[ChatManager] Loaded saved response format prompt");
+                }
+            }
+        }
 
         private void Start()
         {
@@ -205,6 +305,9 @@ namespace CyanNook.Chat
         /// </summary>
         private void FlushEntryQueuedResponse()
         {
+            // 初回Entry完了を記録（外部アクションフィードの適用開始ゲート）
+            _hasInitialEntryCompleted = true;
+
             if (_entryQueuedResponse == null) return;
             var response = _entryQueuedResponse;
             _entryQueuedResponse = null;
@@ -216,20 +319,20 @@ namespace CyanNook.Chat
         {
             // 自律リクエスト時はSendAutoRequest側でSetStateを呼んでいるため
             // Thinking状態もスキップ（突然話しかける演出）
-            if (_isAutoRequest) return;
+            if (_requestKind == RequestKind.Auto) return;
 
             SetState(ChatState.WaitingForResponse);
 
             // 起床リクエスト中: ed再生中なのでThinkingアニメーションは抑制
             // ed完了後にレスポンス未到着ならThinkingを開始する（WakeUpWithMessageコールバック内）
-            if (_isWakeUpRequest)
+            if (_requestKind == RequestKind.WakeUp)
             {
                 _incrementalFieldsApplied = false;
                 return;
             }
 
             // Cron帰宅リクエスト中: Entry再生中なのでThinkingアニメーションは抑制
-            if (_isCronEntryRequest)
+            if (_requestKind == RequestKind.CronEntry)
             {
                 _incrementalFieldsApplied = false;
                 return;
@@ -259,8 +362,8 @@ namespace CyanNook.Chat
 
             // ストリーミング音声合成完了通知（Sleep/Outing中は抑制）
             bool suppressStreamingTTS =
-                (sleepController != null && sleepController.IsSleeping && !_isWakeUpRequest) ||
-                (outingController != null && outingController.IsOutside && !_isCronEntryRequest);
+                (sleepController != null && sleepController.IsSleeping && _requestKind != RequestKind.WakeUp) ||
+                (outingController != null && outingController.IsOutside && _requestKind != RequestKind.CronEntry);
             if (voiceSynthesisController != null && !suppressStreamingTTS)
             {
                 voiceSynthesisController.OnStreamingComplete();
@@ -312,16 +415,26 @@ namespace CyanNook.Chat
             // Sleep中: ed再生と同時にメッセージを送信し、LLM処理を並行実行
             if (sleepController != null && sleepController.IsSleeping)
             {
+                // 起床処理中の2通目は破棄（再入するとWakeUpWithMessageのコールバックが
+                // 二重登録され、Thinkingの開始/解除が食い違う）
+                if (_requestKind == RequestKind.WakeUp)
+                {
+                    Debug.LogWarning("[ChatManager] Wake-up already in progress, ignoring message");
+                    return;
+                }
+
                 Debug.Log("[ChatManager] User message during sleep, initiating wake-up with parallel LLM request");
-                _isWakeUpRequest = true;
 
                 // 保留中のdreamリクエストを中断
-                if (_currentState == ChatState.WaitingForResponse && _isAutoRequest)
+                // （種別をWakeUpに切り替える前に行う。先に切り替えるとAuto判定が消えて中断できない）
+                if (_currentState == ChatState.WaitingForResponse && _requestKind == RequestKind.Auto)
                 {
                     llmClient?.AbortRequest();
-                    _isAutoRequest = false;
+                    _requestKind = RequestKind.None;
                     SetState(ChatState.Idle);
                 }
+
+                _requestKind = RequestKind.WakeUp;
 
                 // wakeUpSystemMessageを付与
                 string wakeUpPrefix = sleepController.WakeUpSystemMessage;
@@ -334,13 +447,13 @@ namespace CyanNook.Chat
                 sleepController.WakeUpWithMessage((queuedResponse) =>
                 {
                     // ed完了後: キューにレスポンスがあれば直接処理、なければThinking開始
-                    _isWakeUpRequest = false;
+                    ClearRequestKind(RequestKind.WakeUp);
                     if (queuedResponse != null)
                     {
                         Debug.Log("[ChatManager] Wake-up: response already received, dispatching to CharacterController");
                         OnChatResponseReceived?.Invoke(queuedResponse);
                     }
-                    else
+                    else if (_currentState == ChatState.WaitingForResponse)
                     {
                         Debug.Log("[ChatManager] Wake-up: no response yet, starting Thinking");
                         if (talkController != null)
@@ -348,6 +461,11 @@ namespace CyanNook.Chat
                             talkController.StartThinking();
                             _isThinkingActive = true;
                         }
+                    }
+                    else
+                    {
+                        // リクエストが既にエラー等で終了している → 応答は来ないためThinkingを開始しない
+                        Debug.Log("[ChatManager] Wake-up: request no longer in flight, skipping Thinking");
                     }
                 });
 
@@ -357,12 +475,12 @@ namespace CyanNook.Chat
 
             if (_currentState == ChatState.WaitingForResponse)
             {
-                if (_isAutoRequest)
+                if (_requestKind == RequestKind.Auto)
                 {
                     // idleChatリクエスト中 → 中断してユーザー入力を優先
                     Debug.Log("[ChatManager] Cancelling auto-request for user input");
                     llmClient?.AbortRequest();
-                    _isAutoRequest = false;
+                    _requestKind = RequestKind.None;
                     SetState(ChatState.Idle);
                 }
                 else
@@ -390,29 +508,15 @@ namespace CyanNook.Chat
             // Vision: カメラ画像をキャプチャ（sleep/outing中は抑制）
             List<string> imagesBase64 = CaptureVisionImages();
 
+            // リクエスト種別を確定（睡眠分岐を通った場合はWakeUpが設定済み。
+            // 起床ed/帰宅Entry進行中の種別は上書きしない）
+            if (_requestKind != RequestKind.WakeUp && _requestKind != RequestKind.CronEntry)
+            {
+                _requestKind = RequestKind.User;
+            }
+
             // LLMに送信
-            _isStreamingRequest = useStreaming;
-            if (IsDifyMode)
-            {
-                // Dify: currentMessageのみ送信、動的値はinputsで送信
-                // 会話履歴とシステムプロンプトはDify側で管理（conversation_id）
-                llmClient.SetRequestInputs(BuildDynamicInputs());
-                if (useStreaming)
-                    llmClient.SendStreamingRequest("", userMessage, imagesBase64);
-                else
-                    llmClient.SendRequest("", userMessage, imagesBase64);
-            }
-            else
-            {
-                // Ollama/LM Studio: 従来通りシステムプロンプト + 会話履歴付きフルプロンプト
-                llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPrompt(userMessage));
-                if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
-                else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
-            }
+            DispatchLlmRequest(userMessage, imagesBase64, appendToPrompt: false);
         }
 
         /// <summary>
@@ -427,13 +531,13 @@ namespace CyanNook.Chat
                 return;
             }
 
-            if (_currentState != ChatState.Idle)
+            if (IsBusy)
             {
-                Debug.LogWarning("[ChatManager] Cannot send auto-request: not idle");
+                Debug.LogWarning("[ChatManager] Cannot send auto-request: busy (state or LLM client processing)");
                 return;
             }
 
-            _isAutoRequest = true;
+            _requestKind = RequestKind.Auto;
 
             Debug.Log($"[ChatManager] Sending auto-request (streaming={useStreaming}, vision={useVision})");
 
@@ -443,27 +547,7 @@ namespace CyanNook.Chat
             // 状態を更新（HandleRequestStartedはスキップされるため手動で設定）
             SetState(ChatState.WaitingForResponse);
 
-            _isStreamingRequest = useStreaming;
-            if (IsDifyMode)
-            {
-                // Dify: idleMessageのみ送信、動的値はinputsで送信
-                llmClient.SetRequestInputs(BuildDynamicInputs());
-                if (useStreaming)
-                    llmClient.SendStreamingRequest("", idleMessage, imagesBase64);
-                else
-                    llmClient.SendRequest("", idleMessage, imagesBase64);
-            }
-            else
-            {
-                // Ollama/LM Studio: 従来通り
-                llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPromptWithAppend(idleMessage));
-                if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
-                else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
-            }
+            DispatchLlmRequest(idleMessage, imagesBase64, appendToPrompt: true);
         }
 
         /// <summary>
@@ -475,26 +559,27 @@ namespace CyanNook.Chat
         public void SendCronWakeUpRequest(string cronPrompt)
         {
             if (sleepController == null || !sleepController.IsSleeping) return;
-            if (_isWakeUpRequest) return; // 既に起床処理中
+            if (_requestKind == RequestKind.WakeUp) return; // 既に起床処理中
 
             Debug.Log("[ChatManager] Cron wake-up request, initiating wake-up with parallel LLM request");
-            _isWakeUpRequest = true;
 
             // 保留中のdreamリクエストを中断
-            if (_currentState == ChatState.WaitingForResponse && _isAutoRequest)
+            // （種別をWakeUpに切り替える前に行う。先に切り替えるとAuto判定が消えて中断できない）
+            if (_currentState == ChatState.WaitingForResponse && _requestKind == RequestKind.Auto)
             {
                 llmClient?.AbortRequest();
-                _isAutoRequest = false;
+                _requestKind = RequestKind.None;
                 SetState(ChatState.Idle);
             }
 
-            // 非Idle状態なら中断（ユーザーリクエスト処理中）
-            if (_currentState != ChatState.Idle)
+            // 非Idle状態・LLMClient処理中なら中断（ユーザーリクエスト処理中等）
+            if (IsBusy)
             {
-                Debug.LogWarning("[ChatManager] Cannot send cron wake-up: not idle");
-                _isWakeUpRequest = false;
+                Debug.LogWarning("[ChatManager] Cannot send cron wake-up: busy");
                 return;
             }
+
+            _requestKind = RequestKind.WakeUp;
 
             // wakeUpSystemMessage + cronPrompt を合体
             string wakeUpPrefix = sleepController.WakeUpSystemMessage;
@@ -505,13 +590,13 @@ namespace CyanNook.Chat
             // ed再生開始（LLMリクエストと並行）
             sleepController.WakeUpWithMessage((queuedResponse) =>
             {
-                _isWakeUpRequest = false;
+                ClearRequestKind(RequestKind.WakeUp);
                 if (queuedResponse != null)
                 {
                     Debug.Log("[ChatManager] Cron wake-up: response already received, dispatching");
                     OnChatResponseReceived?.Invoke(queuedResponse);
                 }
-                else
+                else if (_currentState == ChatState.WaitingForResponse)
                 {
                     Debug.Log("[ChatManager] Cron wake-up: no response yet, starting Thinking");
                     if (talkController != null)
@@ -520,31 +605,18 @@ namespace CyanNook.Chat
                         _isThinkingActive = true;
                     }
                 }
+                else
+                {
+                    // リクエストが既にエラー等で終了している → 応答は来ないためThinkingを開始しない
+                    Debug.Log("[ChatManager] Cron wake-up: request no longer in flight, skipping Thinking");
+                }
             });
 
-            // LLMに送信（履歴には追加しない = auto-request同等だがフラグは立てない）
-            // _isAutoRequest = false のまま → HandleLLMResponseでレスポンスは履歴に追加される
+            // LLMに送信（種別はWakeUp = Autoではないため、
+            // HandleLLMResponseでレスポンスは通常どおり履歴に追加される）
             SetState(ChatState.WaitingForResponse);
 
-            _isStreamingRequest = useStreaming;
-            if (IsDifyMode)
-            {
-                llmClient.SetRequestInputs(BuildDynamicInputs());
-                if (useStreaming)
-                    llmClient.SendStreamingRequest("", combinedPrompt, null);
-                else
-                    llmClient.SendRequest("", combinedPrompt, null);
-            }
-            else
-            {
-                llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPromptWithAppend(combinedPrompt));
-                if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, null);
-                else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, null);
-            }
+            DispatchLlmRequest(combinedPrompt, null, appendToPrompt: true);
         }
 
         /// <summary>
@@ -559,24 +631,25 @@ namespace CyanNook.Chat
             if (outingController.IsPlayingEntry) return; // 既にEntry再生中
 
             Debug.Log("[ChatManager] Cron entry request, initiating entry with parallel LLM request");
-            _isCronEntryRequest = true;
-            _entryQueuedResponse = null;
 
             // 保留中のoutingリクエストを中断
-            if (_currentState == ChatState.WaitingForResponse && _isAutoRequest)
+            // （種別をCronEntryに切り替える前に行う。先に切り替えるとAuto判定が消えて中断できない）
+            if (_currentState == ChatState.WaitingForResponse && _requestKind == RequestKind.Auto)
             {
                 llmClient?.AbortRequest();
-                _isAutoRequest = false;
+                _requestKind = RequestKind.None;
                 SetState(ChatState.Idle);
             }
 
-            // 非Idle状態なら中断（ユーザーリクエスト処理中）
-            if (_currentState != ChatState.Idle)
+            // 非Idle状態・LLMClient処理中なら中断（ユーザーリクエスト処理中等）
+            if (IsBusy)
             {
-                Debug.LogWarning("[ChatManager] Cannot send cron entry: not idle");
-                _isCronEntryRequest = false;
+                Debug.LogWarning("[ChatManager] Cannot send cron entry: busy");
                 return;
             }
+
+            _requestKind = RequestKind.CronEntry;
+            _entryQueuedResponse = null;
 
             // entryPromptMessage + cronPrompt を合体
             string entryPrefix = outingController.EntryPromptMessage;
@@ -589,14 +662,22 @@ namespace CyanNook.Chat
             // ここでは応答未着の場合のThinking開始のみハンドル。
             outingController.PlayEntry(() =>
             {
-                _isCronEntryRequest = false;
+                ClearRequestKind(RequestKind.CronEntry);
                 if (_entryQueuedResponse == null)
                 {
-                    Debug.Log("[ChatManager] Cron entry: no response yet, starting Thinking");
-                    if (talkController != null)
+                    // リクエストが既にエラー等で終了している場合は応答が来ないためThinkingを開始しない
+                    if (_currentState == ChatState.WaitingForResponse)
                     {
-                        talkController.StartThinking();
-                        _isThinkingActive = true;
+                        Debug.Log("[ChatManager] Cron entry: no response yet, starting Thinking");
+                        if (talkController != null)
+                        {
+                            talkController.StartThinking();
+                            _isThinkingActive = true;
+                        }
+                    }
+                    else
+                    {
+                        Debug.Log("[ChatManager] Cron entry: request no longer in flight, skipping Thinking");
                     }
                 }
             }, skipBlend: false, suppressEntryPrompt: true);
@@ -604,31 +685,87 @@ namespace CyanNook.Chat
             // LLMに送信（履歴には追加しない）
             SetState(ChatState.WaitingForResponse);
 
+            DispatchLlmRequest(combinedPrompt, null, appendToPrompt: true);
+        }
+
+        /// <summary>
+        /// LLMへリクエストを送出する（送信4メソッド共通のDify/非Dify分岐）
+        /// Dify: メッセージのみ送信し、動的値はinputsで送信。
+        ///       会話履歴とシステムプロンプトはDify側で管理（conversation_id）
+        /// 非Dify: システムプロンプト + 会話履歴付きフルプロンプトを構築して送信
+        /// </summary>
+        /// <param name="message">送信メッセージ（Difyはそのまま、非Difyはプロンプト構築に使用）</param>
+        /// <param name="imagesBase64">Vision画像（null=なし）</param>
+        /// <param name="appendToPrompt">非Dify時のプロンプト構築方法。
+        /// true=会話履歴の末尾にシステム指示として追記（自律・Cron系）、false=ユーザー発言として構築</param>
+        private void DispatchLlmRequest(string message, List<string> imagesBase64, bool appendToPrompt)
+        {
             _isStreamingRequest = useStreaming;
             if (IsDifyMode)
             {
                 llmClient.SetRequestInputs(BuildDynamicInputs());
                 if (useStreaming)
-                    llmClient.SendStreamingRequest("", combinedPrompt, null);
+                    llmClient.SendStreamingRequest("", message, imagesBase64);
                 else
-                    llmClient.SendRequest("", combinedPrompt, null);
+                    llmClient.SendRequest("", message, imagesBase64);
             }
             else
             {
                 llmClient.SetRequestInputs(null);
-                string systemPrompt = GenerateSystemPrompt();
-                string fullPrompt = ReplaceDynamicPlaceholders(GenerateFullPromptWithAppend(combinedPrompt));
+                // 動的コンテキスト（家具リスト・空間認識・視界等）の生成はコストが
+                // あるため、1リクエストで1回だけ生成して両プロンプトに使い回す
+                var contextValues = BuildDynamicContextValues();
+                string systemPrompt = GenerateSystemPrompt(contextValues);
+                string basePrompt = appendToPrompt
+                    ? GenerateFullPromptWithAppend(message)
+                    : GenerateFullPrompt(message);
+                string fullPrompt = ReplaceDynamicPlaceholders(basePrompt, contextValues);
                 if (useStreaming)
-                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, null);
+                    llmClient.SendStreamingRequest(systemPrompt, fullPrompt, imagesBase64);
                 else
-                    llmClient.SendRequest(systemPrompt, fullPrompt, null);
+                    llmClient.SendRequest(systemPrompt, fullPrompt, imagesBase64);
             }
+        }
+
+        /// <summary>
+        /// 動的プレースホルダの差し込み値一式
+        /// </summary>
+        private struct DynamicContextValues
+        {
+            public string dateTime;
+            public string pose;
+            public string emotion;
+            public string furnitureList;
+            public string roomTargetList;
+            public string spatialContext;
+            public string bored;
+            public string visibleObjects;
+        }
+
+        /// <summary>
+        /// 動的プレースホルダの差し込み値を生成
+        /// </summary>
+        private DynamicContextValues BuildDynamicContextValues()
+        {
+            return new DynamicContextValues
+            {
+                dateTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm (ddd)", CultureInfo.InvariantCulture),
+                pose = _currentPose,
+                emotion = _currentEmotion,
+                furnitureList = furnitureManager?.GenerateFurnitureListForPrompt() ?? "  - なし",
+                roomTargetList = roomTargetManager?.GenerateTargetListForPrompt() ?? "  - なし",
+                spatialContext = spatialContextProvider?.GenerateSpatialContextJson() ?? "{}",
+                bored = (boredomController?.BoredInt ?? 0).ToString(),
+                // 視界内オブジェクト（Vision有効 かつ 抑制されていない場合のみ）
+                visibleObjects = (useVision && !IsVisionSuppressed && visibleObjectsProvider != null)
+                    ? visibleObjectsProvider.GenerateVisibleObjectsText() : ""
+            };
         }
 
         /// <summary>
         /// システムプロンプトを生成
         /// </summary>
-        private string GenerateSystemPrompt()
+        private string GenerateSystemPrompt(DynamicContextValues contextValues)
         {
             // キャラクター設定 + レスポンスフォーマットを結合
             string prompt = characterPrompt;
@@ -645,7 +782,7 @@ namespace CyanNook.Chat
                 prompt = prompt.Replace("{character_id}", characterTemplate.templateId);
             }
 
-            return ReplaceDynamicPlaceholders(prompt);
+            return ReplaceDynamicPlaceholders(prompt, contextValues);
         }
 
         /// <summary>
@@ -653,35 +790,16 @@ namespace CyanNook.Chat
         /// Difyなどシステムプロンプトを送信しないプロバイダーでも、
         /// fullPrompt内のプレースホルダが正しく置換されるようにするため共通化
         /// </summary>
-        private string ReplaceDynamicPlaceholders(string text)
+        private string ReplaceDynamicPlaceholders(string text, DynamicContextValues contextValues)
         {
-            text = text.Replace("{current_datetime}", DateTime.Now.ToString("yyyy-MM-dd HH:mm (ddd)", CultureInfo.InvariantCulture));
-            text = text.Replace("{current_pose}", _currentPose);
-            text = text.Replace("{current_emotion}", _currentEmotion);
-
-            // 利用可能な家具リストを生成
-            string furnitureList = furnitureManager?.GenerateFurnitureListForPrompt() ?? "  - なし";
-            text = text.Replace("{available_furniture}", furnitureList);
-
-            // 利用可能なルームターゲットリストを生成
-            string roomTargetList = roomTargetManager?.GenerateTargetListForPrompt() ?? "  - なし";
-            text = text.Replace("{available_room_targets}", roomTargetList);
-
-            // 空間認識コンテキストを生成（方向・距離付き）
-            string spatialContext = spatialContextProvider?.GenerateSpatialContextJson() ?? "{}";
-            text = text.Replace("{spatial_context}", spatialContext);
-
-            // 退屈ポイント
-            int bored = boredomController?.BoredInt ?? 0;
-            text = text.Replace("{bored}", bored.ToString());
-
-            // 視界内オブジェクト（Vision有効 かつ 抑制されていない場合のみ）
-            string visibleObjects = "";
-            if (useVision && !IsVisionSuppressed && visibleObjectsProvider != null)
-            {
-                visibleObjects = visibleObjectsProvider.GenerateVisibleObjectsText();
-            }
-            text = text.Replace("{visible_objects}", visibleObjects);
+            text = text.Replace("{current_datetime}", contextValues.dateTime);
+            text = text.Replace("{current_pose}", contextValues.pose);
+            text = text.Replace("{current_emotion}", contextValues.emotion);
+            text = text.Replace("{available_furniture}", contextValues.furnitureList);
+            text = text.Replace("{available_room_targets}", contextValues.roomTargetList);
+            text = text.Replace("{spatial_context}", contextValues.spatialContext);
+            text = text.Replace("{bored}", contextValues.bored);
+            text = text.Replace("{visible_objects}", contextValues.visibleObjects);
 
             return text;
         }
@@ -762,7 +880,7 @@ namespace CyanNook.Chat
         private void HandleStreamHeader(LlmResponseHeader header)
         {
             // Sleep中はヘッダー処理を抑制（起床リクエスト中は通す）
-            if (sleepController != null && sleepController.IsSleeping && !_isWakeUpRequest) return;
+            if (sleepController != null && sleepController.IsSleeping && _requestKind != RequestKind.WakeUp) return;
 
             Debug.Log($"[ChatManager] Stream header: action={header.action}, emote={header.emote}");
 
@@ -779,9 +897,9 @@ namespace CyanNook.Chat
         private void HandleStreamText(string textChunk)
         {
             // Sleep中はテキスト表示・音声合成を抑制（起床リクエスト中は通す）
-            if (sleepController != null && sleepController.IsSleeping && !_isWakeUpRequest) return;
+            if (sleepController != null && sleepController.IsSleeping && _requestKind != RequestKind.WakeUp) return;
             // Outing中はテキスト表示・音声合成を抑制（Cron帰宅リクエスト中は通す）
-            if (outingController != null && outingController.IsOutside && !_isCronEntryRequest) return;
+            if (outingController != null && outingController.IsOutside && _requestKind != RequestKind.CronEntry) return;
 
             OnStreamingTextReceived?.Invoke(textChunk);
 
@@ -799,9 +917,9 @@ namespace CyanNook.Chat
         private void HandleStreamField(string fieldName, string rawValue)
         {
             // Sleep中はフィールド処理を抑制（起床リクエスト中は通す：表情・リアクション等をed中に表示）
-            if (sleepController != null && sleepController.IsSleeping && !_isWakeUpRequest) return;
+            if (sleepController != null && sleepController.IsSleeping && _requestKind != RequestKind.WakeUp) return;
             // Outing中はフィールド処理を抑制（Cron帰宅リクエスト中は通す）
-            if (outingController != null && outingController.IsOutside && !_isCronEntryRequest) return;
+            if (outingController != null && outingController.IsOutside && _requestKind != RequestKind.CronEntry) return;
 
             _incrementalFieldsApplied = true;
 
@@ -950,7 +1068,7 @@ namespace CyanNook.Chat
                 _parseErrorHandled = false;
                 _incrementalFieldsApplied = false;
                 _isStreamingRequest = false;
-                _isAutoRequest = false;
+                ClearCompletedRequestKind();
                 return;
             }
 
@@ -959,7 +1077,7 @@ namespace CyanNook.Chat
             // Sleep中の応答処理
             if (sleepController != null && sleepController.IsSleeping)
             {
-                if (_isWakeUpRequest)
+                if (_requestKind == RequestKind.WakeUp)
                 {
                     // 起床リクエスト: 通常処理するがCharacterControllerへの通知はキューに入れる
                     Debug.Log("[ChatManager] Wake-up response during ed, will queue for CharacterController");
@@ -969,7 +1087,7 @@ namespace CyanNook.Chat
                 {
                     // 夢メッセージ応答: 履歴に追加せず、Zzz...表示、action/emotion無視
                     Debug.Log("[ChatManager] Sleep mode: suppressing response");
-                    _isAutoRequest = false;
+                    ClearCompletedRequestKind();
                     _incrementalFieldsApplied = false;
                     _isStreamingRequest = false;
                     SetState(ChatState.Idle);
@@ -986,10 +1104,10 @@ namespace CyanNook.Chat
             }
 
             // 自律リクエストで "ignore" → 履歴に追加せず
-            if (_isAutoRequest && response.IsIgnore)
+            if (_requestKind == RequestKind.Auto && response.IsIgnore)
             {
                 Debug.Log("[ChatManager] Auto-request ignored by LLM");
-                _isAutoRequest = false;
+                ClearCompletedRequestKind();
                 _incrementalFieldsApplied = false;
                 _isStreamingRequest = false;
                 SetState(ChatState.Idle);
@@ -1002,12 +1120,12 @@ namespace CyanNook.Chat
                 return;
             }
 
-            if (_isAutoRequest)
+            if (_requestKind == RequestKind.Auto)
             {
                 Debug.Log($"[ChatManager] Auto-request response: {response.message}");
             }
 
-            _isAutoRequest = false;
+            ClearCompletedRequestKind();
 
             // メッセージがある場合のみ会話履歴に追加（reaction + message 結合）
             if (response.HasMessage)
@@ -1045,17 +1163,27 @@ namespace CyanNook.Chat
             // ブロッキング応答時のみ音声合成
             // ストリーミング時はHandleStreamText→OnStreamingTextReceivedで文単位合成済み
             // Outing中は抑制（Cron帰宅リクエスト中は通す）
-            bool suppressBlockingTTS = outingController != null && outingController.IsOutside && !_isCronEntryRequest;
-            if (!_isStreamingRequest && voiceSynthesisController != null && response.HasMessage && !suppressBlockingTTS)
+            bool suppressBlockingTTS = outingController != null && outingController.IsOutside && _requestKind != RequestKind.CronEntry;
+            if (!_isStreamingRequest && voiceSynthesisController != null && !suppressBlockingTTS)
             {
-                voiceSynthesisController.SynthesizeAndPlay(response.FullMessage);
+                // 外部フィードの合成済みwavがあれば自前合成より優先して再生
+                // （ttsEnabledのON/OFFに依らず再生される）
+                if (_pendingExternalVoiceClip != null)
+                {
+                    voiceSynthesisController.PlayExternalClip(_pendingExternalVoiceClip);
+                    _pendingExternalVoiceClip = null;
+                }
+                else if (response.HasMessage)
+                {
+                    voiceSynthesisController.SynthesizeAndPlay(response.FullMessage);
+                }
             }
 
             _isStreamingRequest = false;
 
             // 起床リクエスト中: CharacterControllerへの通知をキューに入れる
             // ed完了後にWakeUpWithMessageコールバックで処理される
-            if (_isWakeUpRequest && sleepController != null && sleepController.IsWakingUp)
+            if (_requestKind == RequestKind.WakeUp && sleepController != null && sleepController.IsWakingUp)
             {
                 sleepController.QueueWakeUpResponse(response);
             }
@@ -1077,6 +1205,221 @@ namespace CyanNook.Chat
             OnMessageReceived?.Invoke(response.FullMessage);
         }
 
+        // ===================================================================
+        // 外部アクションフィード（受動制御）用の応答注入
+        // ===================================================================
+
+        /// <summary>
+        /// 外部アクションフィードから受信した完成済み応答を適用する。
+        /// LLMへリクエストは送らず、通常のブロッキング応答と同じ確定処理
+        /// （会話履歴・感情・退屈度・TTS・UI表示・CharacterControllerルーティング）を通す。
+        /// これによりアニメ・emote・視線・口パク・メッセージ表示・音声が一気通貫で駆動される。
+        /// 外部フィードは「その場でアクションを見せる」用途のため、
+        /// 進行中リクエスト（応答待ち/Thinking）・睡眠中・外出中はスキップする（falseを返す）。
+        /// ※ ChatState は Idle/WaitingForResponse/Error の3値のみで睡眠中・外出中を表現しないため、
+        ///    SleepController.IsSleeping / OutingController.IsOutside を明示的にチェックする必要がある。
+        /// </summary>
+        /// <param name="response">適用するLLMResponseData（LLMResponseData.FromJsonでパース済みを想定）</param>
+        /// <param name="externalVoiceClip">フィードから取得済みの合成音声（voice.wav）。
+        /// nullなら従来どおり自前TTSで合成。非nullなら自前合成の代わりにこれを再生する。
+        /// trueを返した場合クリップの所有権は本メソッドが引き取る（falseなら呼び出し元が破棄）</param>
+        /// <returns>適用した場合true、ビジー等でスキップした場合false</returns>
+        public bool ApplyExternalResponse(LLMResponseData response, AudioClip externalVoiceClip = null)
+        {
+            if (response == null)
+            {
+                Debug.LogWarning("[ChatManager] ApplyExternalResponse: response is null");
+                return false;
+            }
+
+            // 進行中のリクエスト（応答待ち）がある場合は適用しない
+            // （HandleLLMResponseがSetState(Idle)＋イベント発火するため、実リクエストと競合する）
+            if (_currentState != ChatState.Idle)
+            {
+                Debug.Log($"[ChatManager] ApplyExternalResponse skipped (state={_currentState})");
+                return false;
+            }
+
+            // Thinking演出中（起床ed/Entry再生中はIdleでも_isThinkingActive=trueのことがある）はスキップ。
+            // HandleLLMResponseはThinkingを止めないため、割り込むと考え中演出が残る恐れがある。
+            // ただし外部フィード起点のThinking中は例外で、後続の本応答を通して下で解除する
+            if (_isThinkingActive && !_isExternalThinkingActive)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (thinking active)");
+                return false;
+            }
+
+            // 睡眠中・外出中はスキップ。_currentStateはこれらの状態でもIdleに戻っているため
+            // 別コントローラーのフラグで明示的に判定する必要がある。
+            if (sleepController != null && sleepController.IsSleeping)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (sleeping)");
+                return false;
+            }
+            if (outingController != null && outingController.IsOutside)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (outside)");
+                return false;
+            }
+
+            // Entry（入室演出）再生中はスキップ。
+            // Entry中はNavMeshAgentが無効化されており、move等を適用すると
+            // ナビゲーションが無効なAgentに対して走り出してしまう。
+            if (outingController != null && outingController.IsPlayingEntry)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (entry playing)");
+                return false;
+            }
+
+            // 起動時の初回Entry完了前はスキップ。
+            // 起動直後はVRMロード〜入室演出の準備中で、この間に適用すると
+            // PlayableDirector未割当のままナビゲーション開始→Entry開始でAgent無効化→
+            // 「"Move" can only be called on an active agent」エラー連発＋瞬間移動が発生する。
+            if (outingController != null && !_hasInitialEntryCompleted)
+            {
+                Debug.Log("[ChatManager] ApplyExternalResponse skipped (initial entry not completed)");
+                return false;
+            }
+
+            // action:"thinking" は「本応答の前触れ」の特別扱い。
+            // 外部リスナー（herald等）が推論開始時にPUTすることで、
+            // 応答待ちの間キャラクターに考え中モーションをさせる。
+            // 状態遷移のみ行い、message等の他フィールドは使わない
+            if (response.action != null &&
+                response.action.Trim().Equals("thinking", StringComparison.OrdinalIgnoreCase))
+            {
+                // thinkingに音声は付かない想定の保険（付いていたら破棄）
+                if (externalVoiceClip != null)
+                {
+                    Destroy(externalVoiceClip);
+                }
+                StartExternalThinking();
+                return true;
+            }
+
+            // 外部Thinking中に本応答が届いた場合、解除は内部フローと同じ
+            // 「適用 → Thinking解除」の順序で行う（下のHandleLLMResponse後）。
+            // ここではタイムアウト監視の停止とフラグ解除のみ予約する
+            bool wasExternalThinking = _isExternalThinkingActive;
+            if (wasExternalThinking)
+            {
+                CancelExternalThinking(stopAnimation: false);
+            }
+
+            // null/空フィールドにデフォルト補填（手動構築されたresponseへの安全策。
+            // FromJson経由なら既に補填済みだがFillDefaultsは冪等なので害はない）
+            response.FillDefaults();
+
+            // リクエスト種別をクリアし、通常のブロッキング応答として確定処理へ流す
+            // （上のガードで睡眠中・外出中・Entry再生中は弾かれているため、
+            // WakeUp/CronEntryが進行中にここへ到達することはない）
+            _requestKind = RequestKind.None;
+            _isStreamingRequest = false;
+            _incrementalFieldsApplied = false;
+            _parseErrorHandled = false;
+
+            Debug.Log($"[ChatManager] Applying external feed response: action={response.action}, message={response.message}, voice={(externalVoiceClip != null ? "wav" : "tts")}");
+            _pendingExternalVoiceClip = externalVoiceClip;
+            try
+            {
+                HandleLLMResponse(response);
+            }
+            finally
+            {
+                // TTSブロックで消費されなかった場合の後始末（message空・音声抑制中・
+                // HandleLLMResponse内のイベント購読者の例外等）。
+                // 残したままだと次の内部応答で無関係な音声が再生されてしまう
+                if (_pendingExternalVoiceClip != null)
+                {
+                    Destroy(_pendingExternalVoiceClip);
+                    _pendingExternalVoiceClip = null;
+                }
+            }
+
+            // 外部Thinkingの解除（内部フローのHandleRequestCompletedに相当）。
+            // HandleLLMResponseはThinkingを止めないため、ここで明示的に解除する
+            if (wasExternalThinking && _isThinkingActive)
+            {
+                if (talkController != null)
+                {
+                    talkController.StopThinking();
+                }
+                _isThinkingActive = false;
+                OnThinkingEnded?.Invoke();
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 外部フィードのaction:"thinking"で考え中モーションに入る。
+        /// 既に外部Thinking中の再受信（連続ウェイクワード等）はタイムアウトの延長のみ行う。
+        /// 本応答が届かない場合に備え、externalThinkingTimeout秒で自動解除する
+        /// </summary>
+        private void StartExternalThinking()
+        {
+            if (!_isExternalThinkingActive)
+            {
+                if (talkController != null)
+                {
+                    talkController.StartThinking();
+                    _isThinkingActive = true;
+                }
+                _isExternalThinkingActive = true;
+                OnThinkingStarted?.Invoke();
+                Debug.Log("[ChatManager] External thinking started");
+            }
+
+            // タイムアウトを（再）セット。0以下は「即時解除」ではなく「監視無効」とする
+            if (_externalThinkingTimeoutCoroutine != null)
+            {
+                StopCoroutine(_externalThinkingTimeoutCoroutine);
+                _externalThinkingTimeoutCoroutine = null;
+            }
+            if (externalThinkingTimeout > 0f)
+            {
+                _externalThinkingTimeoutCoroutine = StartCoroutine(ExternalThinkingTimeoutCoroutine());
+            }
+        }
+
+        private IEnumerator ExternalThinkingTimeoutCoroutine()
+        {
+            yield return new WaitForSeconds(externalThinkingTimeout);
+            _externalThinkingTimeoutCoroutine = null;
+
+            if (_isExternalThinkingActive)
+            {
+                Debug.LogWarning("[ChatManager] External thinking timed out, stopping");
+                CancelExternalThinking(stopAnimation: true);
+            }
+        }
+
+        /// <summary>
+        /// 外部Thinkingを終了する。
+        /// stopAnimation=falseは所有権の移譲（内部リクエスト開始時・本応答の適用前）用で、
+        /// 演出は止めず既存の解除経路（HandleRequestCompleted等）に任せる
+        /// </summary>
+        private void CancelExternalThinking(bool stopAnimation)
+        {
+            if (_externalThinkingTimeoutCoroutine != null)
+            {
+                StopCoroutine(_externalThinkingTimeoutCoroutine);
+                _externalThinkingTimeoutCoroutine = null;
+            }
+
+            if (!_isExternalThinkingActive) return;
+            _isExternalThinkingActive = false;
+
+            if (stopAnimation && _isThinkingActive)
+            {
+                if (talkController != null)
+                {
+                    talkController.StopThinking();
+                }
+                _isThinkingActive = false;
+                OnThinkingEnded?.Invoke();
+            }
+        }
+
         /// <summary>
         /// ストリーミング中のJSONパースエラーを処理
         /// エラーメッセージと生レスポンステキストをUIに表示し、生テキストをTTS対象にする
@@ -1084,7 +1427,7 @@ namespace CyanNook.Chat
         private void HandleStreamParseError(string error, string rawText)
         {
             _parseErrorHandled = true;
-            _isAutoRequest = false;
+            ClearCompletedRequestKind();
 
             // Thinking解除
             if (_isThinkingActive && talkController != null)
@@ -1113,11 +1456,62 @@ namespace CyanNook.Chat
 
         /// <summary>
         /// LLMエラーを処理
+        /// Errorのまま放置するとIdleChat/Cron/夢/外出メッセージ等の自律動作が
+        /// 全停止するため、リクエスト種別フラグをリセットし数秒後にIdleへ自動復帰する
         /// </summary>
         private void HandleLLMError(string error)
         {
+            // 外部Thinkingの所有権解除。
+            // 通常はSetState(WaitingForResponse)で移譲済みだが、プロバイダー未設定等で
+            // OnRequestStartedを経ずに即エラーになる経路ではフックを通らないため、
+            // ここでも解除してフラグ残留（次回thinkingがモーション無しになる）を防ぐ。
+            // 演出はRecoverFromErrorAfterDelayの既存解除に任せる
+            CancelExternalThinking(stopAnimation: false);
+
+            // リクエスト種別をリセット
+            // （残留すると次回リクエストがauto扱いになり、Thinking遷移や履歴追加が壊れる）
+            // 注意: WakeUp / CronEntry はここでリセットしない（ClearCompletedRequestKindが維持する）。
+            // OnErrorの直後に発火するHandleRequestCompletedがsuppressStreamingTTS判定で
+            // これらを参照しており、先にリセットするとTTSのストリーミング状態が閉じられず
+            // 次応答への断片混入やSTT再開ブロックが起きる。
+            // この2つはed完了/Entry完了コールバックで必ずNoneに戻る。
+            ClearCompletedRequestKind();
+            _isStreamingRequest = false;
+            _incrementalFieldsApplied = false;
+            _parseErrorHandled = false;
+
             SetState(ChatState.Error);
             OnError?.Invoke(error);
+
+            if (_errorRecoveryCoroutine != null)
+            {
+                StopCoroutine(_errorRecoveryCoroutine);
+            }
+            _errorRecoveryCoroutine = StartCoroutine(RecoverFromErrorAfterDelay());
+        }
+
+        /// <summary>
+        /// Error状態から一定時間後にIdleへ復帰する
+        /// エラー表示中に新しいリクエストが始まっていた場合は何もしない
+        /// </summary>
+        private IEnumerator RecoverFromErrorAfterDelay()
+        {
+            yield return new WaitForSeconds(errorRecoveryDelay);
+            _errorRecoveryCoroutine = null;
+
+            if (_currentState != ChatState.Error) yield break;
+
+            // Thinking解除の保険
+            // （通常はHandleRequestCompletedで解除済みだが、起床ed/Entry完了コールバックが
+            // エラー後にThinkingを開始してしまった場合はここで回収する）
+            if (_isThinkingActive && talkController != null)
+            {
+                talkController.StopThinking();
+                _isThinkingActive = false;
+            }
+
+            Debug.Log("[ChatManager] Recovered from Error state to Idle");
+            SetState(ChatState.Idle);
         }
 
         /// <summary>
@@ -1195,10 +1589,43 @@ namespace CyanNook.Chat
         }
 
         /// <summary>
+        /// 完了/中断したリクエストの種別をクリアする（User/Autoのみ）。
+        /// WakeUp / CronEntry は並行演出（起床ed/帰宅Entry）の完了まで維持する必要が
+        /// あるためここではクリアしない（それぞれの完了コールバックでクリアされる）
+        /// </summary>
+        private void ClearCompletedRequestKind()
+        {
+            if (_requestKind == RequestKind.User || _requestKind == RequestKind.Auto)
+            {
+                _requestKind = RequestKind.None;
+            }
+        }
+
+        /// <summary>
+        /// 指定種別が現在のリクエスト種別ならNoneに戻す（他種別は維持）
+        /// </summary>
+        private void ClearRequestKind(RequestKind kind)
+        {
+            if (_requestKind == kind)
+            {
+                _requestKind = RequestKind.None;
+            }
+        }
+
+        /// <summary>
         /// 状態を更新
         /// </summary>
         private void SetState(ChatState newState)
         {
+            // 内部LLMリクエストの開始で外部Thinkingの所有権を内部フローへ移す。
+            // 演出は止めない（_isThinkingActiveを維持し、HandleRequestCompleted等の
+            // 既存の解除経路に任せる）。タイムアウト監視は止めないと、
+            // 内部リクエスト中に発火してThinkingを勝手に解除してしまう
+            if (newState == ChatState.WaitingForResponse)
+            {
+                CancelExternalThinking(stopAnimation: false);
+            }
+
             if (_currentState != newState)
             {
                 _currentState = newState;

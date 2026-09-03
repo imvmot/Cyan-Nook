@@ -20,12 +20,12 @@ namespace CyanNook.UI
         public event Action OnLLMConfigured;
 
         // PlayerPrefsキー
-        private const string PrefKey_UseVision = "llm_useVision";
-        private const string PrefKey_MaxHistory = "llm_maxHistory";
-        private const string PrefKey_CameraPreview = "llm_cameraPreview";
-        private const string PrefKey_WebCam = "llm_webCam";
-        private const string PrefKey_ScreenCapture = "llm_screenCapture";
-        private const string PrefKey_IdleChatMessage = "idleChat_message";
+        private const string PrefKey_UseVision = SettingsKeys.UseVision;
+        private const string PrefKey_MaxHistory = SettingsKeys.MaxHistory;
+        private const string PrefKey_CameraPreview = SettingsKeys.CameraPreview;
+        private const string PrefKey_WebCam = SettingsKeys.WebCam;
+        private const string PrefKey_ScreenCapture = SettingsKeys.ScreenCapture;
+        private const string PrefKey_IdleChatMessage = SettingsKeys.IdleChatMessage;
 
         [Header("References")]
         public ChatManager chatManager;
@@ -36,6 +36,7 @@ namespace CyanNook.UI
         public SleepController sleepController;
         public OutingController outingController;
         public FirstRunController firstRunController;
+        public ExternalActionFeedController externalActionFeedController;
 
         [Header("UI - API Config")]
         [Tooltip("AI Service選択（Ollama, LM Studio, Dify, OpenAI）")]
@@ -89,15 +90,53 @@ namespace CyanNook.UI
         [Tooltip("カメラプレビュー表示切替トグル")]
         public Toggle cameraPreviewToggle;
 
-        [Header("UI - IdleChat")]
-        [Tooltip("自律リクエストON/OFF")]
-        public Toggle idleChatToggle;
+        [Header("UI - Periodic Execution（定期実行）")]
+        [Tooltip("定期実行（IdleChat/SleepChat/Outing）マスターON/OFF")]
+        public Toggle periodicToggle;
 
-        [Tooltip("クールダウン秒数")]
+        [Tooltip("定期実行の詳細設定グループ（ON時のみ表示。IdleChat/Sleep/Outingセクションの親）")]
+        public GameObject periodicDetailsGroup;
+
+        [Header("UI - IdleChat")]
+        [Tooltip("クールダウン秒数（0で個別無効）")]
         public TMP_InputField cooldownInputField;
 
         [Tooltip("自律リクエストメッセージ")]
         public TMP_InputField idleChatMessageInputField;
+
+        [Header("UI - External Action Feed（外部アクションフィード）")]
+        [Tooltip("外部アクションフィードON/OFF")]
+        public Toggle feedToggle;
+
+        [Tooltip("フィードの詳細設定グループ（ON時のみ表示）")]
+        public GameObject feedDetailsGroup;
+
+        [Tooltip("応答JSON購読URL")]
+        public TMP_InputField feedActionUrlInputField;
+
+        [Tooltip("購読間隔（秒、0で無効）")]
+        public TMP_InputField feedIntervalInputField;
+
+        [Tooltip("context JSON公開URL")]
+        public TMP_InputField feedContextUrlInputField;
+
+        [Tooltip("カメラ画像公開URL")]
+        public TMP_InputField feedCameraUrlInputField;
+
+        [Tooltip("公開間隔（秒、0で無効）")]
+        public TMP_InputField feedPublishIntervalInputField;
+
+        [Tooltip("フィード音声(voice.wav)再生トグル")]
+        public Toggle feedVoiceToggle;
+
+        [Tooltip("フィード音声(voice.wav)購読URL入力（空でアクションURLから自動導出）")]
+        public TMP_InputField feedVoiceUrlInputField;
+
+        [Tooltip("解説ページを開くボタン")]
+        public Button feedHelpButton;
+
+        [Tooltip("解説ページのURL")]
+        public string feedHelpUrl = "";
 
         [Header("UI - Cron Scheduler")]
         [Tooltip("CronスケジューラーON/OFF")]
@@ -110,15 +149,7 @@ namespace CyanNook.UI
         public TMP_InputField cronAutoReloadInputField;
 
         [Header("UI - Sleep")]
-        [Tooltip("デフォルト睡眠時間（分）")]
-        public TMP_InputField defaultSleepDurationInputField;
-
-        [Tooltip("最小睡眠時間（分）")]
-        public TMP_InputField minSleepDurationInputField;
-
-        [Tooltip("最大睡眠時間（分）")]
-        public TMP_InputField maxSleepDurationInputField;
-
+        // 睡眠時間 (Default/Min/Max) はキャラ性の設定として AvatarSettingsPanel に移動済み
         [Tooltip("夢メッセージ間隔（分）")]
         public TMP_InputField dreamIntervalInputField;
 
@@ -166,9 +197,17 @@ namespace CyanNook.UI
         [Tooltip("接続テストボタン")]
         public Button testConnectionButton;
 
+        [Header("UI - Advanced")]
+        [Tooltip("追加リクエストパラメータ（JSONオブジェクト）。LM Studio/OpenAI選択時のみ表示される上級者設定。model/messages/streamを上書きすると壊れるため指定しないこと")]
+        public TMP_InputField extraParamsInputField;
+
         [Header("UI - Status")]
         [Tooltip("ステータス表示")]
         public TMP_Text statusText;
+
+        [Header("Unityroom Build")]
+        [Tooltip("unityroom版（体験版）で非表示にするUI。外部アクションフィード/Cron/WebCam/画面キャプチャの各セクション（ラベル含む行の親）を割り当てる")]
+        public GameObject[] hideOnUnityroomBuild;
 
         // 初期化フラグ（イベントハンドラの重複登録を防ぐ）
         private bool _isCameraPreviewInitialized = false;
@@ -213,8 +252,21 @@ namespace CyanNook.UI
                 apiTypeDropdown.AddOptions(labels);
             }
 
-            // OnEnable()より先に保存済み設定を復元
-            LoadSavedSettings();
+            // 保存済み設定の復元は各コントローラー側で行う
+            // （Vision/MaxHistory=ChatManager.Awake、IdleChatメッセージ=IdleChatController、
+            // カメラ系=各コントローラー。パネルの初期アクティブ状態に依存させないため）
+
+#if UNITYROOM_BUILD
+            // 体験版で封鎖する機能（外部フィード/Cron/WebCam/画面キャプチャ）のUIを非表示化。
+            // 機能自体は各コントローラー側のUNITYROOM_BUILDガードで停止済み
+            if (hideOnUnityroomBuild != null)
+            {
+                foreach (var go in hideOnUnityroomBuild)
+                {
+                    if (go != null) go.SetActive(false);
+                }
+            }
+#endif
         }
 
         /// <summary>
@@ -248,7 +300,7 @@ namespace CyanNook.UI
             switch (apiType)
             {
                 case LLMApiType.Ollama: return "Ollama";
-                case LLMApiType.LMStudio: return "LM Studio";
+                case LLMApiType.LMStudio: return "LM Studio (OpenAI-compatible)";
                 case LLMApiType.Dify: return "Dify";
                 case LLMApiType.OpenAI: return "OpenAI";
                 case LLMApiType.Claude: return "Claude";
@@ -262,10 +314,12 @@ namespace CyanNook.UI
         {
             // パネルが表示されるたびに現在の設定を反映
             LoadConfigToUI();
+            LoadPeriodicToUI();
             LoadIdleChatToUI();
             LoadCronSchedulerToUI();
             LoadSleepToUI();
             LoadOutingToUI();
+            LoadFeedToUI();
             LoadVisionToUI();
 
             // カメラプレビューの初期化（パネル初回表示時にも実行）
@@ -300,11 +354,17 @@ namespace CyanNook.UI
             // Screen Capture
             InitializeScreenCaptureToggle();
 
+            // 定期実行マスター
+            InitializePeriodicSettings();
+
             // IdleChat
             InitializeIdleChatSettings();
 
             // Cron Scheduler
             InitializeCronSchedulerToggle();
+
+            // 外部アクションフィード
+            InitializeFeedSettings();
 
             // Sleep
             InitializeSleepSettings();
@@ -348,8 +408,26 @@ namespace CyanNook.UI
                 webCamToggle.onValueChanged.RemoveListener(OnWebCamToggleChanged);
             if (screenCaptureToggle != null)
                 screenCaptureToggle.onValueChanged.RemoveListener(OnScreenCaptureToggleChanged);
-            if (idleChatToggle != null)
-                idleChatToggle.onValueChanged.RemoveListener(OnIdleChatToggleChanged);
+            if (periodicToggle != null)
+                periodicToggle.onValueChanged.RemoveListener(OnPeriodicToggleChanged);
+            if (feedToggle != null)
+                feedToggle.onValueChanged.RemoveListener(OnFeedToggleChanged);
+            if (feedActionUrlInputField != null)
+                feedActionUrlInputField.onEndEdit.RemoveListener(OnFeedActionUrlChanged);
+            if (feedIntervalInputField != null)
+                feedIntervalInputField.onEndEdit.RemoveListener(OnFeedIntervalChanged);
+            if (feedContextUrlInputField != null)
+                feedContextUrlInputField.onEndEdit.RemoveListener(OnFeedContextUrlChanged);
+            if (feedCameraUrlInputField != null)
+                feedCameraUrlInputField.onEndEdit.RemoveListener(OnFeedCameraUrlChanged);
+            if (feedPublishIntervalInputField != null)
+                feedPublishIntervalInputField.onEndEdit.RemoveListener(OnFeedPublishIntervalChanged);
+            if (feedVoiceToggle != null)
+                feedVoiceToggle.onValueChanged.RemoveListener(OnFeedVoiceToggleChanged);
+            if (feedVoiceUrlInputField != null)
+                feedVoiceUrlInputField.onEndEdit.RemoveListener(OnFeedVoiceUrlChanged);
+            if (feedHelpButton != null)
+                feedHelpButton.onClick.RemoveListener(OnFeedHelpClicked);
             if (cronSchedulerToggle != null)
                 cronSchedulerToggle.onValueChanged.RemoveListener(OnCronSchedulerToggleChanged);
             if (cronReloadButton != null)
@@ -364,12 +442,6 @@ namespace CyanNook.UI
                 maxHistoryInputField.onEndEdit.RemoveListener(OnMaxHistoryChanged);
             if (idleChatMessageInputField != null)
                 idleChatMessageInputField.onEndEdit.RemoveListener(OnIdleChatMessageChanged);
-            if (defaultSleepDurationInputField != null)
-                defaultSleepDurationInputField.onEndEdit.RemoveListener(OnDefaultSleepDurationChanged);
-            if (minSleepDurationInputField != null)
-                minSleepDurationInputField.onEndEdit.RemoveListener(OnMinSleepDurationChanged);
-            if (maxSleepDurationInputField != null)
-                maxSleepDurationInputField.onEndEdit.RemoveListener(OnMaxSleepDurationChanged);
             if (dreamIntervalInputField != null)
                 dreamIntervalInputField.onEndEdit.RemoveListener(OnDreamIntervalChanged);
             if (dreamPromptInputField != null)
@@ -403,6 +475,8 @@ namespace CyanNook.UI
                 modelNameInputField.text = config.modelName;
             if (apiKeyInputField != null)
                 apiKeyInputField.text = config.apiKey ?? "";
+            if (extraParamsInputField != null)
+                extraParamsInputField.text = config.extraParamsJson ?? "";
 
             // 生成パラメータ
             if (temperatureInputField != null)
@@ -426,7 +500,9 @@ namespace CyanNook.UI
 
         private void OnApiTypeChanged(int index)
         {
-            var newApiType = (LLMApiType)index;
+            // indexの直接キャストは不可（UNITYROOM_BUILDではドロップダウンの選択肢が
+            // [Gemini, WebLLM] のみで、enum値とindexがずれる）
+            var newApiType = GetApiTypeFromDropdownIndex(index);
             UpdateApiKeyVisibility(newApiType);
 
             // エンドポイントが別のAPIタイプのデフォルト値の場合、新しいデフォルトに自動切替
@@ -460,7 +536,13 @@ namespace CyanNook.UI
 
             if (apiKeyInputField != null)
             {
+#if UNITYROOM_BUILD
+                // unityroom版（体験版）ではユーザー自身のキー入力を禁止
+                // （Geminiは内蔵キー固定。IndexedDB平文保存リスクの回避）
+                bool needsApiKey = false;
+#else
                 bool needsApiKey = apiType == LLMApiType.Dify || apiType == LLMApiType.OpenAI || apiType == LLMApiType.Claude || apiType == LLMApiType.Gemini;
+#endif
                 apiKeyInputField.gameObject.SetActive(needsApiKey);
             }
 
@@ -473,7 +555,12 @@ namespace CyanNook.UI
             // WebLLM/Dify選択時はモデル名を非表示
             if (modelNameInputField != null)
             {
+#if UNITYROOM_BUILD
+                // unityroom版では内蔵キーで高コストモデルを指定されないようモデル名も固定
+                modelNameInputField.gameObject.SetActive(false);
+#else
                 modelNameInputField.gameObject.SetActive(!isDify && !isWebLLM);
+#endif
             }
 
             // Dify選択時は生成パラメータセクションを非表示（WebLLMは表示する）
@@ -485,7 +572,28 @@ namespace CyanNook.UI
             // WebLLM選択時はエンドポイントを非表示
             if (endpointInputField != null)
             {
+#if UNITYROOM_BUILD
+                // unityroom版では会話内容を任意サーバーへ送らせないようエンドポイントも固定
+                endpointInputField.gameObject.SetActive(false);
+#else
                 endpointInputField.gameObject.SetActive(!isWebLLM);
+#endif
+            }
+
+            // 追加パラメータはOpenAI互換プロバイダー（LM Studio/OpenAI）のみ表示
+            // （unityroom版は選択肢にこの2つが無いため常に非表示になる）
+            if (extraParamsInputField != null)
+            {
+                bool supportsExtraParams = apiType == LLMApiType.LMStudio || apiType == LLMApiType.OpenAI;
+                extraParamsInputField.gameObject.SetActive(supportsExtraParams);
+            }
+
+            // thinkフィールドを送信するのはOllamaのみのため、他プロバイダーでは行ごと非表示
+            // （OpenAI互換でのthinking制御はExtra Paramsで行う。
+            // ラベルを含む行コンテナ=トグルの親を非表示にする）
+            if (thinkToggle != null)
+            {
+                thinkToggle.transform.parent.gameObject.SetActive(apiType == LLMApiType.Ollama);
             }
         }
 
@@ -498,14 +606,30 @@ namespace CyanNook.UI
                 return;
             }
 
+            var selectedApiType = apiTypeDropdown != null
+                ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini;
+
+            // 追加パラメータの検証（対象プロバイダー選択時のみ。
+            // 対象外プロバイダーでは欄が非表示のため、残存する古い値で保存を妨げない。
+            // 不正なJSONは送信時に黙って捨てられるので、保存前に検知してユーザーに知らせる）
+            string extraParams = extraParamsInputField != null ? extraParamsInputField.text : "";
+            bool extraParamsApply = selectedApiType == LLMApiType.LMStudio || selectedApiType == LLMApiType.OpenAI;
+            if (extraParamsApply && !string.IsNullOrWhiteSpace(extraParams) &&
+                !LLMConfig.TryGetExtraParamsBody(extraParams, out _))
+            {
+                SetStatus("Error: Extra Params must be a valid JSON object like {\"key\":value}");
+                return;
+            }
+
             // LLM API設定
             var defaults = LLMConfig.GetDefault();
             var config = new LLMConfig
             {
-                apiType = apiTypeDropdown != null ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini,
+                apiType = selectedApiType,
                 apiEndpoint = endpointInputField != null ? endpointInputField.text : "",
                 modelName = modelNameInputField != null ? modelNameInputField.text : "",
                 apiKey = apiKeyInputField != null ? apiKeyInputField.text : "",
+                extraParamsJson = extraParams,
                 temperature = ParseFloat(temperatureInputField, llmClient.CurrentConfig?.temperature ?? defaults.temperature),
                 topP = ParseFloat(topPInputField, llmClient.CurrentConfig?.topP ?? defaults.topP),
                 topK = ParseInt(topKInputField, llmClient.CurrentConfig?.topK ?? defaults.topK),
@@ -523,6 +647,19 @@ namespace CyanNook.UI
                 config.apiEndpoint = "";
             }
 
+#if UNITYROOM_BUILD
+            // unityroom版ではキー/エンドポイント/モデル名の入力UIを封鎖しているため、
+            // 非表示フィールドに残った過去の値を保存に紛れ込ませない。
+            // Geminiは常にUnityroomConfigの既定構成で保存する
+            if (config.apiType == LLMApiType.Gemini)
+            {
+                var unityroomDefault = LLMConfig.GetUnityroomDefault();
+                config.apiEndpoint = unityroomDefault.apiEndpoint;
+                config.modelName = unityroomDefault.modelName;
+                config.apiKey = "";  // 空にして内蔵キーへのフォールバックに委ねる
+            }
+#endif
+
             if (!config.IsValid())
             {
                 SetStatus("Error: Endpoint and Model are required");
@@ -531,45 +668,11 @@ namespace CyanNook.UI
 
             llmClient.SaveAndApplyConfig(config);
 
-            // UseVision
-            if (chatManager != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_UseVision, chatManager.useVision ? 1 : 0);
-            }
-
-            // MaxHistory
-            if (chatManager != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_MaxHistory, chatManager.maxHistoryLength);
-            }
-
-            // CameraPreview
-            if (cameraPreviewToggle != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_CameraPreview, cameraPreviewToggle.isOn ? 1 : 0);
-            }
-
-            // WebCam
-            if (webCamToggle != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_WebCam, webCamToggle.isOn ? 1 : 0);
-            }
-
-            // Screen Capture
-            if (screenCaptureToggle != null)
-            {
-                PlayerPrefs.SetInt(PrefKey_ScreenCapture, screenCaptureToggle.isOn ? 1 : 0);
-            }
-
-            // IdleChat Message
-            if (idleChatMessageInputField != null && idleChatController != null)
-            {
-                PlayerPrefs.SetString(PrefKey_IdleChatMessage, idleChatMessageInputField.text);
-            }
-
-            PlayerPrefs.Save();
+            // SaveボタンはLLM API設定 (llm_config) の検証+適用+保存専用。
+            // Vision/カメラ系トグル/MaxHistory/IdleChatメッセージ等の他の項目は
+            // 変更した瞬間に各ハンドラ/コントローラー側で即保存される
             SetStatus("Saved!");
-            Debug.Log($"[LLMSettingsPanel] Settings saved: API={config.apiType}, Vision={chatManager?.useVision}, MaxHistory={chatManager?.maxHistoryLength}");
+            Debug.Log($"[LLMSettingsPanel] LLM config saved: API={config.apiType}");
 
             // WebLLM選択時: モデル未ロードならダウンロードフローを開始
             if (config.apiType == LLMApiType.WebLLM && firstRunController != null
@@ -600,12 +703,13 @@ namespace CyanNook.UI
 
             // テスト前にUIの値を一時的に適用
             var testDefaults = LLMConfig.GetDefault();
-            llmClient.ApplyConfig(new LLMConfig
+            var testConfig = new LLMConfig
             {
                 apiType = apiTypeDropdown != null ? GetApiTypeFromDropdownIndex(apiTypeDropdown.value) : LLMApiType.Gemini,
                 apiEndpoint = endpointInputField != null ? endpointInputField.text : "",
                 modelName = modelNameInputField != null ? modelNameInputField.text : "",
                 apiKey = apiKeyInputField != null ? apiKeyInputField.text : "",
+                extraParamsJson = extraParamsInputField != null ? extraParamsInputField.text : "",
                 temperature = ParseFloat(temperatureInputField, llmClient.CurrentConfig?.temperature ?? testDefaults.temperature),
                 topP = ParseFloat(topPInputField, llmClient.CurrentConfig?.topP ?? testDefaults.topP),
                 topK = ParseInt(topKInputField, llmClient.CurrentConfig?.topK ?? testDefaults.topK),
@@ -614,7 +718,20 @@ namespace CyanNook.UI
                 repeatPenalty = ParseFloat(repeatPenaltyInputField, llmClient.CurrentConfig?.repeatPenalty ?? testDefaults.repeatPenalty),
                 think = thinkToggle != null ? thinkToggle.isOn : (llmClient.CurrentConfig?.think ?? false),
                 timeout = llmClient.CurrentConfig?.timeout ?? testDefaults.timeout
-            });
+            };
+
+#if UNITYROOM_BUILD
+            // Saveと同じ正規化: 非表示フィールドの残存値を接続テストに使わせない
+            if (testConfig.apiType == LLMApiType.Gemini)
+            {
+                var unityroomDefault = LLMConfig.GetUnityroomDefault();
+                testConfig.apiEndpoint = unityroomDefault.apiEndpoint;
+                testConfig.modelName = unityroomDefault.modelName;
+                testConfig.apiKey = "";
+            }
+#endif
+
+            llmClient.ApplyConfig(testConfig);
 
             llmClient.TestConnection((success, message) =>
             {
@@ -633,6 +750,8 @@ namespace CyanNook.UI
             if (int.TryParse(value, out int count) && count > 0)
             {
                 chatManager.maxHistoryLength = count;
+                PlayerPrefs.SetInt(PrefKey_MaxHistory, count);
+                PlayerPrefs.Save();
                 Debug.Log($"[LLMSettingsPanel] Max history: {count}");
             }
         }
@@ -662,44 +781,13 @@ namespace CyanNook.UI
             }
         }
 
-        /// <summary>
-        /// 保存された設定を復元（起動時）
-        /// UseVision、MaxHistory、IdleChatMessage
-        /// ※ WebCamとCameraPreviewは各コントローラーで自動復元
-        /// </summary>
-        private void LoadSavedSettings()
-        {
-            // UseVision
-            if (PlayerPrefs.HasKey(PrefKey_UseVision) && chatManager != null)
-            {
-                chatManager.useVision = PlayerPrefs.GetInt(PrefKey_UseVision) == 1;
-                Debug.Log($"[LLMSettingsPanel] Loaded saved useVision: {chatManager.useVision}");
-            }
-
-            // MaxHistory
-            if (PlayerPrefs.HasKey(PrefKey_MaxHistory) && chatManager != null)
-            {
-                chatManager.maxHistoryLength = PlayerPrefs.GetInt(PrefKey_MaxHistory);
-                Debug.Log($"[LLMSettingsPanel] Loaded saved maxHistory: {chatManager.maxHistoryLength}");
-            }
-
-            // IdleChat Message
-            if (PlayerPrefs.HasKey(PrefKey_IdleChatMessage) && idleChatController != null)
-            {
-                string savedMessage = PlayerPrefs.GetString(PrefKey_IdleChatMessage);
-                if (!string.IsNullOrEmpty(savedMessage))
-                {
-                    idleChatController.idlePromptMessage = savedMessage;
-                    Debug.Log("[LLMSettingsPanel] Loaded saved idleChat message");
-                }
-            }
-        }
-
         private void OnVisionToggleChanged(bool isOn)
         {
             if (chatManager != null)
             {
                 chatManager.useVision = isOn;
+                PlayerPrefs.SetInt(PrefKey_UseVision, isOn ? 1 : 0);
+                PlayerPrefs.Save();
                 Debug.Log($"[LLMSettingsPanel] Vision: {(isOn ? "ON" : "OFF")}");
             }
         }
@@ -867,7 +955,7 @@ namespace CyanNook.UI
         {
             if (webCamToggle != null)
             {
-                // LoadSavedSettings()でWebCamが起動されている場合、その状態を反映
+                // WebCamDisplayControllerが起動時に自動復元している場合、その状態を反映
                 webCamToggle.isOn = webCamDisplayController != null && webCamDisplayController.IsPlaying;
                 webCamToggle.onValueChanged.AddListener(OnWebCamToggleChanged);
             }
@@ -885,6 +973,11 @@ namespace CyanNook.UI
                 webCamDisplayController.StartWebCam();
             else
                 webCamDisplayController.StopWebCam();
+
+            // 動作は即反映されるため保存も即時に行う
+            // （Saveボタン待ちだと「動いている=保存された」という認識とズレる）
+            PlayerPrefs.SetInt(PrefKey_WebCam, isOn ? 1 : 0);
+            PlayerPrefs.Save();
 
             Debug.Log($"[LLMSettingsPanel] WebCam: {(isOn ? "ON" : "OFF")}");
         }
@@ -934,6 +1027,10 @@ namespace CyanNook.UI
                 screenCaptureDisplayController.StopCapture();
                 UpdateScreenCapturePreview();
             }
+
+            // 動作は即反映されるため保存も即時に行う
+            PlayerPrefs.SetInt(PrefKey_ScreenCapture, isOn ? 1 : 0);
+            PlayerPrefs.Save();
 
             Debug.Log($"[LLMSettingsPanel] ScreenCapture: {(isOn ? "ON" : "OFF")}");
         }
@@ -1000,13 +1097,70 @@ namespace CyanNook.UI
         // IdleChat設定
         // ─────────────────────────────────────
 
-        private void InitializeIdleChatSettings()
+        // ─────────────────────────────────────
+        // 定期実行マスター（IdleChat/SleepChat/Outing 一括ON/OFF）
+        // ─────────────────────────────────────
+
+        private void InitializePeriodicSettings()
         {
-            if (idleChatToggle != null)
+            if (periodicToggle != null)
             {
-                idleChatToggle.onValueChanged.AddListener(OnIdleChatToggleChanged);
+                periodicToggle.onValueChanged.AddListener(OnPeriodicToggleChanged);
+            }
+        }
+
+        private void LoadPeriodicToUI()
+        {
+            bool enabled = PeriodicExecutionSettings.IsEnabled();
+
+            if (periodicToggle != null)
+            {
+                // 表示への反映のみ（onValueChangedを発火させない）
+                periodicToggle.SetIsOnWithoutNotify(enabled);
             }
 
+            // トグルが未割当でも詳細グループの表示状態は同期する
+            if (periodicDetailsGroup != null)
+            {
+                periodicDetailsGroup.SetActive(enabled);
+            }
+        }
+
+        private void OnPeriodicToggleChanged(bool isOn)
+        {
+            // 保存（共有マスターキー）
+            PeriodicExecutionSettings.SetEnabled(isOn);
+
+            // 参照未割当のコントローラーには反映されない（再起動時のLoadSettingsで反映される）
+            if (idleChatController == null || sleepController == null || outingController == null)
+            {
+                Debug.LogWarning("[LLMSettingsPanel] Periodic toggle: unassigned controller reference(s), " +
+                    "change applies to them after restart only");
+            }
+
+            // 3コントローラーへランタイム反映
+            if (idleChatController != null)
+            {
+                idleChatController.SetEnabled(isOn);
+            }
+            sleepController?.SetPeriodicEnabled(isOn);
+            outingController?.SetPeriodicEnabled(isOn);
+
+            // 詳細設定グループの表示切替
+            if (periodicDetailsGroup != null)
+            {
+                periodicDetailsGroup.SetActive(isOn);
+            }
+
+            Debug.Log($"[LLMSettingsPanel] Periodic execution: {(isOn ? "ON" : "OFF")}");
+        }
+
+        // ─────────────────────────────────────
+        // IdleChat設定
+        // ─────────────────────────────────────
+
+        private void InitializeIdleChatSettings()
+        {
             if (cooldownInputField != null)
             {
                 cooldownInputField.onEndEdit.AddListener(OnCooldownChanged);
@@ -1015,11 +1169,6 @@ namespace CyanNook.UI
 
         private void LoadIdleChatToUI()
         {
-            if (idleChatToggle != null)
-            {
-                idleChatToggle.isOn = idleChatController != null && idleChatController.autoRequestEnabled;
-            }
-
             if (cooldownInputField != null)
             {
                 cooldownInputField.text = idleChatController != null
@@ -1030,13 +1179,6 @@ namespace CyanNook.UI
             {
                 idleChatMessageInputField.text = idleChatController.idlePromptMessage;
             }
-        }
-
-        private void OnIdleChatToggleChanged(bool isOn)
-        {
-            if (idleChatController == null) return;
-            idleChatController.SetEnabled(isOn);
-            Debug.Log($"[LLMSettingsPanel] IdleChat: {(isOn ? "ON" : "OFF")}");
         }
 
         private void OnCooldownChanged(string value)
@@ -1113,17 +1255,184 @@ namespace CyanNook.UI
         }
 
         // ─────────────────────────────────────
+        // 外部アクションフィード（受動制御・上級者向け）
+        // ─────────────────────────────────────
+
+        private void InitializeFeedSettings()
+        {
+            if (feedToggle != null)
+            {
+                feedToggle.onValueChanged.AddListener(OnFeedToggleChanged);
+            }
+            if (feedActionUrlInputField != null)
+            {
+                feedActionUrlInputField.onEndEdit.AddListener(OnFeedActionUrlChanged);
+            }
+            if (feedIntervalInputField != null)
+            {
+                feedIntervalInputField.onEndEdit.AddListener(OnFeedIntervalChanged);
+            }
+            if (feedContextUrlInputField != null)
+            {
+                feedContextUrlInputField.onEndEdit.AddListener(OnFeedContextUrlChanged);
+            }
+            if (feedCameraUrlInputField != null)
+            {
+                feedCameraUrlInputField.onEndEdit.AddListener(OnFeedCameraUrlChanged);
+            }
+            if (feedPublishIntervalInputField != null)
+            {
+                feedPublishIntervalInputField.onEndEdit.AddListener(OnFeedPublishIntervalChanged);
+            }
+
+            if (feedVoiceToggle != null)
+            {
+                feedVoiceToggle.onValueChanged.AddListener(OnFeedVoiceToggleChanged);
+            }
+
+            if (feedVoiceUrlInputField != null)
+            {
+                feedVoiceUrlInputField.onEndEdit.AddListener(OnFeedVoiceUrlChanged);
+            }
+            if (feedHelpButton != null)
+            {
+                feedHelpButton.onClick.AddListener(OnFeedHelpClicked);
+            }
+        }
+
+        private void LoadFeedToUI()
+        {
+            bool enabled = externalActionFeedController != null && externalActionFeedController.feedEnabled;
+
+            if (feedToggle != null)
+            {
+                // 表示への反映のみ（onValueChangedを発火させない）
+                feedToggle.SetIsOnWithoutNotify(enabled);
+            }
+
+            if (feedDetailsGroup != null)
+            {
+                feedDetailsGroup.SetActive(enabled);
+            }
+
+            if (feedActionUrlInputField != null && externalActionFeedController != null)
+            {
+                feedActionUrlInputField.text = externalActionFeedController.actionSubscribeUrl;
+            }
+
+            if (feedIntervalInputField != null && externalActionFeedController != null)
+            {
+                feedIntervalInputField.text = externalActionFeedController.subscribeInterval.ToString("F0");
+            }
+
+            if (feedContextUrlInputField != null && externalActionFeedController != null)
+            {
+                feedContextUrlInputField.text = externalActionFeedController.contextPublishUrl;
+            }
+
+            if (feedCameraUrlInputField != null && externalActionFeedController != null)
+            {
+                feedCameraUrlInputField.text = externalActionFeedController.cameraPublishUrl;
+            }
+
+            if (feedPublishIntervalInputField != null && externalActionFeedController != null)
+            {
+                feedPublishIntervalInputField.text = externalActionFeedController.publishInterval.ToString("F0");
+            }
+
+            if (feedVoiceToggle != null && externalActionFeedController != null)
+            {
+                feedVoiceToggle.SetIsOnWithoutNotify(externalActionFeedController.voiceEnabled);
+            }
+
+            if (feedVoiceUrlInputField != null && externalActionFeedController != null)
+            {
+                feedVoiceUrlInputField.text = externalActionFeedController.voiceSubscribeUrl;
+            }
+        }
+
+        private void OnFeedToggleChanged(bool isOn)
+        {
+            if (externalActionFeedController != null)
+            {
+                externalActionFeedController.SetEnabled(isOn);
+            }
+
+            if (feedDetailsGroup != null)
+            {
+                feedDetailsGroup.SetActive(isOn);
+            }
+
+            Debug.Log($"[LLMSettingsPanel] External action feed: {(isOn ? "ON" : "OFF")}");
+        }
+
+        private void OnFeedActionUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetActionSubscribeUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed action URL updated");
+        }
+
+        private void OnFeedIntervalChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            if (float.TryParse(value, out float seconds))
+            {
+                externalActionFeedController.SetSubscribeInterval(seconds);
+                Debug.Log($"[LLMSettingsPanel] Feed subscribe interval: {(seconds > 0f ? $"{seconds}s" : "OFF")}");
+            }
+        }
+
+        private void OnFeedContextUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetContextPublishUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed context URL updated");
+        }
+
+        private void OnFeedCameraUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetCameraPublishUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed camera URL updated");
+        }
+
+        private void OnFeedPublishIntervalChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            if (float.TryParse(value, out float seconds))
+            {
+                externalActionFeedController.SetPublishInterval(seconds);
+                Debug.Log($"[LLMSettingsPanel] Feed publish interval: {(seconds > 0f ? $"{seconds}s" : "OFF")}");
+            }
+        }
+
+        private void OnFeedVoiceToggleChanged(bool isOn)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetVoiceEnabled(isOn);
+            Debug.Log($"[LLMSettingsPanel] Feed voice playback: {(isOn ? "ON" : "OFF")}");
+        }
+
+        private void OnFeedVoiceUrlChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetVoiceSubscribeUrl(value);
+            Debug.Log("[LLMSettingsPanel] Feed voice URL updated");
+        }
+
+        private void OnFeedHelpClicked()
+        {
+            if (string.IsNullOrEmpty(feedHelpUrl)) return;
+            Application.OpenURL(feedHelpUrl);
+        }
+
+        // ─────────────────────────────────────
         // Sleep設定
         // ─────────────────────────────────────
 
         private void InitializeSleepSettings()
         {
-            if (defaultSleepDurationInputField != null)
-                defaultSleepDurationInputField.onEndEdit.AddListener(OnDefaultSleepDurationChanged);
-            if (minSleepDurationInputField != null)
-                minSleepDurationInputField.onEndEdit.AddListener(OnMinSleepDurationChanged);
-            if (maxSleepDurationInputField != null)
-                maxSleepDurationInputField.onEndEdit.AddListener(OnMaxSleepDurationChanged);
             if (dreamIntervalInputField != null)
                 dreamIntervalInputField.onEndEdit.AddListener(OnDreamIntervalChanged);
             if (dreamPromptInputField != null)
@@ -1136,48 +1445,12 @@ namespace CyanNook.UI
         {
             if (sleepController == null) return;
 
-            if (defaultSleepDurationInputField != null)
-                defaultSleepDurationInputField.text = sleepController.defaultSleepDuration.ToString();
-            if (minSleepDurationInputField != null)
-                minSleepDurationInputField.text = sleepController.minSleepDuration.ToString();
-            if (maxSleepDurationInputField != null)
-                maxSleepDurationInputField.text = sleepController.maxSleepDuration.ToString();
             if (dreamIntervalInputField != null)
                 dreamIntervalInputField.text = sleepController.dreamInterval.ToString("F0");
             if (dreamPromptInputField != null)
                 dreamPromptInputField.text = sleepController.dreamPromptMessage;
             if (wakeUpMessageInputField != null)
                 wakeUpMessageInputField.text = sleepController.wakeUpSystemMessage;
-        }
-
-        private void OnDefaultSleepDurationChanged(string value)
-        {
-            if (sleepController == null) return;
-            if (int.TryParse(value, out int minutes))
-            {
-                sleepController.SetDefaultSleepDuration(minutes);
-                Debug.Log($"[LLMSettingsPanel] Sleep default duration: {minutes}min");
-            }
-        }
-
-        private void OnMinSleepDurationChanged(string value)
-        {
-            if (sleepController == null) return;
-            if (int.TryParse(value, out int minutes))
-            {
-                sleepController.SetMinSleepDuration(minutes);
-                Debug.Log($"[LLMSettingsPanel] Sleep min duration: {minutes}min");
-            }
-        }
-
-        private void OnMaxSleepDurationChanged(string value)
-        {
-            if (sleepController == null) return;
-            if (int.TryParse(value, out int minutes))
-            {
-                sleepController.SetMaxSleepDuration(minutes);
-                Debug.Log($"[LLMSettingsPanel] Sleep max duration: {minutes}min");
-            }
         }
 
         private void OnDreamIntervalChanged(string value)

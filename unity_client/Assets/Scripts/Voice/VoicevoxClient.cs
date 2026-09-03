@@ -13,6 +13,11 @@ namespace CyanNook.Voice
     /// </summary>
     public class VoicevoxClient : MonoBehaviour
     {
+        // 合成系リクエスト（audio_query / synthesis）のタイムアウト（秒）。
+        // 未設定だとサーバーハング時に永久待機となり、VoiceSynthesisControllerの
+        // 順序保証バッファが以降の文を再生できなくなる
+        private const int SynthesisRequestTimeoutSeconds = 30;
+
         // PlayerPrefsキー
         private const string PrefKey_ApiUrl = "voice_apiUrl";
         private const string PrefKey_SpeakerId = "voice_speakerId";
@@ -315,6 +320,9 @@ namespace CyanNook.Voice
 
             using (var request = UnityWebRequest.PostWwwForm(url, ""))
             {
+                // 応答が来ないハング状態で永久待機すると、順序保証バッファの連番に
+                // 穴が空いて以降の文が全て再生されなくなるため、必ずタイムアウトさせる
+                request.timeout = SynthesisRequestTimeoutSeconds;
                 var operation = request.SendWebRequest();
 
                 while (!operation.isDone)
@@ -394,6 +402,7 @@ namespace CyanNook.Voice
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
+                request.timeout = SynthesisRequestTimeoutSeconds;
 
                 var operation = request.SendWebRequest();
 

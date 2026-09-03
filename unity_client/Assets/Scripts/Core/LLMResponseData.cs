@@ -146,16 +146,6 @@ namespace CyanNook.Core
             };
         }
 
-        /// <summary>
-        /// データの妥当性を検証
-        /// </summary>
-        public bool Validate()
-        {
-            if (string.IsNullOrEmpty(character)) return false;
-            if (target == null) return false;
-            if (emotion == null) return false;
-            return true;
-        }
     }
 
     /// <summary>

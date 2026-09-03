@@ -60,7 +60,9 @@ namespace CyanNook.Furniture
         /// </summary>
         private void CollectPoints()
         {
-            _actionToPoints = new Dictionary<string, Transform[]>();
+            // キーの大文字小文字を無視（"Sit"登録でも"sit"検索が一致。
+            // Blender側の命名の大小文字に依存させない）
+            _actionToPoints = new Dictionary<string, Transform[]>(System.StringComparer.OrdinalIgnoreCase);
 
             var allChildren = GetComponentsInChildren<Transform>(true);
             var interactionList = new List<Transform>();
@@ -129,7 +131,10 @@ namespace CyanNook.Furniture
         /// </summary>
         private string ExtractActionFromPointName(string pointName)
         {
-            if (!pointName.StartsWith("Interact_")) return null;
+            // 収集側（CollectPoints）と同じく大文字小文字を無視する。
+            // 旧実装は区別していたため、小文字命名のポイントが収集はされるのに
+            // アクション別分類に入らず、複数アクション家具でポイント選択が壊れていた
+            if (!pointName.StartsWith("Interact_", System.StringComparison.OrdinalIgnoreCase)) return null;
 
             // "Interact_"を除去
             string remainder = pointName.Substring(9);
@@ -180,8 +185,11 @@ namespace CyanNook.Furniture
             float dot = Vector3.Dot(transform.forward, toCharacter);
 
             // キャラクターがドアの前（内側）にいる場合は exit
-            // ドアの後ろ（外側）にいる場合は enter
-            return dot > 0 ? "exit" : "enter";
+            // ドアの後ろ（外側）にいる場合は entry
+            // （FurnitureTypeData.availableActions の登録名 "entry" と一致させること。
+            //   旧実装の "enter" は綴り不一致で GetValidAction に弾かれ、
+            //   defaultAction が偶然 entry だったため潜在化していた）
+            return dot > 0 ? "exit" : "entry";
         }
 
         /// <summary>
@@ -283,19 +291,23 @@ namespace CyanNook.Furniture
 
         /// <summary>
         /// インタラクション位置を取得（アクション指定）
+        /// fromPosition: 最寄りポイント選択の基準位置（通常はキャラクターの現在位置）。
+        /// 同一アクションのポイントが複数ある家具（ソファ両側のsit等）で、
+        /// 基準位置に近い側のポイントが選ばれる
         /// </summary>
-        public Vector3 GetInteractionPosition(string action = null)
+        public Vector3 GetInteractionPosition(Vector3 fromPosition, string action = null)
         {
-            var point = GetNearestInteractionPoint(Vector3.zero, action);
+            var point = GetNearestInteractionPoint(fromPosition, action);
             return point != null ? point.position : transform.position;
         }
 
         /// <summary>
         /// インタラクション時の回転を取得
+        /// fromPosition: 最寄りポイント選択の基準位置（GetInteractionPositionと同じ値を渡すこと）
         /// </summary>
-        public Quaternion GetInteractionRotation(string action = null)
+        public Quaternion GetInteractionRotation(Vector3 fromPosition, string action = null)
         {
-            var point = GetNearestInteractionPoint(Vector3.zero, action);
+            var point = GetNearestInteractionPoint(fromPosition, action);
             float angleOffset = typeData?.facingAngleOffset ?? 0f;
 
             Quaternion baseRotation = point != null ? point.rotation : transform.rotation;

@@ -77,6 +77,12 @@ namespace CyanNook.Character
         [SerializeField]
         private bool _useRun = false;
 
+        // 今回のナビゲーションでWalk Timelineが再生されたか
+        // false の場合、UpdateFinalTurning 完了時に StopWalkWithEndPhase ではなく
+        // ReturnToIdle を呼ぶ（Walk Timeline 未バインドのまま walk_ed を要求すると
+        // 直前の Timeline が end phase 完了イベントを発火できず Idle に遷移しない不具合の対策）
+        private bool _walkPlayedThisNavigation = false;
+
         // 前方歩行モード（Wキー歩行等）
         private bool _isForwardWalking;
 
@@ -147,10 +153,6 @@ namespace CyanNook.Character
         {
             switch (_currentState)
             {
-                case NavigationState.TurningToTarget:
-                    UpdateTurning();
-                    break;
-
                 case NavigationState.Moving:
                     UpdateMoving();
                     break;
@@ -171,7 +173,7 @@ namespace CyanNook.Character
         /// VRMインスタンスに配置したRootMotionForwarderから委譲される
         ///
         /// NavMeshAgent駆動方式:
-        /// - 移動中（Moving/ApproachingInteraction/Turning/FinalTurning）: Root Motionを無視（agentが制御）
+        /// - 移動中（Moving/ApproachingInteraction/FinalTurning）: Root Motionを無視（agentが制御）
         /// - 位置保持モード（Idle/Talk/Emote）: Root Motionを無視（位置保持が優先）
         /// - Interact等: Root Motionをローカル座標で適用（BlendPivot相対の微調整）
         /// </summary>
@@ -192,7 +194,6 @@ namespace CyanNook.Character
             // 移動中はNavMeshAgentが位置を制御するため、Root Motionを適用しない
             if (_currentState == NavigationState.Moving ||
                 _currentState == NavigationState.ApproachingInteraction ||
-                _currentState == NavigationState.TurningToTarget ||
                 _currentState == NavigationState.FinalTurning)
             {
                 return;
@@ -274,6 +275,7 @@ namespace CyanNook.Character
             _movementTimer = 0f;
             _pathChecked = false;
             _inFinalApproach = false;
+            _walkPlayedThisNavigation = false;
 
             // CharacterRoot（NavMeshAgent所在）の位置を基準に計算
             Vector3 currentPos = transform.position;
@@ -404,52 +406,6 @@ namespace CyanNook.Character
             Debug.Log("[CharacterNavigationController] StopForwardWalk");
         }
 
-        private void StartTurning(float angle)
-        {
-            _currentState = NavigationState.TurningToTarget;
-
-            // ターン中はagentの移動を停止
-            if (agent != null && agent.isOnNavMesh)
-            {
-                agent.isStopped = true;
-            }
-
-            // 左右どちらに回転するか
-            string turnAnim = angle < 0
-                ? (_useRun ? "common_runturn01" : "common_walkturn01")  // 左回転
-                : (_useRun ? "common_runturn02" : "common_walkturn02"); // 右回転
-
-            animationController?.PlayAnimation(turnAnim);
-        }
-
-        private void UpdateTurning()
-        {
-            // CharacterRoot（transform）を回転（VRMは子として追従）
-            Vector3 direction = _targetPosition - transform.position;
-            direction.y = 0;
-
-            if (direction.sqrMagnitude > 0.01f)
-            {
-                Quaternion targetRot = Quaternion.LookRotation(direction.normalized);
-                transform.rotation = Quaternion.RotateTowards(
-                    transform.rotation,
-                    targetRot,
-                    rotationSpeed * Time.deltaTime
-                );
-
-                // 十分に向いたら移動開始
-                float remainingAngle = Quaternion.Angle(transform.rotation, targetRot);
-                if (remainingAngle < 5f)
-                {
-                    StartMoving();
-                }
-            }
-            else
-            {
-                StartMoving();
-            }
-        }
-
         private void StartMoving()
         {
             _currentState = _currentInteraction != null
@@ -467,6 +423,7 @@ namespace CyanNook.Character
 
             string moveAnim = _useRun ? "common_run01" : "common_walk01";
             animationController?.PlayAnimation(moveAnim);
+            _walkPlayedThisNavigation = true;
         }
 
         /// <summary>
@@ -496,6 +453,7 @@ namespace CyanNook.Character
             string moveAnim = _useRun ? "common_run01" : "common_walk01";
             animationController?.SetTurnMode(turnMode);
             animationController?.PlayAnimation(moveAnim);
+            _walkPlayedThisNavigation = true;
 
             Debug.Log($"[CharacterNavigationController] StartMovingWithTurn: angle={angle:F1}°, mode={turnMode}");
         }
@@ -735,9 +693,18 @@ namespace CyanNook.Character
                 var callback = _onArrivalCallback;
                 _onArrivalCallback = null;
 
-                // Walk終了フェーズ（walk_ed）を再生してからIdleに遷移
-                // LoopRegionがない場合は即座にIdle遷移
-                animationController?.StopWalkWithEndPhase();
+                if (_walkPlayedThisNavigation)
+                {
+                    // Walk終了フェーズ（walk_ed）を再生してからIdleに遷移
+                    // LoopRegionがない場合は即座にIdle遷移
+                    animationController?.StopWalkWithEndPhase();
+                }
+                else
+                {
+                    // Walk Timeline 未再生のケース（既に目標位置近傍に居る場合）。
+                    // walk_ed は流せないので直接 Idle に遷移して直前 Timeline の固定ポーズを解除する。
+                    animationController?.ReturnToIdle();
+                }
 
                 callback?.Invoke();
             }
@@ -812,7 +779,7 @@ namespace CyanNook.Character
 
             if (_inFinalApproach ||
                 (!agent.pathPending &&
-                (agent.remainingDistance <= finalApproachDistance || agent.path.corners.Length <= 2)))
+                (agent.remainingDistance <= finalApproachDistance || IsRemainingPathStraight())))
             {
                 // 近距離 or 直線パス: target方向への直接回転
                 // desiredVelocityは近距離で小さくノイジーになり、方向が不安定になるため
@@ -834,6 +801,20 @@ namespace CyanNook.Character
                     rotationSpeed * Time.deltaTime
                 );
             }
+        }
+
+        /// <summary>
+        /// 残り経路が直線（曲がり角なし）かを判定
+        /// agent.path.corners.Length <= 2 と等価だが、cornersはアクセスごとに
+        /// NavMeshPathとVector3[]をnewして全曲がり角をコピーするため毎フレーム呼べない
+        /// （WebGLはインクリメンタルGCがなくGCスパイクの原因になる）。
+        /// 次の経由点(steeringTarget)が経路終点(pathEndPosition)と一致すれば残りは直線。
+        /// ※ UpdateMovementRotationのガード通過後にのみ呼ぶこと
+        /// （agent有効・hasPath・!pathPending 前提）
+        /// </summary>
+        private bool IsRemainingPathStraight()
+        {
+            return (agent.steeringTarget - agent.pathEndPosition).sqrMagnitude < 0.01f;
         }
 
         // --- アニメーション速度制御 ---
@@ -1086,7 +1067,6 @@ namespace CyanNook.Character
     public enum NavigationState
     {
         Idle,                   // 停止中
-        TurningToTarget,        // 目標方向に回転中
         Moving,                 // 移動中
         FinalTurning,           // 最終回転中
         ApproachingInteraction  // インタラクション接近中

@@ -19,7 +19,6 @@ namespace CyanNook.Character
         [Header("References")]
         public PlayableDirector director;
         public Animator animator; // Timelineのバインディング対象
-        public CharacterTemplateData templateData;
 
         [Header("Inertial Blend")]
         [Tooltip("慣性補間ヘルパー（VRMインスタンスにアタッチ）")]

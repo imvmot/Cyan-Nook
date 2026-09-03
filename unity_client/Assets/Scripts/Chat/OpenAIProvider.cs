@@ -4,6 +4,7 @@ using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -109,8 +110,19 @@ namespace CyanNook.Chat
 
         public IEnumerator TestConnection(LLMConfig config, Action<bool, string> callback)
         {
-            // エンドポイントURLから /v1/models APIのURLを構築
+            // URL検証: Uri.TryCreate（new Uriだと不正URL入力時に例外でコルーチンが
+            // 打ち切られ、callbackが呼ばれずUIが無反応になる）+ スキーム確認
+            // （"ttp://"等のタイプミスはURL文法上は合法な未知スキームとして
+            // 解析に成功してしまい、通信層のUnknown Errorになる）
             string baseUrl = config.apiEndpoint;
+            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                callback?.Invoke(false, $"Invalid URL: {baseUrl}");
+                yield break;
+            }
+
+            // エンドポイントURLから /v1/models APIのURLを構築
             int v1Index = baseUrl.IndexOf("/v1/", StringComparison.OrdinalIgnoreCase);
             string testUrl;
             if (v1Index >= 0)
@@ -119,7 +131,6 @@ namespace CyanNook.Chat
             }
             else
             {
-                var uri = new Uri(baseUrl);
                 testUrl = $"{uri.Scheme}://{uri.Authority}/v1/models";
             }
 
@@ -186,9 +197,9 @@ namespace CyanNook.Chat
         private static string BuildRequestJson(LLMConfig config, string systemPrompt,
             string userMessage, bool stream, List<string> imagesBase64 = null)
         {
-            string escapedModel = EscapeJsonString(config.modelName);
-            string escapedSystem = EscapeJsonString(systemPrompt);
-            string escapedUser = EscapeJsonString(userMessage);
+            string escapedModel = JsonEscape.Escape(config.modelName);
+            string escapedSystem = JsonEscape.Escape(systemPrompt);
+            string escapedUser = JsonEscape.Escape(userMessage);
             string streamStr = stream ? "true" : "false";
 
             var sb = new StringBuilder();
@@ -237,20 +248,21 @@ namespace CyanNook.Chat
                 sb.Append($",\"frequency_penalty\":{freqPenalty.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
             }
 
+            // 追加パラメータ（上級者設定）をトップレベルにマージ
+            // UIに無いフィールド（chat_template_kwargs等のサーバー固有設定）を送るための逃げ道
+            if (LLMConfig.TryGetExtraParamsBody(config.extraParamsJson, out string extraBody))
+            {
+                sb.Append(',').Append(extraBody);
+            }
+            else if (!string.IsNullOrWhiteSpace(config.extraParamsJson))
+            {
+                // 設定Import経由などで不正な値が入った場合の診断用（黙って捨てない）
+                Debug.LogWarning("[OpenAIProvider] extraParamsJson is not a valid JSON object, ignored");
+            }
+
             sb.Append("}");
             return sb.ToString();
         }
 
-        private static string EscapeJsonString(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-        }
     }
 }

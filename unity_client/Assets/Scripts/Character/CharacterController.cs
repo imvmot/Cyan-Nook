@@ -14,7 +14,6 @@ namespace CyanNook.Character
     public class CharacterController : MonoBehaviour
     {
         [Header("References")]
-        public CharacterTemplateData templateData;
         public ChatManager chatManager;
         public FurnitureManager furnitureManager;
 
@@ -71,6 +70,10 @@ namespace CyanNook.Character
         // LookAt動的再評価用
         private TargetType _lookAtTargetType;
         private string _lookAtParam; // Talk/Named: targetName, Interact: action名
+
+        // Interact: 応答時に1回解決したLookAt対象の家具
+        // （毎フレームのGetNearestAvailableFurniture検索はしない）
+        private FurnitureInstance _lookAtFurniture;
 
         // Sleep用: interact_sleep時のsleep_duration一時保持
         private int _pendingSleepDuration;
@@ -289,6 +292,11 @@ namespace CyanNook.Character
 
                 case ChatState.Error:
                     expressionController?.SetEmotion(new EmotionData { sad = 0.5f });
+                    // エラー時は成功応答時のNotifyTextDisplayCompleteが呼ばれないため、
+                    // ここで通知しないとOnResponseStartedで停止したdecay/holdタイマーが
+                    // 再開されず、悲しい表情が次の成功応答まで固定されてしまう
+                    expressionController?.NotifyTextDisplayComplete();
+                    animationController?.NotifyTextDisplayComplete();
                     break;
             }
         }
@@ -466,44 +474,7 @@ namespace CyanNook.Character
         /// </summary>
         private void ProcessActionFromField(LLMResponseData response)
         {
-            // Talk状態から移動/インタラクトする場合はTalkを終了
-            if (talkController != null && talkController.IsInTalkMode)
-            {
-                var targetType = ResolveTargetType(response.target);
-                bool isNonTalkAction = response.IsInteract ||
-                    (response.IsMove && targetType != TargetType.Talk);
-
-                if (isNonTalkAction)
-                {
-                    Debug.Log("[CharacterController] Exiting talk mode for non-talk action (incremental)");
-                    talkController.ForceExitTalk();
-                }
-            }
-
-            // インタラクション中に別のアクションが来た場合: ed再生 → 完了後に実行
-            if (interactionController != null && interactionController.IsInteracting())
-            {
-                // 同種インタラクションの場合: 現在の家具を除外してランダム選択するため参照を保持
-                FurnitureInstance excludeFurniture = null;
-                if (response.IsInteract)
-                {
-                    var newAction = response.GetInteractAction();
-                    if (newAction == interactionController.CurrentAction)
-                    {
-                        excludeFurniture = interactionController.CurrentFurniture;
-                        Debug.Log($"[CharacterController] Same interaction type ({newAction}), will exclude current furniture (incremental): {excludeFurniture?.instanceId}");
-                    }
-                }
-
-                Debug.Log("[CharacterController] Exiting interaction before processing new action (incremental)");
-                interactionController.ExitLoopWithCallback(() =>
-                {
-                    ExecuteAction(response, excludeFurniture);
-                });
-                return;
-            }
-
-            ExecuteAction(response);
+            ProcessActionCore(response, includeEmoteInDeferred: false);
         }
 
         /// <summary>
@@ -540,6 +511,16 @@ namespace CyanNook.Character
         /// trueの場合、emote処理はコールバック内で行われるため呼び出し元でスキップすること。
         /// </summary>
         private bool ProcessAction(LLMResponseData response)
+        {
+            return ProcessActionCore(response, includeEmoteInDeferred: true);
+        }
+
+        /// <summary>
+        /// アクション処理の共通実装（ブロッキング/逐次反映）。遅延実行された場合はtrueを返す。
+        /// includeEmoteInDeferred: 遅延実行時にemoteもコールバック内で再生するか。
+        /// ブロッキングはtrue、逐次反映はemoteが別フィールドで処理されるためfalse
+        /// </summary>
+        private bool ProcessActionCore(LLMResponseData response, bool includeEmoteInDeferred)
         {
             if (response.IsIgnore) return false;
 
@@ -578,7 +559,7 @@ namespace CyanNook.Character
                 interactionController.ExitLoopWithCallback(() =>
                 {
                     ExecuteAction(response, excludeFurniture);
-                    if (response.HasEmote)
+                    if (includeEmoteInDeferred && response.HasEmote)
                     {
                         ProcessEmote(response.emote);
                     }
@@ -809,8 +790,10 @@ namespace CyanNook.Character
             var furniture = furnitureManager.GetNearestAvailableFurniture(transform.position, furnitureAction);
             if (furniture != null)
             {
-                var position = furniture.GetInteractionPosition(furnitureAction);
-                var rotation = furniture.GetInteractionRotation(furnitureAction);
+                // キャラ位置を基準に最寄りのインタラクションポイントを選ぶ
+                // （複数ポイントの家具で原点側に回り込まないように）
+                var position = furniture.GetInteractionPosition(transform.position, furnitureAction);
+                var rotation = furniture.GetInteractionRotation(transform.position, furnitureAction);
                 navigationController.MoveTo(position, rotation, () => SetState(CharacterState.Idle));
                 SetState(CharacterState.Walking);
                 DeferPendingWalkEmote();
@@ -843,6 +826,7 @@ namespace CyanNook.Character
         private void SetLookAtContext(TargetType targetType, TargetData target)
         {
             _lookAtTargetType = targetType;
+            _lookAtFurniture = null;
 
             switch (targetType)
             {
@@ -852,6 +836,7 @@ namespace CyanNook.Character
 
                 case TargetType.Interact:
                     _lookAtParam = target.GetInteractAction();
+                    _lookAtFurniture = ResolveLookAtFurniture(_lookAtParam);
                     break;
 
                 case TargetType.Dynamic:
@@ -912,25 +897,52 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// 家具のlookAtPointを動的に再評価（距離判定を毎フレーム実行）
+        /// LookAt対象の家具を解決する（応答時に1回だけ呼ぶ）
+        /// インタラクト中の家具はisOccupiedで検索から除外されるため、
+        /// 同種アクションなら自分が使用中の家具を優先する
+        /// （座った瞬間に視線が他の家具へ逸れるのを防ぐ）
+        /// </summary>
+        private FurnitureInstance ResolveLookAtFurniture(string furnitureAction)
+        {
+            if (interactionController != null &&
+                interactionController.CurrentFurniture != null &&
+                interactionController.CurrentAction == furnitureAction)
+            {
+                return interactionController.CurrentFurniture;
+            }
+
+            return furnitureManager != null
+                ? furnitureManager.GetNearestAvailableFurniture(transform.position, furnitureAction)
+                : null;
+        }
+
+        /// <summary>
+        /// 家具のlookAtPointを動的に再評価（ポイントの距離判定のみ毎フレーム実行）
+        /// 家具自体の検索は応答時に1回だけ行う（毎フレームのGetNearestAvailableFurnitureは
+        /// ラムダのクロージャ確保が積もりWebGL のGCスパイク源になるため）
         /// </summary>
         private void UpdateLookAtFurniture(string furnitureAction)
         {
-            if (furnitureManager == null) return;
-
-            var furniture = furnitureManager.GetNearestAvailableFurniture(transform.position, furnitureAction);
-            if (furniture != null)
+            // インタラクション開始後は実際に使用中の家具へ追従する
+            // （応答時の解決結果とProcessActionの家具選択が異なる場合の補正）
+            if (interactionController != null &&
+                interactionController.CurrentFurniture != null &&
+                interactionController.CurrentAction == furnitureAction)
             {
-                var lookAtPoint = furniture.GetNearestLookAtPoint(transform.position);
-                if (lookAtPoint != null)
-                {
-                    lookAtController.LookAtTransform(lookAtPoint);
-                }
-                else
-                {
-                    // lookAtMaxDistance外 → LookAt解除
-                    lookAtController.LookForward();
-                }
+                _lookAtFurniture = interactionController.CurrentFurniture;
+            }
+
+            if (_lookAtFurniture == null) return;
+
+            var lookAtPoint = _lookAtFurniture.GetNearestLookAtPoint(transform.position);
+            if (lookAtPoint != null)
+            {
+                lookAtController.LookAtTransform(lookAtPoint);
+            }
+            else
+            {
+                // lookAtMaxDistance外 → LookAt解除
+                lookAtController.LookForward();
             }
         }
 
@@ -963,8 +975,8 @@ namespace CyanNook.Character
                 return;
             }
 
-            // Walking/Running中の場合は移動完了後にemoteを再生
-            if (_currentState == CharacterState.Walking || _currentState == CharacterState.Running)
+            // Walking中の場合は移動完了後にemoteを再生
+            if (_currentState == CharacterState.Walking)
             {
                 Debug.Log($"[CharacterController] Deferring emote until walk completes: {emoteAnimationId}");
                 if (_pendingEmoteCoroutine != null)
@@ -1013,7 +1025,7 @@ namespace CyanNook.Character
             else
             {
                 // フォールバック: CharacterStateで待機
-                while (_currentState == CharacterState.Walking || _currentState == CharacterState.Running)
+                while (_currentState == CharacterState.Walking)
                 {
                     yield return null;
                 }
@@ -1103,11 +1115,8 @@ namespace CyanNook.Character
     {
         Idle,           // 通常待機
         Walking,        // 歩行中
-        Running,        // 走行中
         Interacting,    // 家具インタラクション中
-        Emote,          // 感情表現中
         TalkIdle,       // 会話中待機
-        Thinking,       // 考え中（API待ち）
-        TalkEmote       // 会話中の感情表現
+        Thinking        // 考え中（API待ち）
     }
 }

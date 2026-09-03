@@ -16,6 +16,30 @@ namespace CyanNook.Chat
         // デフォルトモデルID
         public const string DefaultModelId = "Qwen3-1.7B-q4f16_1-MLC";
 
+        // 実行中リクエストのBridgeイベント購読解除処理。
+        // StopCoroutineで中断されるとコルーチン内の購読解除行に到達せず、
+        // 残った購読が次リクエストのチャンクや中断済み生成のComplete通知を
+        // 受け取って二重配信されるため、外部から解除できる形で保持する
+        private Action _activeCleanup;
+
+        private void CleanupActiveSubscriptions()
+        {
+            _activeCleanup?.Invoke();
+            _activeCleanup = null;
+        }
+
+        /// <summary>
+        /// 生成を中断する（LLMClient.AbortRequestから呼ばれる）
+        /// ブラウザ側の生成停止と、中断で残るBridgeイベント購読の解除を行う。
+        /// 必ずコルーチン停止（StopCoroutine）とセットで呼ぶこと。
+        /// 単体で呼ぶと実行中コルーチンの待機ループが完了フラグを待ち続けて固まる
+        /// </summary>
+        public void Abort()
+        {
+            CleanupActiveSubscriptions();
+            WebLLMBridge.Instance?.AbortGeneration();
+        }
+
         public IEnumerator SendRequest(LLMConfig config, string systemPrompt, string userMessage,
             Action<string> onSuccess, Action<string> onError,
             List<string> imagesBase64 = null, Action<string> onRequestBody = null)
@@ -55,16 +79,23 @@ namespace CyanNook.Chat
             Action<string> onResp = (r) => { result = r; completed = true; };
             Action<string> onErr = (e) => { error = e; completed = true; };
 
+            // 前回リクエストが中断されていた場合に残った購読を掃除（保険）
+            CleanupActiveSubscriptions();
+
             bridge.OnResponse += onResp;
             bridge.OnError += onErr;
+            _activeCleanup = () =>
+            {
+                bridge.OnResponse -= onResp;
+                bridge.OnError -= onErr;
+            };
 
             bridge.SendChatRequest(systemPrompt, userMessage);
 
             while (!completed)
                 yield return null;
 
-            bridge.OnResponse -= onResp;
-            bridge.OnError -= onErr;
+            CleanupActiveSubscriptions();
 
             if (error != null)
                 onError?.Invoke(error);
@@ -122,18 +153,25 @@ namespace CyanNook.Chat
             Action onComp = () => { processor.Complete(); streamCompleted = true; };
             Action<string> onErr = (e) => { streamError = e; streamCompleted = true; };
 
+            // 前回リクエストが中断されていた場合に残った購読を掃除（保険）
+            CleanupActiveSubscriptions();
+
             bridge.OnStreamChunk += onChunk;
             bridge.OnStreamComplete += onComp;
             bridge.OnError += onErr;
+            _activeCleanup = () =>
+            {
+                bridge.OnStreamChunk -= onChunk;
+                bridge.OnStreamComplete -= onComp;
+                bridge.OnError -= onErr;
+            };
 
             bridge.SendStreamingChatRequest(systemPrompt, userMessage);
 
             while (!streamCompleted)
                 yield return null;
 
-            bridge.OnStreamChunk -= onChunk;
-            bridge.OnStreamComplete -= onComp;
-            bridge.OnError -= onErr;
+            CleanupActiveSubscriptions();
 
             if (streamError != null)
                 onError?.Invoke(streamError);

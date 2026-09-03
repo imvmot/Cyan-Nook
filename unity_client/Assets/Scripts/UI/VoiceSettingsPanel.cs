@@ -95,6 +95,9 @@ namespace CyanNook.UI
         [Tooltip("Gemini APIキー入力")]
         public TMP_InputField geminiApiKeyInputField;
 
+        [Tooltip("unityroom版（体験版）で非表示にするUI。Gemini APIキー入力行（ラベル含む親）を割り当てる")]
+        public GameObject[] hideOnUnityroomBuild;
+
         [Tooltip("Gemini TTSモデル選択ドロップダウン (Flash/Pro)")]
         public TMP_Dropdown geminiModelDropdown;
 
@@ -166,12 +169,23 @@ namespace CyanNook.UI
         };
 
         // PlayerPrefs キー（音声入力用）
-        private const string PREF_MIC_ENABLED = "voice_micEnabled";
+        private const string PREF_MIC_ENABLED = SettingsKeys.MicEnabled;
         private const string PREF_VOICE_INPUT_LANGUAGE = "voice_inputLanguage";
         private const string PREF_SILENCE_THRESHOLD = "voice_silenceThreshold";
 
         private void Start()
         {
+#if UNITYROOM_BUILD
+            // 体験版ではキー入力を封鎖（Gemini TTSは内蔵キーフォールバックで動作）
+            if (hideOnUnityroomBuild != null)
+            {
+                foreach (var go in hideOnUnityroomBuild)
+                {
+                    if (go != null) go.SetActive(false);
+                }
+            }
+#endif
+
             // TTS ON/OFFトグル
             if (ttsEnabledToggle != null)
             {
@@ -230,9 +244,8 @@ namespace CyanNook.UI
             // 音声入力設定
             InitializeVoiceInput();
 
-            // 起動時に保存済みマイク設定を適用
-            // （OnEnable→LoadVoiceInputSettingsはリスナー登録前に実行されるため、ここで明示的に適用）
-            ApplySavedMicrophoneSetting();
+            // 保存済みマイク設定の適用はVoiceInputController.Startで行う
+            // （パネルの初期アクティブ状態に依存させないため）
 
             // Unityライフサイクル: 初回アクティブ化時はOnEnable → Startの順で実行されるため、
             // OnEnableのLoad*ToUI()はInitialize*()より先に走っている。この時点でドロップダウンの
@@ -351,7 +364,7 @@ namespace CyanNook.UI
         {
             if (ttsEnabledToggle != null && voiceSynthesisController != null)
             {
-                ttsEnabledToggle.isOn = voiceSynthesisController.enabled;
+                ttsEnabledToggle.isOn = voiceSynthesisController.ttsEnabled;
             }
         }
 
@@ -1172,23 +1185,6 @@ namespace CyanNook.UI
             Debug.Log($"[VoiceSettingsPanel] Echo prevention: {(isOn ? "ON" : "OFF")}");
         }
 
-        /// <summary>
-        /// 起動時に保存済みマイク設定を適用
-        /// OnEnable→LoadVoiceInputSettingsでトグルUIは更新されるが、
-        /// リスナー登録前のため VoiceInputController.SetEnabled() が呼ばれない問題を修正
-        /// </summary>
-        private void ApplySavedMicrophoneSetting()
-        {
-            if (voiceInputController == null) return;
-
-            bool savedMicEnabled = PlayerPrefs.GetInt(PREF_MIC_ENABLED, 0) == 1;
-            if (savedMicEnabled)
-            {
-                voiceInputController.SetEnabled(true);
-                Debug.Log("[VoiceSettingsPanel] Applied saved microphone setting: ON");
-            }
-        }
-
         private void OnVoiceInputLanguageChanged(int index)
         {
             if (voiceInputController == null) return;
@@ -1367,7 +1363,8 @@ namespace CyanNook.UI
             // UIの最新値をクライアントに反映してから合成
             ApplyGeminiUiToClient();
 
-            if (string.IsNullOrEmpty(geminiTtsClient.apiKey))
+            // apiKeyフィールドではなく実効キー（unityroom内蔵キーフォールバック込み）で判定
+            if (!geminiTtsClient.HasUsableApiKey)
             {
                 SetStatusForEngine(TTSEngineType.GeminiTTS, "Error: Gemini API key is empty");
                 return;

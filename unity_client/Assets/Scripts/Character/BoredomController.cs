@@ -48,6 +48,25 @@ namespace CyanNook.Character
         /// <summary>プロンプト用の整数値</summary>
         public int BoredInt => Mathf.RoundToInt(_bored);
 
+        private void Awake()
+        {
+            // 保存済みのレート・感情係数を復元
+            // （AvatarSettingsPanelではなくここで行うのは、パネルが初期非アクティブに
+            // 変更されると復元が起動時に走らなくなるため）
+            if (PlayerPrefs.HasKey(SettingsKeys.BoredRate))
+                increaseRate = PlayerPrefs.GetFloat(SettingsKeys.BoredRate);
+            if (PlayerPrefs.HasKey(SettingsKeys.BoredFactorHappy))
+                happyFactor = PlayerPrefs.GetFloat(SettingsKeys.BoredFactorHappy);
+            if (PlayerPrefs.HasKey(SettingsKeys.BoredFactorRelaxed))
+                relaxedFactor = PlayerPrefs.GetFloat(SettingsKeys.BoredFactorRelaxed);
+            if (PlayerPrefs.HasKey(SettingsKeys.BoredFactorAngry))
+                angryFactor = PlayerPrefs.GetFloat(SettingsKeys.BoredFactorAngry);
+            if (PlayerPrefs.HasKey(SettingsKeys.BoredFactorSad))
+                sadFactor = PlayerPrefs.GetFloat(SettingsKeys.BoredFactorSad);
+            if (PlayerPrefs.HasKey(SettingsKeys.BoredFactorSurprised))
+                surprisedFactor = PlayerPrefs.GetFloat(SettingsKeys.BoredFactorSurprised);
+        }
+
         private void Update()
         {
             if (_isPaused || increaseRate <= 0f) return;

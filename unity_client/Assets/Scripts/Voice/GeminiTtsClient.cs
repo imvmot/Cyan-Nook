@@ -3,6 +3,7 @@ using UnityEngine.Networking;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using CyanNook.Core;
 using CyanNook.Character;
 
 namespace CyanNook.Voice
@@ -65,7 +66,43 @@ namespace CyanNook.Voice
             if (PlayerPrefs.HasKey(PrefKey_StylePrompt))
                 stylePrompt = PlayerPrefs.GetString(PrefKey_StylePrompt);
 
+#if UNITYROOM_BUILD
+            // 体験版では内蔵キーで高コストモデル(Pro)を使わせない
+            // （LLM側のモデル名固定と同方針。モデル選択UIも非表示化している）。
+            // 使用モデルはUnityroomConfigで指定（TTSモデル更新時はアセット側を変更）
+            var unityroomConfig = UnityroomConfig.Load();
+            model = (unityroomConfig != null && !string.IsNullOrEmpty(unityroomConfig.geminiTtsModel))
+                ? unityroomConfig.geminiTtsModel
+                : "gemini-2.5-flash-preview-tts";
+#endif
+
             Debug.Log($"[GeminiTtsClient] Settings loaded - Model: {model}, Voice: {voiceName}");
+        }
+
+        /// <summary>
+        /// 実効APIキーが存在するか（内蔵キーフォールバック込み）。
+        /// UI側の事前チェックはapiKeyフィールドではなくこちらを使うこと
+        /// </summary>
+        public bool HasUsableApiKey => !string.IsNullOrEmpty(ResolveApiKey());
+
+        /// <summary>
+        /// 実際に使用するAPIキーを解決。
+        /// unityroom版ではキー入力UIを封鎖しているため、未設定時は
+        /// UnityroomConfigの内蔵キーへフォールバックする（LLM側のResolveApiKeyと同パターン）
+        /// </summary>
+        private string ResolveApiKey()
+        {
+#if UNITYROOM_BUILD
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                var config = UnityroomConfig.Load();
+                if (config != null && config.HasDefaultApiKey)
+                {
+                    return config.geminiApiKey;
+                }
+            }
+#endif
+            return apiKey;
         }
 
         public void SaveSettings()
@@ -90,7 +127,7 @@ namespace CyanNook.Voice
                 return (null, null);
             }
 
-            if (string.IsNullOrEmpty(apiKey))
+            if (string.IsNullOrEmpty(ResolveApiKey()))
             {
                 Debug.LogError("[GeminiTtsClient] API key is empty");
                 return (null, null);
@@ -148,7 +185,10 @@ namespace CyanNook.Voice
                 request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 request.downloadHandler = new DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
-                request.SetRequestHeader("x-goog-api-key", apiKey);
+                request.SetRequestHeader("x-goog-api-key", ResolveApiKey());
+                // 応答が来ないハング状態で永久待機すると、順序保証バッファの連番に
+                // 穴が空いて以降の文が全て再生されなくなるため、必ずタイムアウトさせる
+                request.timeout = 60;
 
                 var operation = request.SendWebRequest();
                 while (!operation.isDone)
@@ -198,8 +238,8 @@ namespace CyanNook.Voice
         /// </summary>
         private static string BuildRequestJson(string text, string voiceName)
         {
-            string escapedText = EscapeJsonString(text);
-            string escapedVoice = EscapeJsonString(voiceName);
+            string escapedText = JsonEscape.Escape(text);
+            string escapedVoice = JsonEscape.Escape(voiceName);
 
             return
                 "{" +
@@ -219,34 +259,6 @@ namespace CyanNook.Voice
                 "}";
         }
 
-        /// <summary>
-        /// JSON文字列のエスケープ（", \, 改行、タブ、制御文字）
-        /// </summary>
-        private static string EscapeJsonString(string input)
-        {
-            if (string.IsNullOrEmpty(input)) return "";
-            var sb = new System.Text.StringBuilder(input.Length + 16);
-            foreach (char c in input)
-            {
-                switch (c)
-                {
-                    case '\\': sb.Append("\\\\"); break;
-                    case '"': sb.Append("\\\""); break;
-                    case '\b': sb.Append("\\b"); break;
-                    case '\f': sb.Append("\\f"); break;
-                    case '\n': sb.Append("\\n"); break;
-                    case '\r': sb.Append("\\r"); break;
-                    case '\t': sb.Append("\\t"); break;
-                    default:
-                        if (c < 0x20)
-                            sb.AppendFormat("\\u{0:x4}", (int)c);
-                        else
-                            sb.Append(c);
-                        break;
-                }
-            }
-            return sb.ToString();
-        }
 
         /// <summary>
         /// レスポンスJSONから candidates[0].content.parts[0].inlineData.data を抽出。

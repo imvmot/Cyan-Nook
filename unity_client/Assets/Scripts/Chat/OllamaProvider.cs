@@ -4,6 +4,7 @@ using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -137,9 +138,9 @@ namespace CyanNook.Chat
         /// </summary>
         private static string BuildRequestJson(OllamaRequest request, bool think, List<string> imagesBase64 = null)
         {
-            string escapedModel = EscapeJsonString(request.model);
-            string escapedPrompt = EscapeJsonString(request.prompt);
-            string escapedSystem = EscapeJsonString(request.system);
+            string escapedModel = JsonEscape.Escape(request.model);
+            string escapedPrompt = JsonEscape.Escape(request.prompt);
+            string escapedSystem = JsonEscape.Escape(request.system);
             string streamStr = request.stream ? "true" : "false";
             string thinkStr = think ? "true" : "false";
 
@@ -151,13 +152,14 @@ namespace CyanNook.Chat
             sb.Append($",\"think\":{thinkStr}");
 
             // options
+            // float はロケール非依存で書式化（独仏等のOSでは既定の小数点がカンマになり不正JSONになる）
             var opt = request.options;
-            sb.Append($",\"options\":{{\"temperature\":{opt.temperature}");
-            sb.Append($",\"top_p\":{opt.top_p}");
+            sb.Append($",\"options\":{{\"temperature\":{opt.temperature.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+            sb.Append($",\"top_p\":{opt.top_p.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
             sb.Append($",\"top_k\":{opt.top_k}");
             sb.Append($",\"num_predict\":{opt.num_predict}");
             sb.Append($",\"num_ctx\":{opt.num_ctx}");
-            sb.Append($",\"repeat_penalty\":{opt.repeat_penalty}}}");
+            sb.Append($",\"repeat_penalty\":{opt.repeat_penalty.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}");
 
             // images（あれば、複数画像対応）
             if (imagesBase64 != null && imagesBase64.Count > 0)
@@ -175,22 +177,19 @@ namespace CyanNook.Chat
             return sb.ToString();
         }
 
-        private static string EscapeJsonString(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-        }
-
         public IEnumerator TestConnection(LLMConfig config, Action<bool, string> callback)
         {
             // エンドポイントのベースURLからタグ一覧APIのURLを構築
-            var uri = new Uri(config.apiEndpoint);
+            // Uri.TryCreateで検証（new Uriだと不正URL入力時に例外でコルーチンが
+            // 打ち切られ、callbackが呼ばれずUIが無反応になる）。
+            // スキームも確認する（"ttp://"等のタイプミスはURL文法上は合法な
+            // 未知スキームとして解析に成功してしまい、通信層のUnknown Errorになる）
+            if (!Uri.TryCreate(config.apiEndpoint, UriKind.Absolute, out Uri uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            {
+                callback?.Invoke(false, $"Invalid URL: {config.apiEndpoint}");
+                yield break;
+            }
             string testUrl = $"{uri.Scheme}://{uri.Authority}/api/tags";
 
             using (var request = UnityWebRequest.Get(testUrl))
@@ -225,113 +224,35 @@ namespace CyanNook.Chat
     /// Ollamaのstream=trueレスポンス（各行がJSON）をパースし、
     /// responseフィールドを抽出してStreamSeparatorProcessorに渡す
     /// </summary>
-    internal class OllamaNdjsonStreamHandler : DownloadHandlerScript
+    internal class OllamaNdjsonStreamHandler : LineStreamHandlerBase
     {
-        private readonly Decoder _utf8Decoder;
-        private readonly StreamSeparatorProcessor _processor;
-        private readonly StringBuilder _lineBuffer = new StringBuilder();
-
         public OllamaNdjsonStreamHandler(byte[] preallocatedBuffer,
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action<string> onError, Action<string, string> onField = null,
-            Action<string, string> onParseError = null) : base(preallocatedBuffer)
+            Action<string, string> onParseError = null)
+            : base(preallocatedBuffer, onHeader, onTextChunk, onError, onField, onParseError)
         {
-            _utf8Decoder = Encoding.UTF8.GetDecoder();
-            _processor = new StreamSeparatorProcessor
-            {
-                OnHeaderReceived = onHeader,
-                OnTextReceived = onTextChunk,
-                OnError = onError,
-                OnFieldParsed = onField,
-                OnParseError = onParseError
-            };
         }
 
-        protected override bool ReceiveData(byte[] data, int dataLength)
-        {
-            if (data == null || dataLength < 1) return false;
-
-            // UTF-8安全デコード
-            int charCount = _utf8Decoder.GetCharCount(data, 0, dataLength, false);
-            if (charCount == 0) return true;
-
-            char[] chars = new char[charCount];
-            _utf8Decoder.GetChars(data, 0, dataLength, chars, 0, false);
-            string chunk = new string(chars);
-
-            // NDJSON行単位処理
-            _lineBuffer.Append(chunk);
-            ProcessLines();
-
-            return true;
-        }
-
-        protected override void CompleteContent()
-        {
-            // 残りのバッファを処理
-            int charCount = _utf8Decoder.GetCharCount(new byte[0], 0, 0, true);
-            if (charCount > 0)
-            {
-                char[] chars = new char[charCount];
-                _utf8Decoder.GetChars(new byte[0], 0, 0, chars, 0, true);
-                _lineBuffer.Append(new string(chars));
-                ProcessLines();
-            }
-
-            // 行バッファに残りがあれば最後の行として処理
-            if (_lineBuffer.Length > 0)
-            {
-                ProcessSingleLine(_lineBuffer.ToString());
-                _lineBuffer.Clear();
-            }
-
-            _processor.Complete();
-        }
-
-        /// <summary>
-        /// バッファから完全な行（\n区切り）を取り出して処理
-        /// </summary>
-        private void ProcessLines()
-        {
-            string content = _lineBuffer.ToString();
-            int lastNewline = content.LastIndexOf('\n');
-
-            if (lastNewline < 0) return;
-
-            // 完了した行を処理
-            string completedPart = content.Substring(0, lastNewline);
-            string remaining = content.Substring(lastNewline + 1);
-
-            _lineBuffer.Clear();
-            _lineBuffer.Append(remaining);
-
-            string[] lines = completedPart.Split('\n');
-            foreach (string line in lines)
-            {
-                string trimmed = line.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
-                {
-                    ProcessSingleLine(trimmed);
-                }
-            }
-        }
+        // NDJSONは最終行が\nで終わらないことがある
+        protected override bool ProcessTrailingLineOnComplete => true;
 
         /// <summary>
         /// 1行のNDJSON（Ollamaレスポンス）を処理し、responseフィールドを抽出
         /// </summary>
-        private void ProcessSingleLine(string jsonLine)
+        protected override void ProcessLine(string line)
         {
             try
             {
-                var ollamaChunk = JsonUtility.FromJson<OllamaResponse>(jsonLine);
+                var ollamaChunk = JsonUtility.FromJson<OllamaResponse>(line);
                 if (!string.IsNullOrEmpty(ollamaChunk.response))
                 {
-                    _processor.ProcessChunk(ollamaChunk.response);
+                    Processor.ProcessChunk(ollamaChunk.response);
                 }
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[OllamaNdjsonStreamHandler] Failed to parse line: {e.Message}\nLine: {jsonLine}");
+                Debug.LogWarning($"[OllamaNdjsonStreamHandler] Failed to parse line: {e.Message}\nLine: {line}");
             }
         }
     }

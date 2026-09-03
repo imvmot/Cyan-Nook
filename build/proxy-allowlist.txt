@@ -1,0 +1,7 @@
+﻿# プロキシ転送を許可するホスト名（1行に1つ）
+# 行頭 # はコメント行。編集はサーバー再起動なしで反映されます
+api.openai.com
+api.anthropic.com
+generativelanguage.googleapis.com
+localhost
+127.0.0.1

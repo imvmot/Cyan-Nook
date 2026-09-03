@@ -341,17 +341,6 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// VRM読み込み後にCharacterControllerコンポーネントをセットアップ
-        /// </summary>
-        public void SetupCharacterComponents(
-            CharacterAnimationController animationController,
-            CharacterExpressionController expressionController,
-            CharacterLookAtController lookAtController)
-        {
-            SetupCharacterComponents(animationController, expressionController, lookAtController, null, null, null, null, null);
-        }
-
-        /// <summary>
         /// VRM読み込み後に全てのCharacterコンポーネントをセットアップ（Navigation/Interaction/Talk/Camera含む）
         /// </summary>
         public void SetupCharacterComponents(
@@ -380,7 +369,6 @@ namespace CyanNook.Character
             {
                 animationController.animator = animator;
                 animationController.director = director;
-                animationController.templateData = templateData;
                 animationController.timelineBindings = timelineBindings;
                 animationController.lookAtController = lookAtController;
                 animationController.expressionController = expressionController;
@@ -527,29 +515,6 @@ namespace CyanNook.Character
             }
 
             Debug.Log("[VrmLoader] Character components setup complete");
-        }
-
-        /// <summary>
-        /// Navigation/Interaction/Talk コンポーネントをセットアップ
-        /// SetupCharacterComponentsへ委譲（後方互換性のため残存）
-        /// </summary>
-        public void SetupNavigationComponents(
-            CharacterAnimationController animationController,
-            CharacterNavigationController navigationController,
-            InteractionController interactionController,
-            TalkController talkController = null,
-            CharacterLookAtController lookAtController = null)
-        {
-            SetupCharacterComponents(
-                animationController,
-                null, // expressionController
-                lookAtController,
-                navigationController,
-                interactionController,
-                null, // furnitureManager
-                talkController,
-                null  // cameraController
-            );
         }
     }
 }

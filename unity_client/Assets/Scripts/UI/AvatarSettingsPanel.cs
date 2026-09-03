@@ -5,6 +5,7 @@ using TMPro;
 using System.IO;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using CyanNook.Core;
 using CyanNook.Character;
 using CyanNook.Chat;
 using CyanNook.CameraControl;
@@ -17,23 +18,24 @@ namespace CyanNook.UI
     /// </summary>
     public class AvatarSettingsPanel : MonoBehaviour
     {
-        // PlayerPrefsキー
-        private const string PrefKey_VrmFileName = "avatar_vrmFileName";
-        private const string PrefKey_CharacterPrompt = "avatar_characterPrompt";
-        private const string PrefKey_ResponseFormat = "avatar_responseFormat";
+        // PlayerPrefsキー（復元は各コントローラー側: CharacterSetup/ChatManager/BoredomController）
+        private const string PrefKey_VrmFileName = SettingsKeys.VrmFileName;
+        private const string PrefKey_CharacterPrompt = SettingsKeys.CharacterPrompt;
+        private const string PrefKey_ResponseFormat = SettingsKeys.ResponseFormat;
         private const string PrefKey_ResponseFormatLocked = "avatar_responseFormatLocked";
-        private const string PrefKey_BoredRate = "avatar_boredRate";
-        private const string PrefKey_BoredFactorHappy = "avatar_boredFactorHappy";
-        private const string PrefKey_BoredFactorRelaxed = "avatar_boredFactorRelaxed";
-        private const string PrefKey_BoredFactorAngry = "avatar_boredFactorAngry";
-        private const string PrefKey_BoredFactorSad = "avatar_boredFactorSad";
-        private const string PrefKey_BoredFactorSurprised = "avatar_boredFactorSurprised";
+        private const string PrefKey_BoredRate = SettingsKeys.BoredRate;
+        private const string PrefKey_BoredFactorHappy = SettingsKeys.BoredFactorHappy;
+        private const string PrefKey_BoredFactorRelaxed = SettingsKeys.BoredFactorRelaxed;
+        private const string PrefKey_BoredFactorAngry = SettingsKeys.BoredFactorAngry;
+        private const string PrefKey_BoredFactorSad = SettingsKeys.BoredFactorSad;
+        private const string PrefKey_BoredFactorSurprised = SettingsKeys.BoredFactorSurprised;
 
         [Header("References")]
         public CharacterSetup characterSetup;
         public ChatManager chatManager;
         public DynamicCameraController cameraController;
         public BoredomController boredomController;
+        public SleepController sleepController;
 
         [Header("UI - Model")]
         [Tooltip("VRMモデル選択ドロップダウン")]
@@ -76,6 +78,18 @@ namespace CyanNook.UI
         [Tooltip("surprised感情の増幅係数")]
         public TMP_InputField surprisedFactorInputField;
 
+        [Header("UI - Sleep")]
+        // 睡眠時間はキャラ性の設定（定期実行OFFでも睡眠演出は発生するため
+        // LLM設定ではなくこちらに配置）。値の保持と永続化は SleepController 側
+        [Tooltip("デフォルト睡眠時間（分）")]
+        public TMP_InputField defaultSleepDurationInputField;
+
+        [Tooltip("最小睡眠時間（分）")]
+        public TMP_InputField minSleepDurationInputField;
+
+        [Tooltip("最大睡眠時間（分）")]
+        public TMP_InputField maxSleepDurationInputField;
+
         [Header("UI - Prompt")]
         [Tooltip("キャラクター設定プロンプト入力")]
         public TMP_InputField characterPromptInputField;
@@ -107,11 +121,9 @@ namespace CyanNook.UI
             public string[] files;
         }
 
-        private void Awake()
-        {
-            // OnEnable()より先に保存済み設定を復元
-            LoadSavedSettings();
-        }
+        // 保存済み設定の復元は各コントローラー側で行う
+        // （VRMファイル名=CharacterSetup.Awake、プロンプト=ChatManager.Awake、
+        // 退屈度=BoredomController.Awake。パネルの初期アクティブ状態に依存させないため）
 
         private void OnEnable()
         {
@@ -168,6 +180,14 @@ namespace CyanNook.UI
                 boredRateInputField.onEndEdit.AddListener(OnBoredRateChanged);
             }
 
+            // 睡眠時間変更
+            if (defaultSleepDurationInputField != null)
+                defaultSleepDurationInputField.onEndEdit.AddListener(OnDefaultSleepDurationChanged);
+            if (minSleepDurationInputField != null)
+                minSleepDurationInputField.onEndEdit.AddListener(OnMinSleepDurationChanged);
+            if (maxSleepDurationInputField != null)
+                maxSleepDurationInputField.onEndEdit.AddListener(OnMaxSleepDurationChanged);
+
             // 感情係数変更
             if (happyFactorInputField != null)
                 happyFactorInputField.onEndEdit.AddListener((v) => OnEmotionFactorChanged(v, happyFactorInputField, f => boredomController.happyFactor = f));
@@ -213,6 +233,12 @@ namespace CyanNook.UI
                 maxFovInputField.onEndEdit.RemoveListener(OnMaxFovChanged);
             if (boredRateInputField != null)
                 boredRateInputField.onEndEdit.RemoveListener(OnBoredRateChanged);
+            if (defaultSleepDurationInputField != null)
+                defaultSleepDurationInputField.onEndEdit.RemoveListener(OnDefaultSleepDurationChanged);
+            if (minSleepDurationInputField != null)
+                minSleepDurationInputField.onEndEdit.RemoveListener(OnMinSleepDurationChanged);
+            if (maxSleepDurationInputField != null)
+                maxSleepDurationInputField.onEndEdit.RemoveListener(OnMaxSleepDurationChanged);
             if (responseFormatLockToggle != null)
                 responseFormatLockToggle.onValueChanged.RemoveListener(OnResponseFormatLockChanged);
         }
@@ -397,6 +423,17 @@ namespace CyanNook.UI
                     surprisedFactorInputField.text = boredomController.surprisedFactor.ToString("F1");
             }
 
+            // 睡眠時間
+            if (sleepController != null)
+            {
+                if (defaultSleepDurationInputField != null)
+                    defaultSleepDurationInputField.text = sleepController.defaultSleepDuration.ToString();
+                if (minSleepDurationInputField != null)
+                    minSleepDurationInputField.text = sleepController.minSleepDuration.ToString();
+                if (maxSleepDurationInputField != null)
+                    maxSleepDurationInputField.text = sleepController.maxSleepDuration.ToString();
+            }
+
             // キャラクター設定プロンプト
             if (characterPromptInputField != null && chatManager != null)
             {
@@ -418,72 +455,6 @@ namespace CyanNook.UI
                 {
                     responseFormatInputField.interactable = !locked;
                 }
-            }
-        }
-
-        /// <summary>
-        /// 保存された設定を復元（起動時）
-        /// VRMファイル名、システムプロンプト
-        /// ※ カメラ設定は DynamicCameraController が自動復元
-        /// </summary>
-        private void LoadSavedSettings()
-        {
-            if (characterSetup == null) return;
-
-            // VRMファイル名
-            if (PlayerPrefs.HasKey(PrefKey_VrmFileName))
-            {
-                string savedFileName = PlayerPrefs.GetString(PrefKey_VrmFileName);
-                if (!string.IsNullOrEmpty(savedFileName))
-                {
-                    characterSetup.vrmFileName = savedFileName;
-                    Debug.Log($"[AvatarSettingsPanel] Loaded saved VRM: {savedFileName}");
-                }
-            }
-
-            // キャラクター設定プロンプト
-            if (PlayerPrefs.HasKey(PrefKey_CharacterPrompt) && chatManager != null)
-            {
-                string saved = PlayerPrefs.GetString(PrefKey_CharacterPrompt);
-                if (!string.IsNullOrEmpty(saved))
-                {
-                    chatManager.characterPrompt = saved;
-                    Debug.Log("[AvatarSettingsPanel] Loaded saved character prompt");
-                }
-            }
-
-            // レスポンスフォーマットプロンプト
-            if (PlayerPrefs.HasKey(PrefKey_ResponseFormat) && chatManager != null)
-            {
-                string saved = PlayerPrefs.GetString(PrefKey_ResponseFormat);
-                if (!string.IsNullOrEmpty(saved))
-                {
-                    chatManager.responseFormatPrompt = saved;
-                    Debug.Log("[AvatarSettingsPanel] Loaded saved response format prompt");
-                }
-            }
-
-            // 退屈ポイントレート
-            if (PlayerPrefs.HasKey(PrefKey_BoredRate) && boredomController != null)
-            {
-                boredomController.increaseRate = PlayerPrefs.GetFloat(PrefKey_BoredRate);
-                Debug.Log($"[AvatarSettingsPanel] Loaded saved bored rate: {boredomController.increaseRate}");
-            }
-
-            // 感情係数
-            if (boredomController != null)
-            {
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorHappy))
-                    boredomController.happyFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorHappy);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorRelaxed))
-                    boredomController.relaxedFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorRelaxed);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorAngry))
-                    boredomController.angryFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorAngry);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorSad))
-                    boredomController.sadFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorSad);
-                if (PlayerPrefs.HasKey(PrefKey_BoredFactorSurprised))
-                    boredomController.surprisedFactor = PlayerPrefs.GetFloat(PrefKey_BoredFactorSurprised);
-                Debug.Log("[AvatarSettingsPanel] Loaded saved emotion factors");
             }
         }
 
@@ -563,6 +534,40 @@ namespace CyanNook.UI
                 boredomController.increaseRate = rate;
                 boredRateInputField.text = rate.ToString("F1");
                 Debug.Log($"[AvatarSettingsPanel] Bored rate: {rate} pt/min");
+            }
+        }
+
+        // ─────────────────────────────────────
+        // 睡眠時間
+        // ─────────────────────────────────────
+
+        private void OnDefaultSleepDurationChanged(string value)
+        {
+            if (sleepController == null) return;
+            if (int.TryParse(value, out int minutes))
+            {
+                sleepController.SetDefaultSleepDuration(minutes);
+                Debug.Log($"[AvatarSettingsPanel] Sleep default duration: {minutes}min");
+            }
+        }
+
+        private void OnMinSleepDurationChanged(string value)
+        {
+            if (sleepController == null) return;
+            if (int.TryParse(value, out int minutes))
+            {
+                sleepController.SetMinSleepDuration(minutes);
+                Debug.Log($"[AvatarSettingsPanel] Sleep min duration: {minutes}min");
+            }
+        }
+
+        private void OnMaxSleepDurationChanged(string value)
+        {
+            if (sleepController == null) return;
+            if (int.TryParse(value, out int minutes))
+            {
+                sleepController.SetMaxSleepDuration(minutes);
+                Debug.Log($"[AvatarSettingsPanel] Sleep max duration: {minutes}min");
             }
         }
 

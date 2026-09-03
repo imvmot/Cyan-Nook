@@ -6,72 +6,19 @@ using CyanNook.Core;
 namespace CyanNook.Editor
 {
     /// <summary>
-    /// unityroom版 / GitHub版のビルド切替 + UnityroomConfig アセット管理。
+    /// UnityroomConfig アセット管理。
+    ///
+    /// ビルドの切替 (GitHub / Unityroom / Mobile) は Window > Build Profiles の
+    /// 3プロファイルで行う (define・テクスチャ圧縮・テンプレートはプロファイル側が保持)。
+    /// かつてここにあった切替メニューはプロファイル移行に伴い削除済み。
     ///
     /// CyanNook > Build メニューから操作:
-    /// - Switch to GitHub Build: UNITYROOM_BUILD シンボルを除去
-    /// - Switch to Unityroom Build: UNITYROOM_BUILD シンボルを追加
     /// - Create/Open Unityroom Config: UnityroomConfig.asset を作成または開く
+    ///   (Unityroom プロファイルでのビルドに必要。gitignore 対象)
     /// </summary>
     public static class UnityroomBuildMenu
     {
-        private const string DEFINE_SYMBOL = "UNITYROOM_BUILD";
         private const string CONFIG_ASSET_PATH = "Assets/Resources/UnityroomConfig.asset";
-
-        // ─────────────────────────────────────
-        // Build Switch
-        // ─────────────────────────────────────
-
-        [MenuItem("CyanNook/Build/Switch to GitHub Build")]
-        public static void SwitchToGitHub()
-        {
-            RemoveDefineSymbol(DEFINE_SYMBOL);
-            Debug.Log("[UnityroomBuildMenu] Switched to GitHub build (UNITYROOM_BUILD removed)");
-        }
-
-        [MenuItem("CyanNook/Build/Switch to Unityroom Build")]
-        public static void SwitchToUnityroom()
-        {
-            AddDefineSymbol(DEFINE_SYMBOL);
-
-            // UnityroomConfig が無ければ作成を促す
-            var config = UnityroomConfig.Load();
-            if (config == null)
-            {
-                bool create = EditorUtility.DisplayDialog(
-                    "Unityroom Config",
-                    "UnityroomConfig.asset が見つかりません。\n" +
-                    "デフォルトAPIキーを設定するには先にアセットを作成してください。\n\n" +
-                    "今すぐ作成しますか？",
-                    "作成", "後で");
-
-                if (create)
-                {
-                    CreateOrOpenConfig();
-                }
-            }
-
-            Debug.Log("[UnityroomBuildMenu] Switched to Unityroom build (UNITYROOM_BUILD added)");
-        }
-
-        // Validation: チェックマーク表示
-        [MenuItem("CyanNook/Build/Switch to GitHub Build", true)]
-        private static bool ValidateGitHub()
-        {
-            Menu.SetChecked("CyanNook/Build/Switch to GitHub Build", !HasDefineSymbol(DEFINE_SYMBOL));
-            return true;
-        }
-
-        [MenuItem("CyanNook/Build/Switch to Unityroom Build", true)]
-        private static bool ValidateUnityroom()
-        {
-            Menu.SetChecked("CyanNook/Build/Switch to Unityroom Build", HasDefineSymbol(DEFINE_SYMBOL));
-            return true;
-        }
-
-        // ─────────────────────────────────────
-        // Config Asset Management
-        // ─────────────────────────────────────
 
         [MenuItem("CyanNook/Build/Create or Open Unityroom Config")]
         public static void CreateOrOpenConfig()
@@ -101,50 +48,6 @@ namespace CyanNook.Editor
             Selection.activeObject = config;
             EditorGUIUtility.PingObject(config);
             Debug.Log("[UnityroomBuildMenu] Created UnityroomConfig at " + CONFIG_ASSET_PATH);
-        }
-
-        // ─────────────────────────────────────
-        // Define Symbol Utilities
-        // ─────────────────────────────────────
-
-        private static bool HasDefineSymbol(string symbol)
-        {
-            var target = EditorUserBuildSettings.selectedBuildTargetGroup;
-            string defines = PlayerSettings.GetScriptingDefineSymbolsForGroup(target);
-            return ContainsSymbol(defines, symbol);
-        }
-
-        private static void AddDefineSymbol(string symbol)
-        {
-            var target = EditorUserBuildSettings.selectedBuildTargetGroup;
-            string defines = PlayerSettings.GetScriptingDefineSymbolsForGroup(target);
-
-            if (ContainsSymbol(defines, symbol)) return;
-
-            defines = string.IsNullOrEmpty(defines) ? symbol : defines + ";" + symbol;
-            PlayerSettings.SetScriptingDefineSymbolsForGroup(target, defines);
-        }
-
-        private static void RemoveDefineSymbol(string symbol)
-        {
-            var target = EditorUserBuildSettings.selectedBuildTargetGroup;
-            string defines = PlayerSettings.GetScriptingDefineSymbolsForGroup(target);
-
-            if (!ContainsSymbol(defines, symbol)) return;
-
-            var list = new System.Collections.Generic.List<string>(defines.Split(';'));
-            list.RemoveAll(s => s.Trim() == symbol);
-            PlayerSettings.SetScriptingDefineSymbolsForGroup(target, string.Join(";", list));
-        }
-
-        private static bool ContainsSymbol(string defines, string symbol)
-        {
-            if (string.IsNullOrEmpty(defines)) return false;
-            foreach (var s in defines.Split(';'))
-            {
-                if (s.Trim() == symbol) return true;
-            }
-            return false;
         }
     }
 }

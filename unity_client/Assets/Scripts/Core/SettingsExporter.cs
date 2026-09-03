@@ -1,12 +1,15 @@
 using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using CyanNook.Chat;
 
 namespace CyanNook.Core
 {
     /// <summary>
     /// 全設定のJSON形式エクスポート・インポート
     /// PlayerPrefsの全設定キーを一括管理
+    /// APIキー（llm_config内のapiKey / gemini_tts_apiKey）はエクスポートに含めない
+    /// （設定ファイル共有時の漏洩防止。インポート時はローカルの既存キーを引き継ぐ）
     /// </summary>
     public class SettingsExporter : MonoBehaviour
     {
@@ -46,16 +49,16 @@ namespace CyanNook.Core
         private static readonly SettingEntry[] AllSettings = new[]
         {
             // Avatar
-            new SettingEntry("avatar_vrmFileName", PrefType.String),
-            new SettingEntry("avatar_characterPrompt", PrefType.String),
-            new SettingEntry("avatar_responseFormat", PrefType.String),
+            new SettingEntry(SettingsKeys.VrmFileName, PrefType.String),
+            new SettingEntry(SettingsKeys.CharacterPrompt, PrefType.String),
+            new SettingEntry(SettingsKeys.ResponseFormat, PrefType.String),
             new SettingEntry("avatar_responseFormatLocked", PrefType.Int),
-            new SettingEntry("avatar_boredRate", PrefType.Float),
-            new SettingEntry("avatar_boredFactorHappy", PrefType.Float),
-            new SettingEntry("avatar_boredFactorRelaxed", PrefType.Float),
-            new SettingEntry("avatar_boredFactorAngry", PrefType.Float),
-            new SettingEntry("avatar_boredFactorSad", PrefType.Float),
-            new SettingEntry("avatar_boredFactorSurprised", PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredRate, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorHappy, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorRelaxed, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorAngry, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorSad, PrefType.Float),
+            new SettingEntry(SettingsKeys.BoredFactorSurprised, PrefType.Float),
 
             // Camera
             new SettingEntry("camera_height", PrefType.Float),
@@ -65,20 +68,35 @@ namespace CyanNook.Core
 
             // LLM
             new SettingEntry("llm_config", PrefType.String),
-            new SettingEntry("llm_useVision", PrefType.Int),
-            new SettingEntry("llm_maxHistory", PrefType.Int),
-            new SettingEntry("llm_cameraPreview", PrefType.Int),
-            new SettingEntry("llm_webCam", PrefType.Int),
-            new SettingEntry("llm_screenCapture", PrefType.Int),
+            new SettingEntry(SettingsKeys.UseVision, PrefType.Int),
+            new SettingEntry(SettingsKeys.MaxHistory, PrefType.Int),
+            new SettingEntry(SettingsKeys.CameraPreview, PrefType.Int),
+            new SettingEntry(SettingsKeys.WebCam, PrefType.Int),
+            new SettingEntry(SettingsKeys.ScreenCapture, PrefType.Int),
+
+            // 定期実行マスター（IdleChat/SleepChat/Outing 一括ON/OFF）
+            new SettingEntry("periodic_enabled", PrefType.Int),
 
             // IdleChat
+            // idleChatEnabled は periodic_enabled に統合済みだが、
+            // 旧エクスポートファイルのインポート互換（移行フォールバック）のため残す
             new SettingEntry("idleChatEnabled", PrefType.Int),
             new SettingEntry("idleChatCooldown", PrefType.Float),
-            new SettingEntry("idleChat_message", PrefType.String),
+            new SettingEntry(SettingsKeys.IdleChatMessage, PrefType.String),
 
             // Cron Scheduler
             new SettingEntry("cronSchedulerEnabled", PrefType.Int),
             new SettingEntry("cronAutoReloadInterval", PrefType.Float),
+
+            // External Action Feed（外部アクションフィード / 受動制御）
+            new SettingEntry("feed_enabled", PrefType.Int),
+            new SettingEntry("feed_actionUrl", PrefType.String),
+            new SettingEntry("feed_subscribeInterval", PrefType.Float),
+            new SettingEntry("feed_contextUrl", PrefType.String),
+            new SettingEntry("feed_cameraUrl", PrefType.String),
+            new SettingEntry("feed_publishInterval", PrefType.Float),
+            new SettingEntry("feed_voiceEnabled", PrefType.Int),
+            new SettingEntry("feed_voiceUrl", PrefType.String),
 
             // Sleep
             new SettingEntry("sleep_defaultDuration", PrefType.Int),
@@ -96,6 +114,7 @@ namespace CyanNook.Core
             // Voice - TTS
             new SettingEntry("voice_ttsEnabled", PrefType.Int),
             new SettingEntry("voice_ttsEngine", PrefType.Int),
+            new SettingEntry("voice_echoPrevention", PrefType.Int),
 
             // Voice - WebSpeech
             new SettingEntry("voice_webSpeechVoiceURI", PrefType.String),
@@ -116,7 +135,7 @@ namespace CyanNook.Core
             new SettingEntry("gemini_tts_stylePrompt", PrefType.String),
 
             // Voice - Input
-            new SettingEntry("voice_micEnabled", PrefType.Int),
+            new SettingEntry(SettingsKeys.MicEnabled, PrefType.Int),
             new SettingEntry("voice_inputLanguage", PrefType.String),
             new SettingEntry("voice_silenceThreshold", PrefType.Float),
 
@@ -144,6 +163,9 @@ namespace CyanNook.Core
             {
                 if (!PlayerPrefs.HasKey(entry.key)) continue;
 
+                // APIキーはエクスポートしない（ファイル共有時の漏洩防止）
+                if (entry.key == "gemini_tts_apiKey") continue;
+
                 // カテゴリコメント（JSONにはコメントがないためスキップ、カテゴリ区切りは空行で）
                 string category = entry.key.Split('_')[0];
                 if (category != currentCategory)
@@ -151,10 +173,13 @@ namespace CyanNook.Core
                     currentCategory = category;
                 }
 
+                string value = entry.key == "llm_config"
+                    ? EscapeJsonString(StripApiKeyFromLlmConfig(PlayerPrefs.GetString(entry.key)))
+                    : GetValueAsJsonString(entry);
+
                 if (!first) sb.AppendLine(",");
                 first = false;
 
-                string value = GetValueAsJsonString(entry);
                 sb.Append($"  \"{entry.key}\": {value}");
             }
 
@@ -178,7 +203,8 @@ namespace CyanNook.Core
 #else
             // エディタ/スタンドアロン: クリップボードにコピー
             GUIUtility.systemCopyBuffer = json;
-            Debug.Log($"[SettingsExporter] Exported to clipboard:\n{json}");
+            // JSON全文はキャラクタープロンプト等の個人設定を含むためログに出さない
+            Debug.Log($"[SettingsExporter] Exported to clipboard ({json.Length} chars)");
 #endif
         }
 
@@ -191,7 +217,13 @@ namespace CyanNook.Core
         /// </summary>
         public void OpenImportDialog()
         {
-#if UNITY_WEBGL && !UNITY_EDITOR
+#if UNITYROOM_BUILD
+            // unityroom版（体験版）ではImportを封鎖。
+            // 設定ファイル経由で封鎖済み機能（feed/cron/webcam等）の
+            // PlayerPrefsを書き戻す抜け道になるため（Exportは残す）
+            Debug.LogWarning("[SettingsExporter] Import is disabled in unityroom build");
+            OnImportComplete?.Invoke(false, "Import is disabled in this build");
+#elif UNITY_WEBGL && !UNITY_EDITOR
             FileIO_OpenFileDialog(gameObject.name, "OnFileImported", ".json");
             Debug.Log("[SettingsExporter] Import dialog opened");
 #else
@@ -214,6 +246,12 @@ namespace CyanNook.Core
         /// </summary>
         public void OnFileImported(string jsonContent)
         {
+#if UNITYROOM_BUILD
+            // ダイアログ側だけでなく実行主体側も封鎖
+            // （WebGLのSendMessage経由で直接呼び出せる public コールバックのため）
+            Debug.LogWarning("[SettingsExporter] Import is disabled in unityroom build");
+            OnImportComplete?.Invoke(false, "Import is disabled in this build");
+#else
             if (string.IsNullOrEmpty(jsonContent))
             {
                 Debug.LogWarning("[SettingsExporter] Import cancelled or empty file");
@@ -234,6 +272,7 @@ namespace CyanNook.Core
                 Debug.LogError($"[SettingsExporter] {message}");
                 OnImportComplete?.Invoke(false, message);
             }
+#endif
         }
 
         /// <summary>
@@ -274,6 +313,18 @@ namespace CyanNook.Core
                         string strVal = UnescapeJsonString(value);
                         if (strVal != null)
                         {
+                            // エクスポートファイルにはAPIキーが含まれない（漏洩防止で除外）ため、
+                            // 空キーでローカルの既存キーを消さないよう引き継ぐ
+                            if (entry.key == "llm_config")
+                            {
+                                strVal = MergeExistingApiKeyIntoLlmConfig(strVal);
+                                if (strVal == null) break; // パース不能 → 既存設定を保護して書き込まない
+                            }
+                            else if (entry.key == "gemini_tts_apiKey" && string.IsNullOrEmpty(strVal))
+                            {
+                                break;
+                            }
+
                             PlayerPrefs.SetString(entry.key, strVal);
                             count++;
                         }
@@ -281,8 +332,80 @@ namespace CyanNook.Core
                 }
             }
 
+            // 旧バージョンのエクスポート（idleChatEnabledのみ、periodic_enabledなし）の移行:
+            // ローカルに既存のperiodic_enabledが残っているとPeriodicExecutionSettingsの
+            // フォールバックが効かず旧設定のON/OFFが無視されるため、明示的に引き継ぐ
+            if (ExtractJsonValue(json, "periodic_enabled") == null)
+            {
+                string legacyEnabled = ExtractJsonValue(json, "idleChatEnabled");
+                if (legacyEnabled != null && int.TryParse(legacyEnabled, out int legacyVal))
+                {
+                    PlayerPrefs.SetInt("periodic_enabled", legacyVal);
+                }
+            }
+
             PlayerPrefs.Save();
             return count;
+        }
+
+        // ===================================================================
+        // APIキー除外・引き継ぎ
+        // ===================================================================
+
+        /// <summary>
+        /// llm_config JSONからapiKeyを除去する（エクスポート用）
+        /// パースできない場合は安全側に倒して内容ごと出力しない（nullを返す）
+        /// </summary>
+        private static string StripApiKeyFromLlmConfig(string configJson)
+        {
+            if (string.IsNullOrEmpty(configJson)) return null;
+
+            try
+            {
+                var config = JsonUtility.FromJson<LLMConfig>(configJson);
+                if (config == null) return null;
+                config.apiKey = "";
+                return JsonUtility.ToJson(config);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// インポートしたllm_configのapiKeyが空の場合、ローカルに保存済みの
+        /// 既存キーを引き継ぐ（新形式エクスポートはキーを含まないため）
+        /// apiType/apiEndpointの両方が一致する場合のみ引き継ぐ。
+        /// エンドポイント一致を要求するのは、細工された設定ファイル
+        /// （同一apiType + 攻撃者のエンドポイント）でローカルキーが
+        /// 攻撃者サーバーへ送信されるのを防ぐため。
+        /// パース不能なllm_configはnullを返し、書き込み自体をスキップさせる
+        /// （既存の正常な設定とキーを壊れたデータで上書きしない）
+        /// </summary>
+        private static string MergeExistingApiKeyIntoLlmConfig(string importedJson)
+        {
+            try
+            {
+                var imported = JsonUtility.FromJson<LLMConfig>(importedJson);
+                if (imported == null) return null;
+                if (!string.IsNullOrEmpty(imported.apiKey)) return importedJson;
+
+                string existingJson = PlayerPrefs.GetString("llm_config", "");
+                if (string.IsNullOrEmpty(existingJson)) return importedJson;
+
+                var existing = JsonUtility.FromJson<LLMConfig>(existingJson);
+                if (existing == null || string.IsNullOrEmpty(existing.apiKey)) return importedJson;
+                if (existing.apiType != imported.apiType) return importedJson;
+                if (existing.apiEndpoint != imported.apiEndpoint) return importedJson;
+
+                imported.apiKey = existing.apiKey;
+                return JsonUtility.ToJson(imported);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         // ===================================================================

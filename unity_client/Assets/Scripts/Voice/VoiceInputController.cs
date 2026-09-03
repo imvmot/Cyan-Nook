@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using CyanNook.Core;
 using CyanNook.UI;
 
 namespace CyanNook.Voice
@@ -57,6 +58,15 @@ namespace CyanNook.Voice
             if (activityDetector != null)
             {
                 activityDetector.OnSilenceDetected.AddListener(OnSilenceDetected);
+            }
+
+            // 保存済みマイク設定を復元
+            // （設定パネル側で復元するとパネルの初期アクティブ状態に依存するため、
+            // 常時アクティブな本クラスの責務とする。UIへの反映はOnEnabledChanged経由）
+            if (PlayerPrefs.GetInt(SettingsKeys.MicEnabled, 0) == 1)
+            {
+                SetEnabled(true);
+                Debug.Log("[VoiceInputController] Applied saved microphone setting: ON");
             }
         }
 

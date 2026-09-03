@@ -17,7 +17,7 @@ namespace CyanNook.Core
     public class ScreenCaptureDisplayController : MonoBehaviour
     {
         // PlayerPrefsキー
-        private const string PrefKey_ScreenCaptureEnabled = "llm_screenCapture";
+        private const string PrefKey_ScreenCaptureEnabled = SettingsKeys.ScreenCapture;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")]
@@ -104,6 +104,11 @@ namespace CyanNook.Core
 
             LoadSettings();
 
+#if UNITYROOM_BUILD
+            // unityroom版では封鎖（Rendererも確実に無効化するため自動再生を止める）
+            autoPlay = false;
+#endif
+
             if (autoPlay)
             {
                 StartCapture();
@@ -133,6 +138,12 @@ namespace CyanNook.Core
         /// </summary>
         public void StartCapture()
         {
+#if UNITYROOM_BUILD
+            // unityroom版（体験版）では画面キャプチャ機能を封鎖。
+            // UIを隠すだけではPlayerPrefs復元・Importで起動経路が残るため
+            // 起動メソッド自体で塞ぐ
+            Debug.LogWarning("[ScreenCaptureDisplayController] Screen capture is disabled in unityroom build");
+#else
             if (_isCapturing || _waitingForCapture)
             {
                 Debug.Log("[ScreenCaptureDisplayController] Already capturing");
@@ -151,6 +162,7 @@ namespace CyanNook.Core
             ScreenCapture_Start(maxWidth, maxHeight, gameObject.name, "OnScreenCaptureStartResult");
 #else
             Debug.LogWarning("[ScreenCaptureDisplayController] Screen capture is only supported in WebGL builds");
+#endif
 #endif
         }
 

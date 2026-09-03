@@ -81,6 +81,22 @@ namespace CyanNook.Character
         private Camera _mainCamera;
         private bool _entryPending;
 
+        private void Awake()
+        {
+            // 保存済みVRMファイル名を復元
+            // （AvatarSettingsPanelではなくここで行うのは、パネルが初期非アクティブに
+            // 変更されると復元が起動時に走らず、別のVRMが読み込まれてしまうため）
+            if (PlayerPrefs.HasKey(SettingsKeys.VrmFileName))
+            {
+                string savedFileName = PlayerPrefs.GetString(SettingsKeys.VrmFileName);
+                if (!string.IsNullOrEmpty(savedFileName))
+                {
+                    vrmFileName = savedFileName;
+                    Debug.Log($"[CharacterSetup] Loaded saved VRM: {savedFileName}");
+                }
+            }
+        }
+
         private void Start()
         {
             _mainCamera = Camera.main;

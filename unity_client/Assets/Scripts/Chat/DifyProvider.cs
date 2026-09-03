@@ -4,6 +4,7 @@ using System;
 using System.Text;
 using System.Collections;
 using System.Collections.Generic;
+using CyanNook.Core;
 
 namespace CyanNook.Chat
 {
@@ -286,8 +287,8 @@ namespace CyanNook.Chat
         /// </summary>
         private string BuildRequestJson(string systemPrompt, string userMessage, string responseMode, List<string> fileIds = null)
         {
-            string escapedQuery = EscapeJsonString(userMessage);
-            string escapedConvId = EscapeJsonString(_conversationId);
+            string escapedQuery = JsonEscape.Escape(userMessage);
+            string escapedConvId = JsonEscape.Escape(_conversationId);
 
             // 動的変数をinputsフィールドに設定
             string inputsJson = BuildInputsJson();
@@ -300,7 +301,7 @@ namespace CyanNook.Chat
                 for (int i = 0; i < fileIds.Count; i++)
                 {
                     if (i > 0) sb.Append(",");
-                    string escapedFileId = EscapeJsonString(fileIds[i]);
+                    string escapedFileId = JsonEscape.Escape(fileIds[i]);
                     sb.Append($"{{\"type\":\"image\",\"transfer_method\":\"local_file\",\"upload_file_id\":\"{escapedFileId}\"}}");
                 }
                 sb.Append("]");
@@ -323,24 +324,13 @@ namespace CyanNook.Chat
             foreach (var kv in _inputs)
             {
                 if (!first) sb.Append(",");
-                sb.Append($"\"{EscapeJsonString(kv.Key)}\":\"{EscapeJsonString(kv.Value)}\"");
+                sb.Append($"\"{JsonEscape.Escape(kv.Key)}\":\"{JsonEscape.Escape(kv.Value)}\"");
                 first = false;
             }
             sb.Append("}");
             return sb.ToString();
         }
 
-        private static string EscapeJsonString(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r")
-                .Replace("\t", "\\t");
-        }
     }
 
     /// <summary>
@@ -352,11 +342,8 @@ namespace CyanNook.Chat
     ///   data: {"event": "message", "answer": "token", "conversation_id": "...", ...}
     ///   data: {"event": "message_end", "conversation_id": "...", ...}
     /// </summary>
-    internal class DifySseStreamHandler : DownloadHandlerScript
+    internal class DifySseStreamHandler : SseStreamHandlerBase
     {
-        private readonly Decoder _utf8Decoder;
-        private readonly StreamSeparatorProcessor _processor;
-        private readonly StringBuilder _lineBuffer = new StringBuilder();
         private readonly Action<string> _onConversationId;
 
         private bool _conversationIdCaptured;
@@ -365,109 +352,31 @@ namespace CyanNook.Chat
             Action<LlmResponseHeader> onHeader, Action<string> onTextChunk,
             Action<string> onError, Action<string> onConversationId,
             Action<string, string> onField = null,
-            Action<string, string> onParseError = null) : base(preallocatedBuffer)
+            Action<string, string> onParseError = null)
+            : base(preallocatedBuffer, onHeader, onTextChunk, onError, onField, onParseError)
         {
-            _utf8Decoder = Encoding.UTF8.GetDecoder();
             _onConversationId = onConversationId;
-            _processor = new StreamSeparatorProcessor
-            {
-                OnHeaderReceived = onHeader,
-                OnTextReceived = onTextChunk,
-                OnError = onError,
-                OnFieldParsed = onField,
-                OnParseError = onParseError
-            };
-        }
-
-        protected override bool ReceiveData(byte[] data, int dataLength)
-        {
-            if (data == null || dataLength < 1) return false;
-
-            int charCount = _utf8Decoder.GetCharCount(data, 0, dataLength, false);
-            if (charCount == 0) return true;
-
-            char[] chars = new char[charCount];
-            _utf8Decoder.GetChars(data, 0, dataLength, chars, 0, false);
-            string chunk = new string(chars);
-
-            _lineBuffer.Append(chunk);
-            ProcessSseLines();
-
-            return true;
-        }
-
-        protected override void CompleteContent()
-        {
-            // 残りをフラッシュ
-            int charCount = _utf8Decoder.GetCharCount(new byte[0], 0, 0, true);
-            if (charCount > 0)
-            {
-                char[] chars = new char[charCount];
-                _utf8Decoder.GetChars(new byte[0], 0, 0, chars, 0, true);
-                _lineBuffer.Append(new string(chars));
-                ProcessSseLines();
-            }
-
-            _processor.Complete();
-        }
-
-        /// <summary>
-        /// SSEイベント行を処理
-        /// SSEは空行（\n\n）でイベントが区切られるが、
-        /// Difyは各data行が独立しているため行単位で処理
-        /// </summary>
-        private void ProcessSseLines()
-        {
-            string content = _lineBuffer.ToString();
-            int lastNewline = content.LastIndexOf('\n');
-
-            if (lastNewline < 0) return;
-
-            string completedPart = content.Substring(0, lastNewline);
-            string remaining = content.Substring(lastNewline + 1);
-
-            _lineBuffer.Clear();
-            _lineBuffer.Append(remaining);
-
-            string[] lines = completedPart.Split('\n');
-            foreach (string line in lines)
-            {
-                string trimmed = line.Trim();
-                if (trimmed.StartsWith("data:", StringComparison.Ordinal))
-                {
-                    string jsonData = trimmed.Substring(5).Trim();
-                    ProcessSseData(jsonData);
-                }
-            }
         }
 
         /// <summary>
         /// SSEのdataフィールド（JSON）を処理
+        /// messageイベントのanswerフィールドを抽出。conversation_idは最初の1回だけ通知
         /// </summary>
-        private void ProcessSseData(string jsonData)
+        protected override void ProcessSseData(string jsonData)
         {
-            if (string.IsNullOrEmpty(jsonData)) return;
+            var sseEvent = JsonUtility.FromJson<DifySseEvent>(jsonData);
 
-            try
+            // conversation_idを保存（最初の1回）
+            if (!_conversationIdCaptured && !string.IsNullOrEmpty(sseEvent.conversation_id))
             {
-                var sseEvent = JsonUtility.FromJson<DifySseEvent>(jsonData);
-
-                // conversation_idを保存（最初の1回）
-                if (!_conversationIdCaptured && !string.IsNullOrEmpty(sseEvent.conversation_id))
-                {
-                    _conversationIdCaptured = true;
-                    _onConversationId?.Invoke(sseEvent.conversation_id);
-                }
-
-                // messageイベント: answerフィールドをセパレータ処理に渡す
-                if (sseEvent.@event == "message" && !string.IsNullOrEmpty(sseEvent.answer))
-                {
-                    _processor.ProcessChunk(sseEvent.answer);
-                }
+                _conversationIdCaptured = true;
+                _onConversationId?.Invoke(sseEvent.conversation_id);
             }
-            catch (Exception e)
+
+            // messageイベント: answerフィールドをセパレータ処理に渡す
+            if (sseEvent.@event == "message" && !string.IsNullOrEmpty(sseEvent.answer))
             {
-                Debug.LogWarning($"[DifySseStreamHandler] Failed to parse SSE data: {e.Message}\nData: {jsonData}");
+                Processor.ProcessChunk(sseEvent.answer);
             }
         }
     }

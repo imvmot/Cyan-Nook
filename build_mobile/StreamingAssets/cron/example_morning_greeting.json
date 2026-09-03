@@ -1,0 +1,8 @@
+{
+    "id": "morning_greeting",
+    "name": "朝の挨拶",
+    "enabled": false,
+    "schedule": "0 9 * * *",
+    "prompt": "[SYSTEM]: 現在の時刻は朝9時です。ユーザーに朝の挨拶をしてください。",
+    "cancelSleepOrOuting": true
+}

@@ -35,6 +35,32 @@ $mime = @{
 $script:proxyHeaders = "Content-Type, Authorization, x-api-key, anthropic-version, x-goog-api-key"
 $script:allowList = @("Content-Type","Authorization","x-api-key","anthropic-version","x-goog-api-key")
 
+# プロキシ転送先ホワイトリスト（SSRF対策）
+# サーバー起動中にブラウザで悪意ページを開いた場合、/proxy/ を踏み台に
+# 家庭内ネットワーク等へアクセスされるのを防ぐため、転送先ホストを制限する
+$script:allowlistPath = Join-Path $root "proxy-allowlist.txt"
+if (-not (Test-Path $script:allowlistPath)) {
+    $defaultAllowlist = @(
+        "# プロキシ転送を許可するホスト名（1行に1つ）",
+        "# 行頭 # はコメント行。編集はサーバー再起動なしで反映されます",
+        "api.openai.com",
+        "api.anthropic.com",
+        "generativelanguage.googleapis.com",
+        "localhost",
+        "127.0.0.1"
+    )
+    [System.IO.File]::WriteAllLines($script:allowlistPath, $defaultAllowlist, (New-Object System.Text.UTF8Encoding($true)))
+    Write-Host "Created proxy-allowlist.txt (default allowed hosts)" -ForegroundColor Yellow
+}
+
+function Get-AllowedHosts {
+    try {
+        $lines = [System.IO.File]::ReadAllLines($script:allowlistPath, [System.Text.Encoding]::UTF8)
+        return @($lines | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith("#") })
+    }
+    catch { return @() }
+}
+
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:${Port}/")
 
@@ -49,6 +75,7 @@ catch {
 Write-Host "Server running at http://localhost:$Port" -ForegroundColor Green
 Write-Host "Serving files from: $root"
 Write-Host "CORS proxy available at /proxy/" -ForegroundColor Yellow
+Write-Host "Proxy allowed hosts: see proxy-allowlist.txt" -ForegroundColor Yellow
 Write-Host ""
 
 Start-Process "http://localhost:$Port"
@@ -79,7 +106,9 @@ function Handle-Proxy($ctx) {
     $encoded = $raw.Substring($idx + "/proxy/".Length)
     $target = [System.Uri]::UnescapeDataString($encoded)
 
-    if (-not $target -or -not $target.StartsWith("http")) {
+    $targetUri = $null
+    if (-not [System.Uri]::TryCreate($target, [System.UriKind]::Absolute, [ref]$targetUri) -or
+        ($targetUri.Scheme -ne "http" -and $targetUri.Scheme -ne "https")) {
         Add-Cors $res
         $res.StatusCode = 400
         $b = [System.Text.Encoding]::UTF8.GetBytes("Bad Request: Invalid target URL")
@@ -87,6 +116,20 @@ function Handle-Proxy($ctx) {
         $res.OutputStream.Write($b, 0, $b.Length)
         $res.OutputStream.Close()
         Write-Host "[PROXY] 400 Bad target" -ForegroundColor Red
+        return
+    }
+
+    # SSRF対策: ホワイトリストにないホストへは転送しない
+    $allowedHosts = Get-AllowedHosts
+    if ($allowedHosts -notcontains $targetUri.Host) {
+        Add-Cors $res
+        $res.StatusCode = 403
+        $b = [System.Text.Encoding]::UTF8.GetBytes("Forbidden: host '$($targetUri.Host)' is not in proxy-allowlist.txt")
+        $res.ContentLength64 = $b.Length
+        $res.OutputStream.Write($b, 0, $b.Length)
+        $res.OutputStream.Close()
+        Write-Host "[PROXY] 403 Blocked host: $($targetUri.Host)" -ForegroundColor Red
+        Write-Host "        Allow it by adding a line to proxy-allowlist.txt" -ForegroundColor Red
         return
     }
 

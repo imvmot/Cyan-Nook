@@ -63,6 +63,10 @@ namespace CyanNook.UI
         [Tooltip("StatusOverlayコンポーネント")]
         public StatusOverlay statusOverlay;
 
+        [Header("UI - Verbose Logs")]
+        [Tooltip("ビルドでの情報ログ（Debug.Log）ON/OFF。OFFでもWarning/Errorは出る")]
+        public Toggle verboseLogsToggle;
+
         [Header("UI - Log Export")]
         [Tooltip("ログエクスポートボタン")]
         public Button exportLogButton;
@@ -106,6 +110,13 @@ namespace CyanNook.UI
             if (statusOverlayToggle != null && statusOverlay != null)
             {
                 statusOverlayToggle.isOn = statusOverlay.IsVisible;
+            }
+
+            // 保存値を表示（エディタでは設定に関わらず常に全ログだが、
+            // トグルは「ビルドでの挙動」を示す）
+            if (verboseLogsToggle != null)
+            {
+                verboseLogsToggle.SetIsOnWithoutNotify(LogVerbosityController.SavedVerbose);
             }
 
             // キーアサイン表示
@@ -154,6 +165,12 @@ namespace CyanNook.UI
                 statusOverlayToggle.onValueChanged.AddListener(OnStatusOverlayToggleChanged);
             }
 
+            // Verbose Logsトグル
+            if (verboseLogsToggle != null)
+            {
+                verboseLogsToggle.onValueChanged.AddListener(OnVerboseLogsToggleChanged);
+            }
+
             // Settings Import/Export
             if (exportSettingsButton != null)
             {
@@ -161,7 +178,13 @@ namespace CyanNook.UI
             }
             if (importSettingsButton != null)
             {
+#if UNITYROOM_BUILD
+                // 体験版ではImportを封鎖（封鎖済み機能の設定を書き戻す抜け道になるため）。
+                // Exportは「GitHub版へ設定を持っていく」用途のため残す
+                importSettingsButton.gameObject.SetActive(false);
+#else
                 importSettingsButton.onClick.AddListener(OnImportSettingsClicked);
+#endif
             }
             if (settingsExporter != null)
             {
@@ -215,6 +238,8 @@ namespace CyanNook.UI
                 timelineDebugToggle.onValueChanged.RemoveListener(OnTimelineDebugToggleChanged);
             if (statusOverlayToggle != null)
                 statusOverlayToggle.onValueChanged.RemoveListener(OnStatusOverlayToggleChanged);
+            if (verboseLogsToggle != null)
+                verboseLogsToggle.onValueChanged.RemoveListener(OnVerboseLogsToggleChanged);
             if (exportLogButton != null)
                 exportLogButton.onClick.RemoveListener(OnExportLogClicked);
             if (exportSettingsButton != null)
@@ -285,6 +310,13 @@ namespace CyanNook.UI
         {
             if (statusOverlay != null)
                 statusOverlay.SetVisible(isOn);
+        }
+
+        private void OnVerboseLogsToggleChanged(bool isOn)
+        {
+            LogVerbosityController.SetVerbose(isOn);
+            // OFF時はこのログ自体も抑止されるためWarningで出す
+            Debug.LogWarning($"[DebugSettingsPanel] Verbose logs: {(isOn ? "ON" : "OFF")}");
         }
 
         // ─────────────────────────────────────

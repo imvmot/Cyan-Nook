@@ -52,6 +52,12 @@ namespace CyanNook.Character
         [Tooltip("入室アニメーションのID")]
         public string entryAnimationId = "interact_entry01";
 
+        [Tooltip("Entry完了イベントが来ない場合の強制完了タイムアウト（秒）。" +
+            "Entry TimelineにInteractionEndClipが無い等の設定ミスで" +
+            "全応答が無視される沈黙状態になるのを防ぐ。" +
+            "最長のEntry Timelineより長い値にすること（0以下で監視無効）")]
+        public float entryTimeoutSeconds = 15f;
+
         [Header("Door Furniture")]
         [Tooltip("入退室に使用するドア家具のinstanceId")]
         public string doorFurnitureId = "room01_door_01";
@@ -61,6 +67,12 @@ namespace CyanNook.Character
         private bool _isOutside = false;
 
         private float _messageTimer;
+
+        // 送信失敗（ビジー）で保留中のOuting Prompt（Updateでリトライ）
+        private bool _pendingOutingMessage;
+
+        // 定期実行マスター（PeriodicExecutionSettings）の状態。外出中メッセージ送信のゲート
+        private bool _periodicEnabled;
 
         // Entry再生中フラグ
         private bool _isPlayingEntry;
@@ -73,6 +85,9 @@ namespace CyanNook.Character
 
         // Entry早期完了リクエスト済みか（ActionCancelClipでの早期完了用）
         private bool _earlyCompleteRequested;
+
+        // Entry完了イベント不達の監視コルーチン（EntryTimeoutWatchdog）
+        private Coroutine _entryTimeoutCoroutine;
 
         /// <summary>外出中かどうか</summary>
         public bool IsOutside => _isOutside;
@@ -101,6 +116,24 @@ namespace CyanNook.Character
         {
             if (!_isOutside) return;
 
+            // 定期実行マスターOFF、またはinterval 0以下は外出中メッセージを送らない。
+            // 注意: 外出からの帰還はLLMが外出中メッセージへの応答でinteract_entryを
+            // 選ぶことで発生するため、これを止めるとCronのcancelSleepOrOutingか
+            // アプリ再起動（外出状態は非永続化）までキャラは戻らない
+            if (!_periodicEnabled || outingMessageInterval <= 0f) return;
+
+            // 保留中のOuting Promptをリトライ（SleepControllerの夢メッセージと同方式）
+            if (_pendingOutingMessage)
+            {
+                if (chatManager != null && !chatManager.IsBusy)
+                {
+                    _pendingOutingMessage = false;
+                    Debug.Log("[OutingController] Retrying pending outing message");
+                    chatManager.SendAutoRequest(outingPromptMessage);
+                }
+                return; // 保留中はタイマーを進めない
+            }
+
             // 定期メッセージタイマー
             _messageTimer -= Time.deltaTime;
             if (_messageTimer <= 0f)
@@ -128,11 +161,10 @@ namespace CyanNook.Character
             _isOutside = true;
             _messageTimer = outingMessageInterval * 60f; // 2回目以降はInterval経過後（分→秒変換）
 
-            // 初回Outing PromptをChatManager Idle待ちで送信
-            if (chatManager != null)
-            {
-                StartCoroutine(SendOutingPromptWhenReady());
-            }
+            // 初回Outing Promptを送信
+            // （interact_exit完了直後はChatManagerがビジーのため、
+            // 保留→Updateリトライの機構に乗せて確実に送る）
+            SendOutingMessage();
 
             // キャラクター非表示
             if (vrmLoader != null)
@@ -140,17 +172,8 @@ namespace CyanNook.Character
                 vrmLoader.SetMeshVisibility(false);
             }
 
-            // IdleChat停止
-            if (idleChatController != null)
-            {
-                idleChatController.SetPaused(true);
-            }
-
-            // Boredom蓄積停止
-            if (boredomController != null)
-            {
-                boredomController.SetPaused(true);
-            }
+            // 自律系（IdleChat/退屈度）を一時停止
+            SetAutonomyPaused(true);
 
             // UI表示
             if (uiController != null)
@@ -169,18 +192,10 @@ namespace CyanNook.Character
             if (!_isOutside) return;
 
             _isOutside = false;
+            _pendingOutingMessage = false;
 
-            // IdleChat再開
-            if (idleChatController != null)
-            {
-                idleChatController.SetPaused(false);
-            }
-
-            // Boredom蓄積再開
-            if (boredomController != null)
-            {
-                boredomController.SetPaused(false);
-            }
+            // 自律系（IdleChat/退屈度）を再開
+            SetAutonomyPaused(false);
 
             // UI表示解除
             if (uiController != null)
@@ -214,6 +229,13 @@ namespace CyanNook.Character
             _onEntryComplete = onComplete;
             _isPlayingEntry = true;
             _earlyCompleteRequested = false;
+
+            // タイムアウト監視を開始（完了イベントが来ない設定ミスへの保険）
+            if (_entryTimeoutCoroutine != null)
+            {
+                StopCoroutine(_entryTimeoutCoroutine);
+            }
+            _entryTimeoutCoroutine = StartCoroutine(EntryTimeoutWatchdog());
 
             // ドア家具を検索
             FurnitureInstance doorFurniture = null;
@@ -343,13 +365,46 @@ namespace CyanNook.Character
         // ===================================================================
 
         /// <summary>
+        /// Entry完了イベントの不達を監視する。
+        /// Entry TimelineにInteractionEndClipが無い、TimelineBindingData未登録等の
+        /// 設定ミスがあると完了イベントが永遠に来ず、全LLM応答がキューされたまま
+        /// キャラクターが無反応になる（NavMeshAgentも無効のまま）。
+        /// タイムアウト時はエラーログで原因を明示し、強制的に完了処理へ進める
+        /// </summary>
+        private System.Collections.IEnumerator EntryTimeoutWatchdog()
+        {
+            // 0以下は監視無効（WaitForSeconds(0)は約1フレームで戻り毎回強制完了してしまう）
+            if (entryTimeoutSeconds <= 0f) yield break;
+
+            yield return new WaitForSeconds(entryTimeoutSeconds);
+            _entryTimeoutCoroutine = null;
+
+            if (!_isPlayingEntry) yield break;
+
+            Debug.LogError(
+                $"[OutingController] Entry animation did not complete within {entryTimeoutSeconds}s. " +
+                $"Forcing completion. Check that Timeline '{entryAnimationId}' has an InteractionEndClip, " +
+                "is registered in TimelineBindingData, and the animationController reference is set. " +
+                "If the entry Timeline is legitimately longer than the timeout, increase entryTimeoutSeconds.");
+            OnEntryAnimationComplete();
+        }
+
+        /// <summary>
         /// Entry アニメーション完了（InteractionEndClip到達時に呼ばれる）
         /// </summary>
         private void OnEntryAnimationComplete()
         {
             if (!_isPlayingEntry) return;
 
-            Debug.Log("[OutingController] Entry animation InteractionEnd reached");
+            // InteractionEndClip到達 / CancelRegion早期完了 / タイムアウト強制完了 の共通経路
+            Debug.Log("[OutingController] Entry completion triggered");
+
+            // タイムアウト監視を停止
+            if (_entryTimeoutCoroutine != null)
+            {
+                StopCoroutine(_entryTimeoutCoroutine);
+                _entryTimeoutCoroutine = null;
+            }
 
             // イベント解除
             if (animationController != null)
@@ -428,67 +483,72 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// 外出中定期メッセージを送信
+        /// 自律系（IdleChat/退屈度）の一時停止/再開をまとめて伝える。
+        /// 一時停止対象のシステムを増やす場合はここに追加する
+        /// （SleepController.SetAutonomyPaused にも同じ追加が必要）
+        /// </summary>
+        private void SetAutonomyPaused(bool paused)
+        {
+            if (idleChatController != null)
+            {
+                idleChatController.SetPaused(paused);
+            }
+            if (boredomController != null)
+            {
+                boredomController.SetPaused(paused);
+            }
+        }
+
+        /// <summary>
+        /// 外出中メッセージを送信（初回/定期共通）
+        /// ビジー時はスキップせず保留し、Updateでリトライする
+        /// （SleepControllerの夢メッセージと同方式に統一）
         /// </summary>
         private void SendOutingMessage()
         {
-            if (chatManager == null || chatManager.CurrentState != ChatState.Idle) return;
+            if (chatManager == null) return;
 
+            // 定期実行マスターOFF、またはinterval 0以下は送信しない
+            // （EnterOutingからの初回送信もここでまとめてゲートする）
+            if (!_periodicEnabled || outingMessageInterval <= 0f) return;
+
+            if (chatManager.IsBusy)
+            {
+                _pendingOutingMessage = true;
+                Debug.Log("[OutingController] Outing message deferred (ChatManager busy)");
+                return;
+            }
+
+            _pendingOutingMessage = false;
             Debug.Log("[OutingController] Sending outing message");
             chatManager.SendAutoRequest(outingPromptMessage);
         }
 
         /// <summary>
-        /// ChatManagerがIdle状態になるまで待ってから初回Outing Promptを送信
-        /// interact_exit完了直後はChatManagerがまだIdle状態でない可能性があるため待機する
-        /// </summary>
-        private System.Collections.IEnumerator SendOutingPromptWhenReady()
-        {
-            float timeout = 10f;
-            float elapsed = 0f;
-            while (chatManager.CurrentState != ChatState.Idle && elapsed < timeout)
-            {
-                elapsed += Time.deltaTime;
-                yield return null;
-            }
-
-            // 外出中でなくなっていたら送信しない（短時間で帰還した場合）
-            if (!_isOutside) yield break;
-
-            if (chatManager.CurrentState == ChatState.Idle)
-            {
-                Debug.Log("[OutingController] Sending initial outing prompt");
-                chatManager.SendAutoRequest(outingPromptMessage);
-            }
-            else
-            {
-                Debug.LogWarning("[OutingController] ChatManager not idle after timeout, skipping initial outing prompt");
-            }
-        }
-
-        /// <summary>
-        /// ChatManagerがIdle状態になるまで待ってからEntry Promptを送信
+        /// ChatManagerが送信可能になるまで待ってから（最大10秒）Entry Promptを送信
         /// ゲーム起動直後はChatManagerが初期化中の可能性があるため待機する
+        /// ※初回Outing PromptはSendOutingMessageの保留リトライ機構を使用（この経路は使わない）
         /// </summary>
         private System.Collections.IEnumerator SendEntryPromptWhenReady()
         {
-            // ChatManagerがIdle状態になるまで最大10秒待機
             float timeout = 10f;
             float elapsed = 0f;
-            while (chatManager.CurrentState != ChatState.Idle && elapsed < timeout)
+            // IsBusyで判定（CurrentStateだけ見るとLLMClientコルーチン完了前の窓で
+            // SendAutoRequestが黙って弾かれ、プロンプトが失われる）
+            while (chatManager.IsBusy && elapsed < timeout)
             {
                 elapsed += Time.deltaTime;
                 yield return null;
             }
 
-            if (chatManager.CurrentState == ChatState.Idle)
+            if (!chatManager.IsBusy)
             {
                 Debug.Log("[OutingController] Sending entry prompt");
                 chatManager.SendAutoRequest(entryPromptMessage);
             }
             else
             {
-                Debug.LogWarning("[OutingController] ChatManager not idle after timeout, skipping entry prompt");
+                Debug.LogWarning("[OutingController] ChatManager busy after timeout, skipping entry prompt");
             }
         }
 
@@ -514,6 +574,9 @@ namespace CyanNook.Character
 
         private void LoadSettings()
         {
+            // 定期実行マスター（外出中メッセージ送信のゲート）
+            _periodicEnabled = CyanNook.Core.PeriodicExecutionSettings.IsEnabled();
+
             if (PlayerPrefs.HasKey(PrefKey_OutingInterval))
                 outingMessageInterval = PlayerPrefs.GetFloat(PrefKey_OutingInterval);
             if (PlayerPrefs.HasKey(PrefKey_OutingPrompt))
@@ -522,11 +585,29 @@ namespace CyanNook.Character
                 entryPromptMessage = PlayerPrefs.GetString(PrefKey_EntryPrompt);
         }
 
+        /// <summary>
+        /// 外出中メッセージ間隔を設定（分）。0で個別無効
+        /// </summary>
         public void SetOutingMessageInterval(float minutes)
         {
-            outingMessageInterval = Mathf.Max(1f, minutes);
+            outingMessageInterval = Mathf.Max(0f, minutes);
+
+            // 外出中ならタイマーを新しい値で再セット（0→正値に戻した瞬間の即時発火を防ぐ）
+            if (_isOutside && outingMessageInterval > 0f)
+            {
+                _messageTimer = outingMessageInterval * 60f;
+            }
+
             PlayerPrefs.SetFloat(PrefKey_OutingInterval, outingMessageInterval);
             PlayerPrefs.Save();
+        }
+
+        /// <summary>
+        /// 定期実行マスターのON/OFFを反映（設定UIから呼ばれる。保存はPeriodicExecutionSettings側）
+        /// </summary>
+        public void SetPeriodicEnabled(bool enabled)
+        {
+            _periodicEnabled = enabled;
         }
 
         public void SetOutingPromptMessage(string message)

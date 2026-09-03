@@ -70,6 +70,9 @@ namespace CyanNook.Character
         private string _sleepFurnitureId;
         private bool _pendingDreamMessage;
 
+        // 定期実行マスター（PeriodicExecutionSettings）の状態。夢メッセージ送信のゲート
+        private bool _periodicEnabled;
+
         // Wake-up完了時のコールバック
         private Action _onWakeUpComplete;
 
@@ -114,6 +117,11 @@ namespace CyanNook.Character
         {
             if (!_isSleeping) return;
 
+            // 起床ed再生中は何もしない。
+            // ここで夢メッセージを送るとChatManagerのリクエスト種別(WakeUp)を
+            // 上書きしてしまい、起床タイマー満了はExitSleepの二重実行を招く
+            if (_isWakingUp) return;
+
             // 起床タイマー監視
             if (DateTime.Now >= _wakeTime)
             {
@@ -122,10 +130,14 @@ namespace CyanNook.Character
                 return;
             }
 
+            // 定期実行マスターOFF、またはinterval 0以下は夢メッセージを送らない
+            // （起床タイマーは上で処理済みなので睡眠自体は正常に終了する）
+            if (!_periodicEnabled || dreamInterval <= 0f) return;
+
             // 保留中のDream Promptをリトライ
             if (_pendingDreamMessage)
             {
-                if (chatManager != null && chatManager.CurrentState == ChatState.Idle)
+                if (chatManager != null && !chatManager.IsBusy)
                 {
                     _pendingDreamMessage = false;
                     Debug.Log("[SleepController] Retrying pending dream message");
@@ -172,17 +184,8 @@ namespace CyanNook.Character
             SendDreamMessage();
             _dreamTimer = dreamInterval * 60f; // 2回目以降はInterval経過後（分→秒変換）
 
-            // IdleChat停止
-            if (idleChatController != null)
-            {
-                idleChatController.SetPaused(true);
-            }
-
-            // Boredom蓄積停止
-            if (boredomController != null)
-            {
-                boredomController.SetPaused(true);
-            }
+            // 自律系（IdleChat/退屈度）を一時停止
+            SetAutonomyPaused(true);
 
             // 永続化
             SaveSleepState();
@@ -375,17 +378,8 @@ namespace CyanNook.Character
                 Debug.Log("[SleepController] Restored sleep animation from loop region");
             }
 
-            // IdleChat停止
-            if (idleChatController != null)
-            {
-                idleChatController.SetPaused(true);
-            }
-
-            // Boredom蓄積停止
-            if (boredomController != null)
-            {
-                boredomController.SetPaused(true);
-            }
+            // 自律系（IdleChat/退屈度）を一時停止
+            SetAutonomyPaused(true);
 
             Debug.Log($"[SleepController] Sleep restored: furniture={furnitureId}, wake at {_wakeTime:HH:mm:ss}");
             return true;
@@ -404,17 +398,12 @@ namespace CyanNook.Character
             _isSleeping = false;
             _isWakingUp = false;
 
-            // IdleChat再開
-            if (idleChatController != null)
-            {
-                idleChatController.SetPaused(false);
-            }
+            // 保留中の夢メッセージを破棄（起床経路を問わず確実にクリアする。
+            // 残すと次回の睡眠で前回の古い保留が発火する）
+            _pendingDreamMessage = false;
 
-            // Boredom蓄積再開
-            if (boredomController != null)
-            {
-                boredomController.SetPaused(false);
-            }
+            // 自律系（IdleChat/退屈度）を再開
+            SetAutonomyPaused(false);
 
             // 永続化クリア
             ClearSleepState();
@@ -439,13 +428,36 @@ namespace CyanNook.Character
         }
 
         /// <summary>
+        /// 自律系（IdleChat/退屈度）の一時停止/再開をまとめて伝える。
+        /// 一時停止対象のシステムを増やす場合はここに追加する
+        /// （OutingController.SetAutonomyPaused にも同じ追加が必要）
+        /// </summary>
+        private void SetAutonomyPaused(bool paused)
+        {
+            if (idleChatController != null)
+            {
+                idleChatController.SetPaused(paused);
+            }
+            if (boredomController != null)
+            {
+                boredomController.SetPaused(paused);
+            }
+        }
+
+        /// <summary>
         /// 夢メッセージをLLMに送信
         /// </summary>
         private void SendDreamMessage()
         {
             if (chatManager == null) return;
 
-            if (chatManager.CurrentState != ChatState.Idle)
+            // 定期実行マスターOFF、またはinterval 0以下は送信しない
+            // （EnterSleepからの初回送信もここでまとめてゲートする）
+            if (!_periodicEnabled || dreamInterval <= 0f) return;
+
+            // IsBusyで判定（CurrentStateだけ見るとLLMClientコルーチン完了前の窓で
+            // SendAutoRequestが黙って弾かれ、保留フラグなしでメッセージが失われる）
+            if (chatManager.IsBusy)
             {
                 _pendingDreamMessage = true;
                 Debug.Log("[SleepController] Dream message deferred (ChatManager busy)");
@@ -480,6 +492,9 @@ namespace CyanNook.Character
 
         private void LoadSettings()
         {
+            // 定期実行マスター（夢メッセージ送信のゲート）
+            _periodicEnabled = CyanNook.Core.PeriodicExecutionSettings.IsEnabled();
+
             if (PlayerPrefs.HasKey(PrefKey_DefaultDuration))
                 defaultSleepDuration = PlayerPrefs.GetInt(PrefKey_DefaultDuration);
             if (PlayerPrefs.HasKey(PrefKey_MinDuration))
@@ -495,13 +510,28 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// 夢メッセージ間隔を設定（分）
+        /// 夢メッセージ間隔を設定（分）。0で個別無効
         /// </summary>
         public void SetDreamInterval(float minutes)
         {
-            dreamInterval = Mathf.Max(1f, minutes);
+            dreamInterval = Mathf.Max(0f, minutes);
+
+            // 睡眠中ならタイマーを新しい値で再セット（0→正値に戻した瞬間の即時発火を防ぐ）
+            if (_isSleeping && dreamInterval > 0f)
+            {
+                _dreamTimer = dreamInterval * 60f;
+            }
+
             PlayerPrefs.SetFloat(PrefKey_DreamInterval, dreamInterval);
             PlayerPrefs.Save();
+        }
+
+        /// <summary>
+        /// 定期実行マスターのON/OFFを反映（設定UIから呼ばれる。保存はPeriodicExecutionSettings側）
+        /// </summary>
+        public void SetPeriodicEnabled(bool enabled)
+        {
+            _periodicEnabled = enabled;
         }
 
         /// <summary>
