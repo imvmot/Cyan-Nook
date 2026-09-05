@@ -537,6 +537,18 @@ namespace CyanNook.Chat
                 return;
             }
 
+            // 外部フィード起点のThinking（考え中演出）中は自律リクエストを発火しない。
+            // 外部ThinkingはChatStateがIdleのままでIsBusyに映らないため明示的に弾く。
+            // 発火するとSetState(WaitingForResponse)がThinkingの所有権を引き取った上、
+            // 完了・エラー処理がThinkingを解除してしまい、外部の本応答を待つ演出が壊れる。
+            // ユーザー入力による割り込みは意図した挙動なので許可のまま。
+            // externalThinkingTimeoutがあるため永久ブロックにはならない
+            if (_isExternalThinkingActive)
+            {
+                Debug.Log("[ChatManager] Auto-request skipped (external thinking active)");
+                return;
+            }
+
             _requestKind = RequestKind.Auto;
 
             Debug.Log($"[ChatManager] Sending auto-request (streaming={useStreaming}, vision={useVision})");

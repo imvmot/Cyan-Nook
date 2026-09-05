@@ -3132,7 +3132,10 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
     本応答が届かない場合は `ChatManager.externalThinkingTimeout`（既定120秒、0以下で監視無効・非推奨）で自動解除。
     外部 Thinking 中に内部 LLM リクエスト（チャット入力等）が始まった場合は所有権を内部フローへ移譲し、
     演出の解除は既存経路（HandleRequestCompleted 等）に任せる。
-    連続受信（timestamp 違いの thinking 再受信）はタイムアウトの延長のみ行う
+    連続受信（timestamp 違いの thinking 再受信）はタイムアウトの延長のみ行う。
+    **自律リクエスト（IdleChat/夢/外出メッセージ等の SendAutoRequest）は外部 Thinking 中は発火しない**
+    （ChatState が Idle のままなので IsBusy に映らず、発火すると完了・エラー処理が
+    Thinking を解除してしまうため明示的にスキップ。ユーザー入力の割り込みのみ許可）
 
 **フィード音声（voice.wav）の取得・再生:**
 - `voiceEnabled`（デフォルトOFF）で有効化。外部側（herald等）がTTS合成した voice.wav を
