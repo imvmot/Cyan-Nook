@@ -3124,10 +3124,13 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
   - ビジー（応答待ち/Thinking/睡眠中/外出中/Entry再生中/初回Entry完了前）は false を返しスキップ
     → `_lastAppliedRawJson` を更新せず次ポーリングで再試行（その間に外部が新しい応答を出せば最新に収束）
     （例外: 下記の外部 thinking 起点の Thinking 中は本応答を通す）
-  - **`action:"thinking"` は特別扱い（本応答の前触れ）**: message 等の他フィールドは使わず、
-    考え中モーション（Thinking 状態）に入るだけ。外部リスナー（herald 等）が LLM 推論開始時に
-    `{"action":"thinking","timestamp":...}` を PUT すると、本応答が届くまでキャラクターが考え中演出をする
-    （timestamp は変更検知に必要）。後続の本応答は Thinking ガードの例外として通り、
+  - **`action:"thinking"` は特別扱い（本応答の前触れ）**: 考え中モーション（Thinking 状態）に入る。
+    外部リスナー（herald 等）が LLM 推論開始時に `{"action":"thinking","timestamp":...}` を PUT すると、
+    本応答が届くまでキャラクターが考え中演出をする（timestamp は変更検知に必要）。
+    **message があれば作業状況としてメッセージ欄に表示**（`ChatManager.OnExternalThinkingStatus` →
+    UIController が「...」の代わりに表示。読み上げ・会話履歴なし。再受信のたびに上書きされるため、
+    外部側がツール実行の進捗を `{"action":"thinking","message":"🔍 web検索中..."}` のように
+    流し込める）。emotion/emote 等の他フィールドは使わない。後続の本応答は Thinking ガードの例外として通り、
     内部フローと同じ「適用 → Thinking 解除」の順序で処理される。
     本応答が届かない場合は `ChatManager.externalThinkingTimeout`（既定120秒、0以下で監視無効・非推奨）で自動解除。
     外部 Thinking 中に内部 LLM リクエスト（チャット入力等）が始まった場合は所有権を内部フローへ移譲し、

@@ -180,6 +180,7 @@ namespace CyanNook.UI
                 chatManager.OnError += OnChatError;
                 chatManager.OnThinkingStarted += OnThinkingStarted;
                 chatManager.OnThinkingEnded += OnThinkingEnded;
+                chatManager.OnExternalThinkingStatus += OnExternalThinkingStatus;
                 chatManager.OnStreamingHeaderReceived += OnStreamingHeader;
                 chatManager.OnStreamingTextReceived += OnStreamingText;
                 chatManager.OnStreamingReactionReceived += OnStreamingReaction;
@@ -257,6 +258,7 @@ namespace CyanNook.UI
                 chatManager.OnError -= OnChatError;
                 chatManager.OnThinkingStarted -= OnThinkingStarted;
                 chatManager.OnThinkingEnded -= OnThinkingEnded;
+                chatManager.OnExternalThinkingStatus -= OnExternalThinkingStatus;
                 chatManager.OnStreamingHeaderReceived -= OnStreamingHeader;
                 chatManager.OnStreamingTextReceived -= OnStreamingText;
                 chatManager.OnStreamingReactionReceived -= OnStreamingReaction;
@@ -691,6 +693,18 @@ namespace CyanNook.UI
 
         private void OnThinkingEnded()
         {
+        }
+
+        /// <summary>
+        /// 外部フィードthinkingの作業状況（ツール実行中等）をメッセージ欄に表示。
+        /// 「...」の代わりに何をしているかを見せる。読み上げ・履歴には乗せない
+        /// </summary>
+        private void OnExternalThinkingStatus(string status)
+        {
+            // 外出中はメッセージ欄を更新しない（お出かけ中表示を維持）
+            if (IsOutingActive) return;
+
+            ShowMessage(status);
         }
 
         // ─────────────────────────────────────

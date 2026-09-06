@@ -179,6 +179,13 @@ namespace CyanNook.Chat
         public event Action OnThinkingStarted;
         public event Action OnThinkingEnded;
 
+        /// <summary>
+        /// 外部フィードのthinkingに付随する作業状況メッセージ（例: "🔍 web検索中..."）。
+        /// UIのメッセージ欄表示のみを意図し、読み上げ・会話履歴には乗せない。
+        /// thinking再受信のたびに発火するため、表示は都度上書きされる
+        /// </summary>
+        public event Action<string> OnExternalThinkingStatus;
+
         // --- ストリーミング専用イベント ---
         /// <summary>ストリーミングのテキストチャンク受信時（逐次表示用）</summary>
         public event Action<string> OnStreamingTextReceived;
@@ -1305,7 +1312,8 @@ namespace CyanNook.Chat
                 {
                     Destroy(externalVoiceClip);
                 }
-                StartExternalThinking();
+                // messageがあれば作業状況として表示に回す（状態遷移以外の用途はこれのみ）
+                StartExternalThinking(response.message);
                 return true;
             }
 
@@ -1364,10 +1372,12 @@ namespace CyanNook.Chat
 
         /// <summary>
         /// 外部フィードのaction:"thinking"で考え中モーションに入る。
-        /// 既に外部Thinking中の再受信（連続ウェイクワード等）はタイムアウトの延長のみ行う。
+        /// 既に外部Thinking中の再受信（連続ウェイクワード・ツール実行の進捗通知等）は
+        /// タイムアウトの延長と状況メッセージの更新のみ行う。
         /// 本応答が届かない場合に備え、externalThinkingTimeout秒で自動解除する
         /// </summary>
-        private void StartExternalThinking()
+        /// <param name="statusMessage">作業状況メッセージ（省略/空なら表示更新なし）</param>
+        private void StartExternalThinking(string statusMessage = null)
         {
             if (!_isExternalThinkingActive)
             {
@@ -1379,6 +1389,12 @@ namespace CyanNook.Chat
                 _isExternalThinkingActive = true;
                 OnThinkingStarted?.Invoke();
                 Debug.Log("[ChatManager] External thinking started");
+            }
+
+            // 作業状況メッセージの表示更新（OnThinkingStartedの「...」を上書きする）
+            if (!string.IsNullOrWhiteSpace(statusMessage))
+            {
+                OnExternalThinkingStatus?.Invoke(statusMessage.Trim());
             }
 
             // タイムアウトを（再）セット。0以下は「即時解除」ではなく「監視無効」とする
