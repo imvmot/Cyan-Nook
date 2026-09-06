@@ -8171,7 +8171,13 @@ void UpdateTTSCredit(string speakerName, string styleName); // クレジット�
 **役割**: VRM 1.0 Expressionベースのリップシンク統合コントローラ（4モード対応）
 
 旧`CharacterLipSyncController`（テキスト口パク専用）を統合。
-TTS有効時はTextOnlyモードが自動抑制される。
+**音声駆動の口パク（Amplitude/Mora/Simulated）が進行中は TextOnly は開始されない**
+（`StartSpeaking` が無視する。外部 wav 再生・状況読み上げは応答適用と同時に始まるため、
+後から呼ばれる TextOnly がモードを奪うとテキスト長の推定時間で口が止まり、残りの音声中に
+口が動かなくなる不具合があった）。自前 TTS の流れは TextOnly 開始 → 合成完了後に Mora が
+上書き、の順なので影響なし。
+※ `SetTtsActive` による「TTS 有効時の TextOnly 抑制」は API として残っているが現状どこからも
+呼ばれておらず未配線（配線すると TTS ON で合成失敗時に口パクが全く出なくなるため据え置き）。
 
 **更新タイミング**: `LateUpdate`で実行。PlayableDirector評価（Facial TimelineによるExpression全リセット＋加算）
 の後に口の形（aa/ih/ou/ee/oh）を書き込むことで、感情Timelineとリップシンクを共存させる。
@@ -8211,7 +8217,7 @@ public struct MoraEntry
 // VRM設定（VRM読み込み時）
 void SetVrmInstance(Vrm10Instance instance);
 
-// TextOnlyモード（テキスト表示のみ用、TTS有効時は自動抑制）
+// TextOnlyモード（テキスト表示のみ用。音声駆動の口パク進行中は無視される）
 void StartSpeaking(string text);
 void StopSpeaking();
 bool IsSpeaking { get; }
@@ -8227,7 +8233,7 @@ void StopLipSync();
 **各モードの動作**:
 - **Mora**: `moraTimeline`のcurrentTimeに応じた母音を正確に適用。子音時間中はスムーズ遷移。
 - **Simulated**: 母音サイクルを周期（~0.12秒）で切り替え。60%開口・40%閉口パターン。
-- **TextOnly**: Simulatedと同等のロジック。テキスト長から推定時間を算出し自動停止。TTS有効時は抑制。
+- **TextOnly**: Simulatedと同等のロジック。テキスト長から推定時間を算出し自動停止。音声駆動の口パク進行中は開始されない。
 - **Amplitude**: AudioSource振幅解析＋ランダム母音切り替え（従来方式）。
 
 #### VoiceSettingsPanel (`Scripts/UI/`)
