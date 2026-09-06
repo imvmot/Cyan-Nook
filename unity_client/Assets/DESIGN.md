@@ -3130,7 +3130,16 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
     **message があれば作業状況としてメッセージ欄に表示**（`ChatManager.OnExternalThinkingStatus` →
     UIController が「...」の代わりに表示。読み上げ・会話履歴なし。再受信のたびに上書きされるため、
     外部側がツール実行の進捗を `{"action":"thinking","message":"🔍 web検索中..."}` のように
-    流し込める）。emotion/emote 等の他フィールドは使わない。後続の本応答は Thinking ガードの例外として通り、
+    流し込める）。emotion/emote 等の他フィールドは使わない。
+    **状況読み上げ（Thinking Voice）**: `ExternalActionFeedController.thinkingVoiceEnabled` ON なら
+    message を読み上げる。音声ソースは応答音声と同じ優先順（thinking JSON に voice_timestamp 付きの
+    wav があれば `VoiceSynthesisController.PlayThinkingClip`、無ければ本体 TTS 有効時に
+    `SpeakThinkingStatus` で合成。Web Speech API は通常速度）。`thinkingVoicePitch`（既定 1.5、
+    0.5〜3.0）を AudioSource.pitch に適用して早回し（速度と音程が連動する「早口ロボ声」演出）。
+    リップシンクは Amplitude 固定（ピッチ変更でモーラ同期はズレるため）。状況更新のたびに前の
+    読み上げを打ち切り、本応答到着・内部リクエスト開始・タイムアウトのいずれでも停止する
+    （`StopThinkingVoice`、合成途中は世代カウンタで無効化）。thinking のクリップは ChatManager に
+    渡さず ExternalActionFeedController が扱う（ApplyExternalResponse の所有権契約の例外）。後続の本応答は Thinking ガードの例外として通り、
     内部フローと同じ「適用 → Thinking 解除」の順序で処理される。
     本応答が届かない場合は `ChatManager.externalThinkingTimeout`（既定120秒、0以下で監視無効・非推奨）で自動解除。
     外部 Thinking 中に内部 LLM リクエスト（チャット入力等）が始まった場合は所有権を内部フローへ移譲し、
@@ -3170,9 +3179,9 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
 - context/camera どちらか一方のURLだけでも稼働可
 
 **PlayerPrefs キー（SettingsExporter対象）:**
-`feed_enabled` / `feed_actionUrl` / `feed_subscribeInterval` / `feed_contextUrl` / `feed_cameraUrl` / `feed_publishInterval` / `feed_voiceEnabled` / `feed_voiceUrl`
+`feed_enabled` / `feed_actionUrl` / `feed_subscribeInterval` / `feed_contextUrl` / `feed_cameraUrl` / `feed_publishInterval` / `feed_voiceEnabled` / `feed_voiceUrl` / `feed_thinkingVoiceEnabled` / `feed_thinkingVoicePitch`
 
-**UI**: LLMSettingsPanel のフィードセクション（トグル + 各URL/間隔 + 音声再生トグル/音声URL + ヘルプページボタン）
+**UI**: LLMSettingsPanel のフィードセクション（トグル + 各URL/間隔 + 音声再生トグル/音声URL + 状況読み上げトグル/ピッチ + ヘルプページボタン）
 
 **UNITYROOM_BUILD では完全停止**（`Start()` で `feedEnabled=false; enabled=false`。
 UIを隠すだけでは PlayerPrefs 復元や Import で有効化され得るため機能側で塞ぐ）

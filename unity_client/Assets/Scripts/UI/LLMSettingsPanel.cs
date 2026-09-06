@@ -132,6 +132,12 @@ namespace CyanNook.UI
         [Tooltip("フィード音声(voice.wav)購読URL入力（空でアクションURLから自動導出）")]
         public TMP_InputField feedVoiceUrlInputField;
 
+        [Tooltip("thinking状況読み上げトグル")]
+        public Toggle feedThinkingVoiceToggle;
+
+        [Tooltip("thinking状況読み上げのピッチ倍率入力（1.0=通常）")]
+        public TMP_InputField feedThinkingPitchInputField;
+
         [Tooltip("解説ページを開くボタン")]
         public Button feedHelpButton;
 
@@ -426,6 +432,10 @@ namespace CyanNook.UI
                 feedVoiceToggle.onValueChanged.RemoveListener(OnFeedVoiceToggleChanged);
             if (feedVoiceUrlInputField != null)
                 feedVoiceUrlInputField.onEndEdit.RemoveListener(OnFeedVoiceUrlChanged);
+            if (feedThinkingVoiceToggle != null)
+                feedThinkingVoiceToggle.onValueChanged.RemoveListener(OnFeedThinkingVoiceToggleChanged);
+            if (feedThinkingPitchInputField != null)
+                feedThinkingPitchInputField.onEndEdit.RemoveListener(OnFeedThinkingPitchChanged);
             if (feedHelpButton != null)
                 feedHelpButton.onClick.RemoveListener(OnFeedHelpClicked);
             if (cronSchedulerToggle != null)
@@ -1294,6 +1304,16 @@ namespace CyanNook.UI
             {
                 feedVoiceUrlInputField.onEndEdit.AddListener(OnFeedVoiceUrlChanged);
             }
+
+            if (feedThinkingVoiceToggle != null)
+            {
+                feedThinkingVoiceToggle.onValueChanged.AddListener(OnFeedThinkingVoiceToggleChanged);
+            }
+
+            if (feedThinkingPitchInputField != null)
+            {
+                feedThinkingPitchInputField.onEndEdit.AddListener(OnFeedThinkingPitchChanged);
+            }
             if (feedHelpButton != null)
             {
                 feedHelpButton.onClick.AddListener(OnFeedHelpClicked);
@@ -1348,6 +1368,16 @@ namespace CyanNook.UI
             if (feedVoiceUrlInputField != null && externalActionFeedController != null)
             {
                 feedVoiceUrlInputField.text = externalActionFeedController.voiceSubscribeUrl;
+            }
+
+            if (feedThinkingVoiceToggle != null && externalActionFeedController != null)
+            {
+                feedThinkingVoiceToggle.SetIsOnWithoutNotify(externalActionFeedController.thinkingVoiceEnabled);
+            }
+
+            if (feedThinkingPitchInputField != null && externalActionFeedController != null)
+            {
+                feedThinkingPitchInputField.text = externalActionFeedController.thinkingVoicePitch.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
             }
         }
 
@@ -1419,6 +1449,36 @@ namespace CyanNook.UI
             if (externalActionFeedController == null) return;
             externalActionFeedController.SetVoiceSubscribeUrl(value);
             Debug.Log("[LLMSettingsPanel] Feed voice URL updated");
+        }
+
+        private void OnFeedThinkingVoiceToggleChanged(bool isOn)
+        {
+            if (externalActionFeedController == null) return;
+            externalActionFeedController.SetThinkingVoiceEnabled(isOn);
+            Debug.Log($"[LLMSettingsPanel] Feed thinking voice: {(isOn ? "ON" : "OFF")}");
+        }
+
+        private void OnFeedThinkingPitchChanged(string value)
+        {
+            if (externalActionFeedController == null) return;
+            if (float.TryParse(value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float pitch))
+            {
+                externalActionFeedController.SetThinkingVoicePitch(pitch);
+                // クランプ後の値を表示に戻す
+                if (feedThinkingPitchInputField != null)
+                {
+                    feedThinkingPitchInputField.SetTextWithoutNotify(
+                        externalActionFeedController.thinkingVoicePitch.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
+                }
+                Debug.Log($"[LLMSettingsPanel] Feed thinking voice pitch: {externalActionFeedController.thinkingVoicePitch:F2}");
+            }
+            else if (feedThinkingPitchInputField != null)
+            {
+                // 数値でない入力は現在値に書き戻す（表示と設定値のズレ防止）
+                feedThinkingPitchInputField.SetTextWithoutNotify(
+                    externalActionFeedController.thinkingVoicePitch.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
+            }
         }
 
         private void OnFeedHelpClicked()

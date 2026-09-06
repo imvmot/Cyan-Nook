@@ -122,10 +122,18 @@ namespace CyanNook.Voice
         // Web Speech APIリップシンク用: 現在の文テキスト
         private string _currentWebSpeechText = "";
 
-        // 再生中の外部供給クリップ（PlayExternalClip）。
+        // 再生中の外部供給クリップ（PlayExternalClip / 状況読み上げ）。
         // AudioClipはランタイム生成物でGC回収されないため、再生完了・停止・
         // 差し替え時に明示的にDestroyする（放置すると受信のたびにメモリが積み上がる）
         private AudioClip _currentExternalClip;
+
+        // 状況読み上げ（外部thinkingの作業状況）中か。
+        // 本応答の到着・thinking解除時にStopThinkingVoiceで打ち切るための印
+        private bool _isThinkingVoice;
+
+        // 状況読み上げの合成世代。打ち切り・差し替え後に古い合成結果が
+        // 遅れて再生されるのを防ぐ（await後に世代が変わっていたら捨てる）
+        private int _thinkingVoiceGeneration;
 
         private void Awake()
         {
@@ -278,10 +286,15 @@ namespace CyanNook.Voice
             if (audioSource != null)
             {
                 audioSource.Stop();
+                audioSource.pitch = 1f;
             }
 
             // 外部供給クリップの破棄（AudioSourceから外してから）
             DestroyExternalClipIfAny();
+
+            // 状況読み上げの終了（合成中のものも世代で無効化）
+            _isThinkingVoice = false;
+            _thinkingVoiceGeneration++;
             _orderedClipBuffer.Clear();
             _nextSynthesisSequence = 0;
             _nextPlaybackSequence = 0;
@@ -338,12 +351,111 @@ namespace CyanNook.Voice
         public void PlayExternalClip(AudioClip clip)
         {
             if (clip == null || audioSource == null) return;
+            PlayClipInternal(clip, 1f, thinkingVoice: false);
+        }
 
-            // 進行中の合成・再生・キューを打ち切る（前回の外部クリップもここで破棄される。
-            // 直後に再生を始めるためSTTは再開しない）
+        /// <summary>
+        /// 外部thinkingの状況読み上げ: 供給済みクリップ（voice.wav）をピッチ倍率付きで再生する。
+        /// ttsEnabledに依らず動作する（voice.wavと同じ扱い）。クリップの所有権は本メソッドが引き取る
+        /// </summary>
+        public void PlayThinkingClip(AudioClip clip, float pitch)
+        {
+            if (clip == null) return;
+            if (audioSource == null)
+            {
+                Destroy(clip);
+                return;
+            }
+            PlayClipInternal(clip, pitch, thinkingVoice: true);
+        }
+
+        /// <summary>
+        /// 外部thinkingの状況読み上げ: テキストを現在のTTSエンジンで合成し、ピッチ倍率付きで再生する。
+        /// ttsEnabledがOFFなら何もしない。前の状況読み上げは打ち切られる（最新の状況を優先）。
+        /// Web Speech APIはピッチ制御の経路が別のため通常速度で読み上げる
+        /// </summary>
+        public void SpeakThinkingStatus(string text, float pitch)
+        {
+            if (!ttsEnabled || audioSource == null || string.IsNullOrWhiteSpace(text)) return;
+
+            // 世代を進めて、合成中の古い状況読み上げを無効化する
+            int gen = ++_thinkingVoiceGeneration;
+
+            if (ttsEngineType == TTSEngineType.WebSpeechAPI)
+            {
+                if (webSpeechSynthesis == null) return;
+
+                StopInternal(resumeStt: false);
+                _isThinkingVoice = true;
+                _currentWebSpeechText = text;
+                webSpeechSynthesis.Enqueue(text);
+                return;
+            }
+
+            _ = SynthesizeThinkingStatusAsync(text, pitch, gen);
+        }
+
+        /// <summary>
+        /// 状況読み上げを打ち切る（本応答の到着・thinking解除時にChatManagerから呼ばれる）。
+        /// 合成途中のものも世代で無効化する
+        /// </summary>
+        public void StopThinkingVoice()
+        {
+            _thinkingVoiceGeneration++;
+            if (!_isThinkingVoice) return;
+            Stop();
+        }
+
+        private async Task SynthesizeThinkingStatusAsync(string text, float pitch, int gen)
+        {
+            try
+            {
+                AudioClip clip = null;
+                if (ttsEngineType == TTSEngineType.VOICEVOX && voicevoxClient != null)
+                {
+                    var (c, _) = await voicevoxClient.SynthesizeAsync(text);
+                    clip = c;
+                }
+                else if (ttsEngineType == TTSEngineType.GeminiTTS && geminiTtsClient != null)
+                {
+                    var (c, _) = await geminiTtsClient.SynthesizeAsync(text);
+                    clip = c;
+                }
+
+                if (clip == null) return;
+
+                // 合成中に打ち切り・差し替えされていたら結果を捨てる
+                if (gen != _thinkingVoiceGeneration)
+                {
+                    Destroy(clip);
+                    return;
+                }
+
+                PlayClipInternal(clip, pitch, thinkingVoice: true);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[VoiceSynthesisController] Thinking status synthesis failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 供給済みクリップの再生実体（外部応答音声 / 状況読み上げ 共通）。
+        /// 進行中の合成・再生・キューを打ち切って再生する。
+        /// クリップの所有権を引き取り、再生完了・停止・差し替え時に破棄する
+        /// </summary>
+        private void PlayClipInternal(AudioClip clip, float pitch, bool thinkingVoice)
+        {
+            // 前回の外部クリップもここで破棄される。直後に再生を始めるためSTTは再開しない
             StopInternal(resumeStt: false);
 
             _currentExternalClip = clip;
+            _isThinkingVoice = thinkingVoice;
+
+            // ピッチ倍率（状況読み上げの早回し用。速度と音程が一緒に変わる）。
+            // 通常再生は1.0。極端な値はクランプ
+            float effectivePitch = Mathf.Clamp(pitch, 0.5f, 3f);
+            audioSource.pitch = effectivePitch;
             audioSource.clip = clip;
             audioSource.Play();
             _isPlaying = true;
@@ -354,16 +466,18 @@ namespace CyanNook.Voice
                 voiceInputController?.SuppressForTTS();
             }
 
-            // 外部wavはモーラ情報を持たないためAmplitude（波形振幅）リップシンク
+            // 供給済みクリップはモーラ情報を持たない（ピッチ変更時はモーラ同期もズレる）ため
+            // Amplitude（波形振幅）リップシンク
             if (lipSyncController != null)
             {
                 lipSyncController.StartLipSync(clip);
             }
 
+            // 再生時間はピッチ倍率で縮む
             CancelPlaybackWait();
-            _playbackWaitCoroutine = StartCoroutine(WaitForPlaybackEnd(clip.length));
+            _playbackWaitCoroutine = StartCoroutine(WaitForPlaybackEnd(clip.length / effectivePitch));
 
-            Debug.Log($"[VoiceSynthesisController] Playing external clip ({clip.length:F1}s)");
+            Debug.Log($"[VoiceSynthesisController] Playing {(thinkingVoice ? "thinking status" : "external")} clip ({clip.length:F1}s, pitch={effectivePitch:F2})");
         }
 
         /// <summary>
@@ -572,6 +686,8 @@ namespace CyanNook.Voice
             _orderedClipBuffer.Remove(_nextPlaybackSequence);
             _nextPlaybackSequence++;
 
+            // 通常再生は常に等速（状況読み上げのピッチ残りへの保険）
+            audioSource.pitch = 1f;
             audioSource.clip = entry.clip;
             audioSource.Play();
 
@@ -614,8 +730,14 @@ namespace CyanNook.Voice
             _playbackWaitCoroutine = null;
             _isPlaying = false;
 
-            // 外部供給クリップの再生完了ならここで破棄（合成クリップの場合はnullでno-op）
+            // 外部供給クリップの再生完了ならここで破棄（合成クリップの場合はnullでno-op）。
+            // 状況読み上げのピッチが後続の通常再生に残らないよう戻す
             DestroyExternalClipIfAny();
+            _isThinkingVoice = false;
+            if (audioSource != null)
+            {
+                audioSource.pitch = 1f;
+            }
 
             // リップシンク停止
             if (lipSyncController != null)
@@ -674,6 +796,7 @@ namespace CyanNook.Voice
             if (ttsEngineType != TTSEngineType.WebSpeechAPI) return;
 
             _isPlaying = false;
+            _isThinkingVoice = false;
             TryResumeSTT();
         }
 

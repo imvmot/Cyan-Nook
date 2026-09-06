@@ -1241,7 +1241,9 @@ namespace CyanNook.Chat
         /// <param name="response">適用するLLMResponseData（LLMResponseData.FromJsonでパース済みを想定）</param>
         /// <param name="externalVoiceClip">フィードから取得済みの合成音声（voice.wav）。
         /// nullなら従来どおり自前TTSで合成。非nullなら自前合成の代わりにこれを再生する。
-        /// trueを返した場合クリップの所有権は本メソッドが引き取る（falseなら呼び出し元が破棄）</param>
+        /// trueを返した場合クリップの所有権は本メソッドが引き取る（falseなら呼び出し元が破棄）。
+        /// ただしthinkingアクションでは消費しない（状況読み上げは呼び出し元の
+        /// ExternalActionFeedControllerが担当するため、呼び出し元はnullを渡すこと）</param>
         /// <returns>適用した場合true、ビジー等でスキップした場合false</returns>
         public bool ApplyExternalResponse(LLMResponseData response, AudioClip externalVoiceClip = null)
         {
@@ -1304,15 +1306,14 @@ namespace CyanNook.Chat
             // 外部リスナー（herald等）が推論開始時にPUTすることで、
             // 応答待ちの間キャラクターに考え中モーションをさせる。
             // 状態遷移のみ行い、message等の他フィールドは使わない
-            if (response.action != null &&
-                response.action.Trim().Equals("thinking", StringComparison.OrdinalIgnoreCase))
+            if (IsThinkingAction(response))
             {
-                // thinkingに音声は付かない想定の保険（付いていたら破棄）
+                // 契約外でクリップが渡された場合の保険（thinkingの音声は呼び出し元が扱う）
                 if (externalVoiceClip != null)
                 {
                     Destroy(externalVoiceClip);
                 }
-                // messageがあれば作業状況として表示に回す（状態遷移以外の用途はこれのみ）
+                // messageがあれば作業状況として表示に回す（emotion/emote等は使わない）
                 StartExternalThinking(response.message);
                 return true;
             }
@@ -1368,6 +1369,16 @@ namespace CyanNook.Chat
                 OnThinkingEnded?.Invoke();
             }
             return true;
+        }
+
+        /// <summary>
+        /// 外部フィード応答がthinkingアクション（本応答の前触れ）かどうか。
+        /// ApplyExternalResponseとExternalActionFeedControllerで判定を揃えるための共通関数
+        /// </summary>
+        public static bool IsThinkingAction(LLMResponseData response)
+        {
+            return response?.action != null &&
+                   response.action.Trim().Equals("thinking", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -1436,6 +1447,10 @@ namespace CyanNook.Chat
 
             if (!_isExternalThinkingActive) return;
             _isExternalThinkingActive = false;
+
+            // 状況読み上げは本応答・内部リクエスト・タイムアウトのいずれでも打ち切る
+            // （本応答の音声と重ならないように）
+            voiceSynthesisController?.StopThinkingVoice();
 
             if (stopAnimation && _isThinkingActive)
             {
