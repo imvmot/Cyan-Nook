@@ -919,6 +919,10 @@ namespace CyanNook.UI
                 _messageTimer = messageDisplayDuration;
             }
 
+            // 直接入力はChatManagerを迂回するため、進行中のThinkingを先に畳んで状態を揃える
+            // （畳まないとThinkingフラグが残ったまま別タイムラインに入り、就寝→起床edが飛ぶ等の矛盾が起きる）
+            chatManager?.ForceStopThinkingForDirectInput();
+
             if (characterController != null)
             {
                 characterController.ProcessResponse(response);

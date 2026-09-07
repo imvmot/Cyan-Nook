@@ -3154,7 +3154,11 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
     リップシンクは Amplitude 固定（ピッチ変更でモーラ同期はズレるため）。状況更新のたびに前の
     読み上げを打ち切り、本応答到着・内部リクエスト開始・タイムアウトのいずれでも停止する
     （`StopThinkingVoice`、合成途中は世代カウンタで無効化）。thinking のクリップは ChatManager に
-    渡さず ExternalActionFeedController が扱う（ApplyExternalResponse の所有権契約の例外）。後続の本応答は Thinking ガードの例外として通り、
+    渡さず ExternalActionFeedController が扱う（ApplyExternalResponse の所有権契約の例外）。
+    **デバッグ JSON 直接入力**（`UIController.ProcessJson` → `CharacterController.ProcessResponse`）は
+    ChatManager を迂回するため、入力前に `ChatManager.ForceStopThinkingForDirectInput()` で進行中の
+    Thinking（内部/外部）を ed 無しで畳む（畳まないと Thinking フラグが残ったまま別タイムラインに入り、
+    例えば就寝後の起床で `ExitLoop` が `ForceStopThinkingToEnd` を先に走らせて起床 ed が飛ぶ）。後続の本応答は Thinking ガードの例外として通り、
     内部フローと同じ「適用 → Thinking 解除」の順序で処理される。
     本応答が届かない場合は `ChatManager.externalThinkingTimeout`（既定120秒、0以下で監視無効・非推奨）で自動解除。
     外部 Thinking 中に内部 LLM リクエスト（チャット入力等）が始まった場合は所有権を内部フローへ移譲し、

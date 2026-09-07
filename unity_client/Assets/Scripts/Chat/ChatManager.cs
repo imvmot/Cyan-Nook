@@ -316,6 +316,27 @@ namespace CyanNook.Chat
         /// 通常Entry / Cron帰宅 共通の経路。
         /// </summary>
         /// <summary>
+        /// デバッグ用JSON直接入力（UIController.ProcessJson）の前処理。
+        /// 直接入力はChatManagerを経由せずCharacterControllerへ渡るため、進行中のThinking
+        /// （内部/外部）を畳まないと「Thinkingフラグが立ったまま別タイムラインに入る」矛盾状態になる
+        /// （例: Thinking中に就寝を直接入力 → 次の起床で ExitLoop が ForceStopThinkingToEnd を
+        /// 先に走らせ、起床edを飛ばしてIdleへ）。ed無しで即時に強制終了し、状態を揃える
+        /// </summary>
+        public void ForceStopThinkingForDirectInput()
+        {
+            // 外部Thinkingの管理状態（タイムアウト監視・状況読み上げ）を畳む。演出停止は下で強制
+            CancelExternalThinking(stopAnimation: false);
+
+            if (_isThinkingActive)
+            {
+                talkController?.ForceStopThinking();
+                _isThinkingActive = false;
+                OnThinkingEnded?.Invoke();
+                Debug.Log("[ChatManager] Thinking force-stopped for direct JSON input");
+            }
+        }
+
+        /// <summary>
         /// 起動時の初回Entryを再生しない経路（睡眠状態の復元）で、外部アクションフィードの
         /// 適用開始ゲートを開ける。これが無いと睡眠復元起動では OnEntryAnimationCompleted が
         /// 発火せず、フィードが外出→帰宅まで永久に退避される
