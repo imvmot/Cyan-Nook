@@ -378,7 +378,7 @@ namespace CyanNook.Chat
                 }
 
                 // 適用（ApplyExternalResponse内でFillDefaults補填）。
-                // ビジー（応答待ち/Thinking/睡眠中/外出中）ならfalseが返るので
+                // ビジー（応答待ち/Thinking/外出中。睡眠中は起床して適用される）ならfalseが返るので
                 // _lastAppliedRawJsonを更新せず、次ポーリングで再試行する（wavも次回取得し直す）。
                 // その間に外部側がより新しい応答を出せばrawが変わり最新を適用する（最新へ収束）。
                 // thinkingの音声（状況読み上げ）は本クラスが扱うため、クリップはChatManagerに渡さない
@@ -397,7 +397,7 @@ namespace CyanNook.Chat
                 else
                 {
                     if (voiceClip != null) Destroy(voiceClip);
-                    Debug.Log("[ExternalActionFeed] Apply skipped (busy/sleep/outing), will retry next poll");
+                    Debug.Log("[ExternalActionFeed] Apply skipped (busy/outing/entry), will retry next poll");
                 }
             }
             finally

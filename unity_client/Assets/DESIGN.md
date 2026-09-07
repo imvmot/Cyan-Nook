@@ -3121,9 +3121,24 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
   （`LLMResponseData.FromJson` は失敗時にフォールバックを返してしまうため使わない）
 - 適用は `ChatManager.ApplyExternalResponse(LLMResponseData)`:
   - 既存のブロッキング応答確定処理を通すため、UI表示・TTS・感情・アニメ・履歴追加まで一気通貫で動く
-  - ビジー（応答待ち/Thinking/睡眠中/外出中/Entry再生中/初回Entry完了前）は false を返しスキップ
+  - ビジー（応答待ち/Thinking/外出中/Entry再生中/初回Entry完了前）は false を返しスキップ
     → `_lastAppliedRawJson` を更新せず次ポーリングで再試行（その間に外部が新しい応答を出せば最新に収束）
     （例外: 下記の外部 thinking 起点の Thinking 中は本応答を通す）
+    - 初回Entry完了ゲート `_hasInitialEntryCompleted` は `OnEntryAnimationCompleted` で開くが、
+      **睡眠状態を復元して起動した場合は Entry を再生しない**ため、`CharacterSetup` が
+      `ChatManager.MarkInitialEntryCompleted()` を呼んで明示的に開ける（これが無いと睡眠復元起動では
+      フィードが外出→帰宅まで永久に退避される）
+  - **睡眠中はフィードに従って起床する**（フィード運用では LLM 制御を外部に委ねているため、
+    夢等の演出も外部側の責務という思想）。内部の起床リクエスト（ユーザー発言）と同じ
+    `WakeUpWithMessage` 経路を LLM リクエスト無しで流用（`_isExternalWakeUp` + `_requestKind=WakeUp`）:
+    - 本応答: 起床 ed 再生と並行してメッセージ表示・表情・音声を即時反映、action/emote
+      （CharacterController への通知）は ed 完了後に `QueueWakeUpResponse` 経由で反映
+    - thinking: ed 再生中は Thinking アニメーションを抑制（状況表示・状況読み上げは行う）。
+      ed 完了時にまだ外部 Thinking 中なら考え中モーションを開始
+    - ed 再生中に thinking → 本応答へ進んだ場合は、その時点から読み上げ開始（以後は本応答と同じ）
+    - `interact_sleep`（寝続ける指示）は「既に寝ている」として何もせず消費（false で退避すると
+      起床後に古い就寝指示が再適用され二度寝するため）
+    - 内部の起床リクエスト進行中に届いた場合はそちらを優先して退避（従来どおり再試行）
   - **`action:"thinking"` は特別扱い（本応答の前触れ）**: 考え中モーション（Thinking 状態）に入る。
     外部リスナー（herald 等）が LLM 推論開始時に `{"action":"thinking","timestamp":...}` を PUT すると、
     本応答が届くまでキャラクターが考え中演出をする（timestamp は変更検知に必要）。

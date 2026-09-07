@@ -26,7 +26,7 @@ Cyan-Nook（Unity 製 3D キャラクター表示アプリ）は、フィード�
    curl -sf http://<feed-host>:8093/feed/context.json
    ```
 
-   - `is_sleeping` / `is_outside` が true の間、投稿した行動は適用されない（アプリ側が保留し、起床/帰宅後に適用される）。古い行動が後から発火するのを避けたいなら、この間は投稿を控える
+   - `is_outside` が true の間、投稿した行動は適用されない（アプリ側が保留し、帰宅後に最新の 1 件だけ適用される）。古い行動が後から発火するのを避けたいなら、この間は投稿を控える。`is_sleeping` が true の場合は**投稿に従って起床する**（`interact_sleep` 以外の投稿で起床モーション再生 → 適用。寝かせ続けたいなら投稿しないか `interact_sleep` を投稿する）
    - `spatial_context` と `visible_objects` にキャラクターの現在位置・視界情報がある。行動決定の材料にする
    - キャラクター視点の画像が必要なら `/feed/camera.jpg` を取得して見る
 
@@ -86,14 +86,14 @@ Cyan-Nook（Unity 製 3D キャラクター表示アプリ）は、フィード�
 - 何もさせたくない・待機: `action: "ignore"`（message だけ喋らせることも可能）
 - 部屋の中を移動: `action: "move"` + `target.type: "dynamic"` か `"mirror"` / `"screencapture"`
 - 椅子に座る: `action: "interact_sit"` + `target.type: "interact_sit"`
-- 寝る: `action: "interact_sleep"` + `target.type: "interact_sleep"` + `sleep_duration` (分)。睡眠中は以降の投稿が保留される
+- 寝る: `action: "interact_sleep"` + `target.type: "interact_sleep"` + `sleep_duration` (分)。睡眠中に `interact_sleep` 以外を投稿するとキャラクターは起床してその行動を実行する（夢を見せる等の演出は投稿側の責務）
 - **`interact_exit` は部屋から退出する（外出）**。外出中は帰宅まで行動を受け付けなくなるため、明確な意図がある時だけ使う
 
 ## 注意
 
 - JSON は必ずオブジェクト単体。`{` で始まらないレスポンスや壊れた JSON はアプリ側で破棄され、キャラクターは無反応になる（エラーは返らない）
 - emotion と emote は矛盾させない（例: happy が最大なら emote は `happy01` か `Neutral`）
-- アプリが応答処理中・睡眠中・外出中の投稿は即時適用されず、状態が解けた時に最新の 1 件だけが適用される
+- アプリが応答処理中・外出中の投稿は即時適用されず、状態が解けた時に最新の 1 件だけが適用される。睡眠中の投稿は起床して適用される
 - **`action: "thinking"` は「考え中」演出専用の予約値**。推論を始める側（音声リスナー等）が
   `{"action":"thinking","timestamp":"..."}` を PUT すると、次の本応答が届くまでキャラクターが考え中モーションをする
   （本応答が来ない場合は一定時間で自動解除）。**最終的な応答の action に `thinking` を書いてはいけない**
