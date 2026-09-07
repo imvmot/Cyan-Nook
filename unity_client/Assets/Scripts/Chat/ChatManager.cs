@@ -179,6 +179,13 @@ namespace CyanNook.Chat
         public event Action OnThinkingStarted;
         public event Action OnThinkingEnded;
 
+        /// <summary>
+        /// 外部フィードのthinkingに付随する作業状況メッセージ（例: "🔍 web検索中..."）。
+        /// UIのメッセージ欄表示のみを意図し、読み上げ・会話履歴には乗せない。
+        /// thinking再受信のたびに発火するため、表示は都度上書きされる
+        /// </summary>
+        public event Action<string> OnExternalThinkingStatus;
+
         // --- ストリーミング専用イベント ---
         /// <summary>ストリーミングのテキストチャンク受信時（逐次表示用）</summary>
         public event Action<string> OnStreamingTextReceived;
@@ -215,6 +222,11 @@ namespace CyanNook.Chat
         // ApplyExternalResponseでセットし、HandleLLMResponseのTTSブロックが
         // 自前合成の代わりに再生して消費する
         private AudioClip _pendingExternalVoiceClip;
+
+        // 外部フィード起点の起床（睡眠中に届いたフィード応答で起床ed再生中）か。
+        // trueの間は_requestKind=WakeUpを維持し、内部の起床リクエストと同じ
+        // 「表示・音声は即時、CharacterControllerへの通知はed完了後」の経路を流用する
+        private bool _isExternalWakeUp;
 
         // Error状態からIdleへ自動復帰するコルーチン（HandleLLMErrorで開始）
         private Coroutine _errorRecoveryCoroutine;
@@ -303,6 +315,37 @@ namespace CyanNook.Chat
         /// Entry再生中にキューしたLLMレスポンスを発火する（OutingController.OnEntryAnimationCompleted購読）。
         /// 通常Entry / Cron帰宅 共通の経路。
         /// </summary>
+        /// <summary>
+        /// デバッグ用JSON直接入力（UIController.ProcessJson）の前処理。
+        /// 直接入力はChatManagerを経由せずCharacterControllerへ渡るため、進行中のThinking
+        /// （内部/外部）を畳まないと「Thinkingフラグが立ったまま別タイムラインに入る」矛盾状態になる
+        /// （例: Thinking中に就寝を直接入力 → 次の起床で ExitLoop が ForceStopThinkingToEnd を
+        /// 先に走らせ、起床edを飛ばしてIdleへ）。ed無しで即時に強制終了し、状態を揃える
+        /// </summary>
+        public void ForceStopThinkingForDirectInput()
+        {
+            // 外部Thinkingの管理状態（タイムアウト監視・状況読み上げ）を畳む。演出停止は下で強制
+            CancelExternalThinking(stopAnimation: false);
+
+            if (_isThinkingActive)
+            {
+                talkController?.ForceStopThinking();
+                _isThinkingActive = false;
+                OnThinkingEnded?.Invoke();
+                Debug.Log("[ChatManager] Thinking force-stopped for direct JSON input");
+            }
+        }
+
+        /// <summary>
+        /// 起動時の初回Entryを再生しない経路（睡眠状態の復元）で、外部アクションフィードの
+        /// 適用開始ゲートを開ける。これが無いと睡眠復元起動では OnEntryAnimationCompleted が
+        /// 発火せず、フィードが外出→帰宅まで永久に退避される
+        /// </summary>
+        public void MarkInitialEntryCompleted()
+        {
+            _hasInitialEntryCompleted = true;
+        }
+
         private void FlushEntryQueuedResponse()
         {
             // 初回Entry完了を記録（外部アクションフィードの適用開始ゲート）
@@ -534,6 +577,18 @@ namespace CyanNook.Chat
             if (IsBusy)
             {
                 Debug.LogWarning("[ChatManager] Cannot send auto-request: busy (state or LLM client processing)");
+                return;
+            }
+
+            // 外部フィード起点のThinking（考え中演出）中は自律リクエストを発火しない。
+            // 外部ThinkingはChatStateがIdleのままでIsBusyに映らないため明示的に弾く。
+            // 発火するとSetState(WaitingForResponse)がThinkingの所有権を引き取った上、
+            // 完了・エラー処理がThinkingを解除してしまい、外部の本応答を待つ演出が壊れる。
+            // ユーザー入力による割り込みは意図した挙動なので許可のまま。
+            // externalThinkingTimeoutがあるため永久ブロックにはならない
+            if (_isExternalThinkingActive)
+            {
+                Debug.Log("[ChatManager] Auto-request skipped (external thinking active)");
                 return;
             }
 
@@ -1215,14 +1270,17 @@ namespace CyanNook.Chat
         /// （会話履歴・感情・退屈度・TTS・UI表示・CharacterControllerルーティング）を通す。
         /// これによりアニメ・emote・視線・口パク・メッセージ表示・音声が一気通貫で駆動される。
         /// 外部フィードは「その場でアクションを見せる」用途のため、
-        /// 進行中リクエスト（応答待ち/Thinking）・睡眠中・外出中はスキップする（falseを返す）。
+        /// 進行中リクエスト（応答待ち/Thinking）・外出中はスキップする（falseを返す）。
+        /// 睡眠中はフィードに従って起床して適用する（interact_sleep / message無しignore は消費）。
         /// ※ ChatState は Idle/WaitingForResponse/Error の3値のみで睡眠中・外出中を表現しないため、
         ///    SleepController.IsSleeping / OutingController.IsOutside を明示的にチェックする必要がある。
         /// </summary>
         /// <param name="response">適用するLLMResponseData（LLMResponseData.FromJsonでパース済みを想定）</param>
         /// <param name="externalVoiceClip">フィードから取得済みの合成音声（voice.wav）。
         /// nullなら従来どおり自前TTSで合成。非nullなら自前合成の代わりにこれを再生する。
-        /// trueを返した場合クリップの所有権は本メソッドが引き取る（falseなら呼び出し元が破棄）</param>
+        /// trueを返した場合クリップの所有権は本メソッドが引き取る（falseなら呼び出し元が破棄）。
+        /// ただしthinkingアクションでは消費しない（状況読み上げは呼び出し元の
+        /// ExternalActionFeedControllerが担当するため、呼び出し元はnullを渡すこと）</param>
         /// <returns>適用した場合true、ビジー等でスキップした場合false</returns>
         public bool ApplyExternalResponse(LLMResponseData response, AudioClip externalVoiceClip = null)
         {
@@ -1249,13 +1307,8 @@ namespace CyanNook.Chat
                 return false;
             }
 
-            // 睡眠中・外出中はスキップ。_currentStateはこれらの状態でもIdleに戻っているため
-            // 別コントローラーのフラグで明示的に判定する必要がある。
-            if (sleepController != null && sleepController.IsSleeping)
-            {
-                Debug.Log("[ChatManager] ApplyExternalResponse skipped (sleeping)");
-                return false;
-            }
+            // 外出中はスキップ（「部屋にいないが何かしている」体感として保留を残す）。
+            // 睡眠中の扱いは下の退避ガードを全て通過した後で行う（起床は取り消せない副作用のため）
             if (outingController != null && outingController.IsOutside)
             {
                 Debug.Log("[ChatManager] ApplyExternalResponse skipped (outside)");
@@ -1281,19 +1334,55 @@ namespace CyanNook.Chat
                 return false;
             }
 
+            // 睡眠中: フィードは外部にLLM制御を委ねている状態なので、内容に従って起床する
+            // （夢を見る等の演出が欲しければ外部側で行う思想）。_currentStateは睡眠中もIdleの
+            // ためSleepControllerのフラグで判定する。起床は取り消せない副作用なので、
+            // 上の退避ガード（外出/Entry/初回Entry）を全て通過した後で行う。
+            // - interact_sleep（寝続ける指示）と message 無しの ignore（ハートビート等）は
+            //   「既に寝ている」ので何もせず消費する（falseで退避すると起床後に古い就寝指示が
+            //   再適用されて二度寝する）。進行中の外部Thinkingも畳む（ed中に本応答として届いた
+            //   場合、残すとed完了時に考え込み始める）
+            // - 内部の起床リクエスト（ユーザー発言/Cron起床）が進行中ならその応答を優先して退避
+            // - それ以外は外部起床を開始し、以降の通常適用（thinking/本応答）へ進む。
+            //   ed再生中に届く2通目以降は進行中の外部起床に相乗りする
+            if (sleepController != null && sleepController.IsSleeping)
+            {
+                if (IsSleepAction(response) || (response.IsIgnore && !response.HasMessage))
+                {
+                    if (externalVoiceClip != null)
+                    {
+                        Destroy(externalVoiceClip);
+                    }
+                    CancelExternalThinking(stopAnimation: true);
+                    Debug.Log($"[ChatManager] ApplyExternalResponse: already sleeping, '{response.action}' consumed as no-op");
+                    return true;
+                }
+
+                if (sleepController.IsWakingUp && !_isExternalWakeUp)
+                {
+                    Debug.Log("[ChatManager] ApplyExternalResponse skipped (internal wake-up in progress)");
+                    return false;
+                }
+
+                if (!sleepController.IsWakingUp)
+                {
+                    StartExternalWakeUp();
+                }
+            }
+
             // action:"thinking" は「本応答の前触れ」の特別扱い。
             // 外部リスナー（herald等）が推論開始時にPUTすることで、
             // 応答待ちの間キャラクターに考え中モーションをさせる。
             // 状態遷移のみ行い、message等の他フィールドは使わない
-            if (response.action != null &&
-                response.action.Trim().Equals("thinking", StringComparison.OrdinalIgnoreCase))
+            if (IsThinkingAction(response))
             {
-                // thinkingに音声は付かない想定の保険（付いていたら破棄）
+                // 契約外でクリップが渡された場合の保険（thinkingの音声は呼び出し元が扱う）
                 if (externalVoiceClip != null)
                 {
                     Destroy(externalVoiceClip);
                 }
-                StartExternalThinking();
+                // messageがあれば作業状況として表示に回す（emotion/emote等は使わない）
+                StartExternalThinking(response.message);
                 return true;
             }
 
@@ -1311,9 +1400,13 @@ namespace CyanNook.Chat
             response.FillDefaults();
 
             // リクエスト種別をクリアし、通常のブロッキング応答として確定処理へ流す
-            // （上のガードで睡眠中・外出中・Entry再生中は弾かれているため、
-            // WakeUp/CronEntryが進行中にここへ到達することはない）
-            _requestKind = RequestKind.None;
+            // （外出中・Entry再生中は上のガードで弾かれている。外部起床中は WakeUp を維持し、
+            // HandleLLMResponseの起床分岐＝表示・音声は通す／CharacterController通知はed完了まで
+            // キュー、を流用する）
+            if (!_isExternalWakeUp)
+            {
+                _requestKind = RequestKind.None;
+            }
             _isStreamingRequest = false;
             _incrementalFieldsApplied = false;
             _parseErrorHandled = false;
@@ -1338,35 +1431,107 @@ namespace CyanNook.Chat
 
             // 外部Thinkingの解除（内部フローのHandleRequestCompletedに相当）。
             // HandleLLMResponseはThinkingを止めないため、ここで明示的に解除する
-            if (wasExternalThinking && _isThinkingActive)
+            if (wasExternalThinking)
             {
-                if (talkController != null)
+                if (_isThinkingActive)
                 {
-                    talkController.StopThinking();
+                    if (talkController != null)
+                    {
+                        talkController.StopThinking();
+                    }
+                    _isThinkingActive = false;
                 }
-                _isThinkingActive = false;
+                // アニメ保留中（起床ed中）でもStartedと対でEndedを出す
+                // （購読側の状態リセットが Ended に依存している）
                 OnThinkingEnded?.Invoke();
             }
             return true;
         }
 
         /// <summary>
+        /// 外部フィード応答による起床。内部の起床リクエスト（ユーザー発言）と同じ
+        /// 「ed再生と並行して応答を処理し、CharacterControllerへの通知はed完了後」の流れを
+        /// LLMリクエスト無しで再現する。ed完了時、キューされた本応答があれば発火し、
+        /// 無ければ外部Thinking中なら（ed中は抑制していた）考え中モーションを開始する。
+        /// ※ 夢リクエスト（Auto）が進行中の場合はApplyExternalResponse冒頭のIdleガードで
+        ///    退避されるため、ここに来る時点で内部リクエストは無い
+        /// </summary>
+        private void StartExternalWakeUp()
+        {
+            Debug.Log("[ChatManager] External feed response during sleep, initiating wake-up");
+
+            _isExternalWakeUp = true;
+            _requestKind = RequestKind.WakeUp;
+
+            sleepController.WakeUpWithMessage((queuedResponse) =>
+            {
+                ClearRequestKind(RequestKind.WakeUp);
+                _isExternalWakeUp = false;
+
+                if (queuedResponse != null)
+                {
+                    Debug.Log("[ChatManager] External wake-up: dispatching queued response to CharacterController");
+                    OnChatResponseReceived?.Invoke(queuedResponse);
+                }
+                else if (_isExternalThinkingActive)
+                {
+                    Debug.Log("[ChatManager] External wake-up: still thinking, starting Thinking animation");
+                    if (talkController != null)
+                    {
+                        talkController.StartThinking();
+                        _isThinkingActive = true;
+                    }
+                }
+            });
+        }
+
+        /// <summary>
+        /// 外部フィード応答が就寝アクション（interact_sleep）かどうか
+        /// </summary>
+        private static bool IsSleepAction(LLMResponseData response)
+        {
+            return response?.action != null &&
+                   response.action.Trim().Equals("interact_sleep", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 外部フィード応答がthinkingアクション（本応答の前触れ）かどうか。
+        /// ApplyExternalResponseとExternalActionFeedControllerで判定を揃えるための共通関数
+        /// </summary>
+        public static bool IsThinkingAction(LLMResponseData response)
+        {
+            return response?.action != null &&
+                   response.action.Trim().Equals("thinking", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// 外部フィードのaction:"thinking"で考え中モーションに入る。
-        /// 既に外部Thinking中の再受信（連続ウェイクワード等）はタイムアウトの延長のみ行う。
+        /// 既に外部Thinking中の再受信（連続ウェイクワード・ツール実行の進捗通知等）は
+        /// タイムアウトの延長と状況メッセージの更新のみ行う。
         /// 本応答が届かない場合に備え、externalThinkingTimeout秒で自動解除する
         /// </summary>
-        private void StartExternalThinking()
+        /// <param name="statusMessage">作業状況メッセージ（省略/空なら表示更新なし）</param>
+        private void StartExternalThinking(string statusMessage = null)
         {
             if (!_isExternalThinkingActive)
             {
-                if (talkController != null)
+                // 起床ed再生中はThinkingアニメーションを抑制（内部の起床リクエストと同じ扱い）。
+                // ed完了時にまだ外部Thinking中なら、外部起床のコールバックで開始する
+                bool deferAnimation = sleepController != null && sleepController.IsWakingUp;
+                if (!deferAnimation && talkController != null)
                 {
                     talkController.StartThinking();
                     _isThinkingActive = true;
                 }
                 _isExternalThinkingActive = true;
                 OnThinkingStarted?.Invoke();
-                Debug.Log("[ChatManager] External thinking started");
+                Debug.Log($"[ChatManager] External thinking started{(deferAnimation ? " (animation deferred until wake-up ed completes)" : "")}");
+            }
+
+            // 作業状況メッセージの表示更新（OnThinkingStartedの「...」を上書きする）
+            if (!string.IsNullOrWhiteSpace(statusMessage))
+            {
+                OnExternalThinkingStatus?.Invoke(statusMessage.Trim());
             }
 
             // タイムアウトを（再）セット。0以下は「即時解除」ではなく「監視無効」とする
@@ -1409,13 +1574,21 @@ namespace CyanNook.Chat
             if (!_isExternalThinkingActive) return;
             _isExternalThinkingActive = false;
 
-            if (stopAnimation && _isThinkingActive)
+            // 状況読み上げは本応答・内部リクエスト・タイムアウトのいずれでも打ち切る
+            // （本応答の音声と重ならないように）
+            voiceSynthesisController?.StopThinkingVoice();
+
+            if (stopAnimation)
             {
-                if (talkController != null)
+                if (_isThinkingActive)
                 {
-                    talkController.StopThinking();
+                    if (talkController != null)
+                    {
+                        talkController.StopThinking();
+                    }
+                    _isThinkingActive = false;
                 }
-                _isThinkingActive = false;
+                // アニメ保留中（起床ed中）のタイムアウトでもStartedと対でEndedを出す
                 OnThinkingEnded?.Invoke();
             }
         }

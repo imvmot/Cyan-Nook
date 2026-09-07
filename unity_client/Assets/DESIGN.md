@@ -3121,18 +3121,52 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
   （`LLMResponseData.FromJson` は失敗時にフォールバックを返してしまうため使わない）
 - 適用は `ChatManager.ApplyExternalResponse(LLMResponseData)`:
   - 既存のブロッキング応答確定処理を通すため、UI表示・TTS・感情・アニメ・履歴追加まで一気通貫で動く
-  - ビジー（応答待ち/Thinking/睡眠中/外出中/Entry再生中/初回Entry完了前）は false を返しスキップ
+  - ビジー（応答待ち/Thinking/外出中/Entry再生中/初回Entry完了前）は false を返しスキップ
     → `_lastAppliedRawJson` を更新せず次ポーリングで再試行（その間に外部が新しい応答を出せば最新に収束）
     （例外: 下記の外部 thinking 起点の Thinking 中は本応答を通す）
-  - **`action:"thinking"` は特別扱い（本応答の前触れ）**: message 等の他フィールドは使わず、
-    考え中モーション（Thinking 状態）に入るだけ。外部リスナー（herald 等）が LLM 推論開始時に
-    `{"action":"thinking","timestamp":...}` を PUT すると、本応答が届くまでキャラクターが考え中演出をする
-    （timestamp は変更検知に必要）。後続の本応答は Thinking ガードの例外として通り、
+    - 初回Entry完了ゲート `_hasInitialEntryCompleted` は `OnEntryAnimationCompleted` で開くが、
+      **睡眠状態を復元して起動した場合は Entry を再生しない**ため、`CharacterSetup` が
+      `ChatManager.MarkInitialEntryCompleted()` を呼んで明示的に開ける（これが無いと睡眠復元起動では
+      フィードが外出→帰宅まで永久に退避される）
+  - **睡眠中はフィードに従って起床する**（フィード運用では LLM 制御を外部に委ねているため、
+    夢等の演出も外部側の責務という思想）。内部の起床リクエスト（ユーザー発言）と同じ
+    `WakeUpWithMessage` 経路を LLM リクエスト無しで流用（`_isExternalWakeUp` + `_requestKind=WakeUp`）:
+    - 本応答: 起床 ed 再生と並行してメッセージ表示・表情・音声を即時反映、action/emote
+      （CharacterController への通知）は ed 完了後に `QueueWakeUpResponse` 経由で反映
+    - thinking: ed 再生中は Thinking アニメーションを抑制（状況表示・状況読み上げは行う）。
+      ed 完了時にまだ外部 Thinking 中なら考え中モーションを開始
+    - ed 再生中に thinking → 本応答へ進んだ場合は、その時点から読み上げ開始（以後は本応答と同じ）
+    - `interact_sleep`（寝続ける指示）は「既に寝ている」として何もせず消費（false で退避すると
+      起床後に古い就寝指示が再適用され二度寝するため）
+    - 内部の起床リクエスト進行中に届いた場合はそちらを優先して退避（従来どおり再試行）
+  - **`action:"thinking"` は特別扱い（本応答の前触れ）**: 考え中モーション（Thinking 状態）に入る。
+    外部リスナー（herald 等）が LLM 推論開始時に `{"action":"thinking","timestamp":...}` を PUT すると、
+    本応答が届くまでキャラクターが考え中演出をする（timestamp は変更検知に必要）。
+    **message があれば作業状況としてメッセージ欄に表示**（`ChatManager.OnExternalThinkingStatus` →
+    UIController が「...」の代わりに表示。読み上げ・会話履歴なし。再受信のたびに上書きされるため、
+    外部側がツール実行の進捗を `{"action":"thinking","message":"🔍 web検索中..."}` のように
+    流し込める）。emotion/emote 等の他フィールドは使わない。
+    **状況読み上げ（Thinking Voice）**: `ExternalActionFeedController.thinkingVoiceEnabled` ON なら
+    message を読み上げる。音声ソースは応答音声と同じ優先順（thinking JSON に voice_timestamp 付きの
+    wav があれば `VoiceSynthesisController.PlayThinkingClip`、無ければ本体 TTS 有効時に
+    `SpeakThinkingStatus` で合成。Web Speech API は通常速度）。`thinkingVoicePitch`（既定 1.5、
+    0.5〜3.0）を AudioSource.pitch に適用して早回し（速度と音程が連動する「早口ロボ声」演出）。
+    リップシンクは Amplitude 固定（ピッチ変更でモーラ同期はズレるため）。状況更新のたびに前の
+    読み上げを打ち切り、本応答到着・内部リクエスト開始・タイムアウトのいずれでも停止する
+    （`StopThinkingVoice`、合成途中は世代カウンタで無効化）。thinking のクリップは ChatManager に
+    渡さず ExternalActionFeedController が扱う（ApplyExternalResponse の所有権契約の例外）。
+    **デバッグ JSON 直接入力**（`UIController.ProcessJson` → `CharacterController.ProcessResponse`）は
+    ChatManager を迂回するため、入力前に `ChatManager.ForceStopThinkingForDirectInput()` で進行中の
+    Thinking（内部/外部）を ed 無しで畳む（畳まないと Thinking フラグが残ったまま別タイムラインに入り、
+    例えば就寝後の起床で `ExitLoop` が `ForceStopThinkingToEnd` を先に走らせて起床 ed が飛ぶ）。後続の本応答は Thinking ガードの例外として通り、
     内部フローと同じ「適用 → Thinking 解除」の順序で処理される。
     本応答が届かない場合は `ChatManager.externalThinkingTimeout`（既定120秒、0以下で監視無効・非推奨）で自動解除。
     外部 Thinking 中に内部 LLM リクエスト（チャット入力等）が始まった場合は所有権を内部フローへ移譲し、
     演出の解除は既存経路（HandleRequestCompleted 等）に任せる。
-    連続受信（timestamp 違いの thinking 再受信）はタイムアウトの延長のみ行う
+    連続受信（timestamp 違いの thinking 再受信）はタイムアウトの延長のみ行う。
+    **自律リクエスト（IdleChat/夢/外出メッセージ等の SendAutoRequest）は外部 Thinking 中は発火しない**
+    （ChatState が Idle のままなので IsBusy に映らず、発火すると完了・エラー処理が
+    Thinking を解除してしまうため明示的にスキップ。ユーザー入力の割り込みのみ許可）
 
 **フィード音声（voice.wav）の取得・再生:**
 - `voiceEnabled`（デフォルトOFF）で有効化。外部側（herald等）がTTS合成した voice.wav を
@@ -3164,9 +3198,9 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
 - context/camera どちらか一方のURLだけでも稼働可
 
 **PlayerPrefs キー（SettingsExporter対象）:**
-`feed_enabled` / `feed_actionUrl` / `feed_subscribeInterval` / `feed_contextUrl` / `feed_cameraUrl` / `feed_publishInterval` / `feed_voiceEnabled` / `feed_voiceUrl`
+`feed_enabled` / `feed_actionUrl` / `feed_subscribeInterval` / `feed_contextUrl` / `feed_cameraUrl` / `feed_publishInterval` / `feed_voiceEnabled` / `feed_voiceUrl` / `feed_thinkingVoiceEnabled` / `feed_thinkingVoicePitch`
 
-**UI**: LLMSettingsPanel のフィードセクション（トグル + 各URL/間隔 + 音声再生トグル/音声URL + ヘルプページボタン）
+**UI**: LLMSettingsPanel のフィードセクション（トグル + 各URL/間隔 + 音声再生トグル/音声URL + 状況読み上げトグル/ピッチ + ヘルプページボタン）
 
 **UNITYROOM_BUILD では完全停止**（`Start()` で `feedEnabled=false; enabled=false`。
 UIを隠すだけでは PlayerPrefs 復元や Import で有効化され得るため機能側で塞ぐ）
@@ -8156,7 +8190,13 @@ void UpdateTTSCredit(string speakerName, string styleName); // クレジット�
 **役割**: VRM 1.0 Expressionベースのリップシンク統合コントローラ（4モード対応）
 
 旧`CharacterLipSyncController`（テキスト口パク専用）を統合。
-TTS有効時はTextOnlyモードが自動抑制される。
+**音声駆動の口パク（Amplitude/Mora/Simulated）が進行中は TextOnly は開始されない**
+（`StartSpeaking` が無視する。外部 wav 再生・状況読み上げは応答適用と同時に始まるため、
+後から呼ばれる TextOnly がモードを奪うとテキスト長の推定時間で口が止まり、残りの音声中に
+口が動かなくなる不具合があった）。自前 TTS の流れは TextOnly 開始 → 合成完了後に Mora が
+上書き、の順なので影響なし。
+※ `SetTtsActive` による「TTS 有効時の TextOnly 抑制」は API として残っているが現状どこからも
+呼ばれておらず未配線（配線すると TTS ON で合成失敗時に口パクが全く出なくなるため据え置き）。
 
 **更新タイミング**: `LateUpdate`で実行。PlayableDirector評価（Facial TimelineによるExpression全リセット＋加算）
 の後に口の形（aa/ih/ou/ee/oh）を書き込むことで、感情Timelineとリップシンクを共存させる。
@@ -8196,7 +8236,7 @@ public struct MoraEntry
 // VRM設定（VRM読み込み時）
 void SetVrmInstance(Vrm10Instance instance);
 
-// TextOnlyモード（テキスト表示のみ用、TTS有効時は自動抑制）
+// TextOnlyモード（テキスト表示のみ用。音声駆動の口パク進行中は無視される）
 void StartSpeaking(string text);
 void StopSpeaking();
 bool IsSpeaking { get; }
@@ -8212,7 +8252,7 @@ void StopLipSync();
 **各モードの動作**:
 - **Mora**: `moraTimeline`のcurrentTimeに応じた母音を正確に適用。子音時間中はスムーズ遷移。
 - **Simulated**: 母音サイクルを周期（~0.12秒）で切り替え。60%開口・40%閉口パターン。
-- **TextOnly**: Simulatedと同等のロジック。テキスト長から推定時間を算出し自動停止。TTS有効時は抑制。
+- **TextOnly**: Simulatedと同等のロジック。テキスト長から推定時間を算出し自動停止。音声駆動の口パク進行中は開始されない。
 - **Amplitude**: AudioSource振幅解析＋ランダム母音切り替え（従来方式）。
 
 #### VoiceSettingsPanel (`Scripts/UI/`)

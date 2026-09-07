@@ -121,6 +121,15 @@ namespace CyanNook.Character
             if (_ttsActive || vrmInstance == null) return;
             if (string.IsNullOrEmpty(text)) return;
 
+            // 音声駆動（Amplitude/Mora/Simulated）の口パクが進行中なら、テキスト長推定で上書きしない。
+            // 外部wav再生（フィード音声・状況読み上げ）は応答適用と同時に始まるため、
+            // 後から呼ばれる本メソッドがモードを奪うと推定時間で口が止まり、残りの音声中に口が動かなくなる。
+            // 自前TTSの流れ（TextOnly開始→合成完了後にMoraが上書き）はこの条件に該当せず従来どおり
+            if (_isSyncing && _mode != LipSyncMode.TextOnly)
+            {
+                return;
+            }
+
             _mode = LipSyncMode.TextOnly;
             _textOnlyDuration = text.Length * simulatedMoraSpeed;
             _textOnlyTimer = 0f;

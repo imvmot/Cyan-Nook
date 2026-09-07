@@ -224,6 +224,13 @@ namespace CyanNook.Character
                 if (sleepRestored)
                 {
                     Debug.Log("[CharacterSetup] Sleep state restored, skipping Entry/Idle start");
+
+                    // Entryを再生しないため OnEntryAnimationCompleted が発火せず、
+                    // 外部アクションフィードの適用開始ゲートが開かない。ここで明示的に開ける
+                    if (chatManager != null)
+                    {
+                        chatManager.MarkInitialEntryCompleted();
+                    }
                 }
             }
 

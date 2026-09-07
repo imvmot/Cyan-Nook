@@ -28,6 +28,8 @@ namespace CyanNook.Chat
         private const string PrefKey_PublishInterval = "feed_publishInterval";
         private const string PrefKey_VoiceEnabled = "feed_voiceEnabled";
         private const string PrefKey_VoiceUrl = "feed_voiceUrl";
+        private const string PrefKey_ThinkingVoiceEnabled = "feed_thinkingVoiceEnabled";
+        private const string PrefKey_ThinkingVoicePitch = "feed_thinkingVoicePitch";
 
         [Header("References")]
         public ChatManager chatManager;
@@ -60,6 +62,13 @@ namespace CyanNook.Chat
         [Tooltip("voice.wav の購読URL（HTTP GET）。空の場合はアクション購読URLと同じ場所の voice.wav を使う")]
         public string voiceSubscribeUrl = "";
 
+        [Tooltip("thinking の作業状況メッセージを読み上げる。音声ソースは応答と同じ優先順" +
+                 "（voice.wav があればそれ、無ければ本体TTS（有効時））")]
+        public bool thinkingVoiceEnabled = false;
+
+        [Tooltip("状況読み上げの再生ピッチ倍率（1.0=通常、1.5〜2.0で早回しロボ声風）。速度と音程が一緒に変わる")]
+        public float thinkingVoicePitch = 1.5f;
+
         // 購読タイマー
         private float _timer;
 
@@ -77,6 +86,11 @@ namespace CyanNook.Chat
 
         // PUT実行中フラグ（多重リクエスト防止）
         private bool _isPublishing;
+
+        // 直前に読み上げた thinking 状況文。同じ文の再受信（timestamp 違いの
+        // タイムアウト延長 PUT 等）で毎回読み上げ直し・合成 API を叩き直すのを防ぐ。
+        // thinking 終了（OnThinkingEnded）でクリア
+        private string _lastSpokenThinkingStatus;
 
         /// <summary>
         /// 購読（受信→適用）が稼働可能か（有効かつURL・間隔が妥当）
@@ -108,6 +122,7 @@ namespace CyanNook.Chat
             if (chatManager != null)
             {
                 chatManager.OnChatResponseReceived += OnChatResponseReceivedForPublish;
+                chatManager.OnThinkingEnded += OnThinkingEndedForStatusReset;
             }
 #endif
         }
@@ -117,7 +132,16 @@ namespace CyanNook.Chat
             if (chatManager != null)
             {
                 chatManager.OnChatResponseReceived -= OnChatResponseReceivedForPublish;
+                chatManager.OnThinkingEnded -= OnThinkingEndedForStatusReset;
             }
+        }
+
+        /// <summary>
+        /// thinking 終了で状況読み上げの重複抑止をリセット（次のターンで同じ文が来たら読み上げる）
+        /// </summary>
+        private void OnThinkingEndedForStatusReset()
+        {
+            _lastSpokenThinkingStatus = null;
         }
 
         private void OnDisable()
@@ -229,6 +253,26 @@ namespace CyanNook.Chat
         }
 
         /// <summary>
+        /// thinking状況読み上げのON/OFF切替
+        /// </summary>
+        public void SetThinkingVoiceEnabled(bool enable)
+        {
+            thinkingVoiceEnabled = enable;
+            SaveSettings();
+            Debug.Log($"[ExternalActionFeed] Thinking voice: {(enable ? "ON" : "OFF")}");
+        }
+
+        /// <summary>
+        /// 状況読み上げのピッチ倍率を設定（0.5〜3.0にクランプ）
+        /// </summary>
+        public void SetThinkingVoicePitch(float pitch)
+        {
+            thinkingVoicePitch = Mathf.Clamp(pitch, 0.5f, 3f);
+            SaveSettings();
+            Debug.Log($"[ExternalActionFeed] Thinking voice pitch: {thinkingVoicePitch:F2}");
+        }
+
+        /// <summary>
         /// 公開間隔を設定（秒）。0以下で無効
         /// </summary>
         public void SetPublishInterval(float seconds)
@@ -334,24 +378,62 @@ namespace CyanNook.Chat
                 }
 
                 // 適用（ApplyExternalResponse内でFillDefaults補填）。
-                // ビジー（応答待ち/Thinking/睡眠中/外出中）ならfalseが返るので
+                // ビジー（応答待ち/Thinking/外出中。睡眠中は起床して適用される）ならfalseが返るので
                 // _lastAppliedRawJsonを更新せず、次ポーリングで再試行する（wavも次回取得し直す）。
                 // その間に外部側がより新しい応答を出せばrawが変わり最新を適用する（最新へ収束）。
-                bool applied = chatManager.ApplyExternalResponse(response, voiceClip);
+                // thinkingの音声（状況読み上げ）は本クラスが扱うため、クリップはChatManagerに渡さない
+                bool isThinking = ChatManager.IsThinkingAction(response);
+                bool applied = chatManager.ApplyExternalResponse(response, isThinking ? null : voiceClip);
                 if (applied)
                 {
                     _lastAppliedRawJson = rawJson;
                     Debug.Log("[ExternalActionFeed] Applied external response");
+
+                    if (isThinking)
+                    {
+                        PlayThinkingVoice(response, voiceClip);
+                    }
                 }
                 else
                 {
                     if (voiceClip != null) Destroy(voiceClip);
-                    Debug.Log("[ExternalActionFeed] Apply skipped (busy/sleep/outing), will retry next poll");
+                    Debug.Log("[ExternalActionFeed] Apply skipped (busy/outing/entry), will retry next poll");
                 }
             }
             finally
             {
                 _isFetching = false;
+            }
+        }
+
+        /// <summary>
+        /// thinking の作業状況メッセージの読み上げ。
+        /// 音声ソースは応答音声と同じ優先順: voice.wav（取得済みクリップ）→ 本体TTS（有効時）→ なし。
+        /// クリップの所有権は再生側へ渡す（使わない場合はここで破棄）
+        /// </summary>
+        private void PlayThinkingVoice(LLMResponseData response, AudioClip voiceClip)
+        {
+            var synth = chatManager.voiceSynthesisController;
+            if (!thinkingVoiceEnabled || synth == null)
+            {
+                if (voiceClip != null) Destroy(voiceClip);
+                return;
+            }
+
+            if (voiceClip != null)
+            {
+                _lastSpokenThinkingStatus = response.message?.Trim();
+                synth.PlayThinkingClip(voiceClip, thinkingVoicePitch);
+            }
+            else if (!string.IsNullOrWhiteSpace(response.message))
+            {
+                string status = response.message.Trim();
+
+                // 同じ状況文の再受信は読み上げ直さない（タイムアウト延長のための再PUT等）
+                if (status == _lastSpokenThinkingStatus) return;
+
+                _lastSpokenThinkingStatus = status;
+                synth.SpeakThinkingStatus(status, thinkingVoicePitch);
             }
         }
 
@@ -619,6 +701,8 @@ namespace CyanNook.Chat
             PlayerPrefs.SetFloat(PrefKey_PublishInterval, publishInterval);
             PlayerPrefs.SetInt(PrefKey_VoiceEnabled, voiceEnabled ? 1 : 0);
             PlayerPrefs.SetString(PrefKey_VoiceUrl, voiceSubscribeUrl ?? "");
+            PlayerPrefs.SetInt(PrefKey_ThinkingVoiceEnabled, thinkingVoiceEnabled ? 1 : 0);
+            PlayerPrefs.SetFloat(PrefKey_ThinkingVoicePitch, thinkingVoicePitch);
             PlayerPrefs.Save();
         }
 
@@ -655,6 +739,14 @@ namespace CyanNook.Chat
             if (PlayerPrefs.HasKey(PrefKey_VoiceUrl))
             {
                 voiceSubscribeUrl = PlayerPrefs.GetString(PrefKey_VoiceUrl);
+            }
+            if (PlayerPrefs.HasKey(PrefKey_ThinkingVoiceEnabled))
+            {
+                thinkingVoiceEnabled = PlayerPrefs.GetInt(PrefKey_ThinkingVoiceEnabled) == 1;
+            }
+            if (PlayerPrefs.HasKey(PrefKey_ThinkingVoicePitch))
+            {
+                thinkingVoicePitch = Mathf.Clamp(PlayerPrefs.GetFloat(PrefKey_ThinkingVoicePitch), 0.5f, 3f);
             }
         }
     }
