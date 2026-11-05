@@ -135,6 +135,28 @@ namespace CyanNook.Voice
         // 遅れて再生されるのを防ぐ（await後に世代が変わっていたら捨てる）
         private int _thinkingVoiceGeneration;
 
+        // ── 外部フィードの分割音声（voice_1..N.wav）──
+        // 長い返答を区切りごとに受け取り、届いた順に続けて再生する。
+        // 先頭の区切りは PlayExternalClip で再生され、そのクリップの通し番号（serial）に
+        // 後続の区切りの列を紐づける。停止・差し替え・内部発話の開始で serial を外し、
+        // 遅れて届いた区切りは破棄する（前の返答の続きが新しい再生に混ざらないように）
+
+        // PlayExternalClip のたびに進める通し番号
+        private int _externalClipSerial;
+
+        // 区切りの列が紐づいている serial（0 = 分割再生なし）
+        private int _externalPartsSerial;
+
+        // 最後の区切りまで受け取り済みか（voice_done）
+        private bool _externalPartsDone = true;
+
+        // 再生待ちの区切り（取得順 = 再生順）
+        private readonly Queue<AudioClip> _externalPartQueue = new Queue<AudioClip>();
+
+        // 区切りの間で次が届かないまま待つ上限（外部側の停止で喋り途中のまま固まらないための保険）
+        private const float ExternalPartGapTimeout = 30f;
+        private Coroutine _externalPartGapCoroutine;
+
         private void Awake()
         {
             LoadTTSEnabledPreference();
@@ -157,6 +179,9 @@ namespace CyanNook.Voice
 
         private void OnDestroy()
         {
+            // 再生待ちの分割音声のクリップを破棄
+            ClearExternalParts();
+
             if (webSpeechSynthesis != null)
             {
                 webSpeechSynthesis.OnSpeechStartedEvent.RemoveListener(OnWebSpeechStarted);
@@ -292,6 +317,9 @@ namespace CyanNook.Voice
             // 外部供給クリップの破棄（AudioSourceから外してから）
             DestroyExternalClipIfAny();
 
+            // 分割音声の列も破棄（新しい再生・停止で前の返答の続きは不要）
+            ClearExternalParts();
+
             // 状況読み上げの終了（合成中のものも世代で無効化）
             _isThinkingVoice = false;
             _thinkingVoiceGeneration++;
@@ -352,6 +380,133 @@ namespace CyanNook.Voice
         {
             if (clip == null || audioSource == null) return;
             PlayClipInternal(clip, 1f, thinkingVoice: false);
+            _externalClipSerial++;
+        }
+
+        /// <summary>
+        /// いま再生中の外部応答クリップ（PlayExternalClip で始めたもの）の通し番号。
+        /// 再生中でなければ 0。分割音声の列を紐づける相手の確認に使う
+        /// </summary>
+        public int CurrentExternalClipSerial =>
+            (_currentExternalClip != null && !_isThinkingVoice) ? _externalClipSerial : 0;
+
+        /// <summary>
+        /// 指定の serial の分割再生が生きているか（停止・差し替え・完了で false）
+        /// </summary>
+        public bool IsExternalPartsActive(int serial) =>
+            serial != 0 && serial == _externalPartsSerial;
+
+        /// <summary>
+        /// 再生中の外部応答クリップを分割音声の先頭として、後続の区切りの列を開く。
+        /// serial が今の外部クリップと一致しなければ何もしない（false）
+        /// </summary>
+        public bool BeginExternalParts(int serial)
+        {
+            if (serial == 0 || serial != CurrentExternalClipSerial) return false;
+
+            _externalPartsSerial = serial;
+            _externalPartsDone = false;
+            return true;
+        }
+
+        /// <summary>
+        /// 分割音声の区切りを再生待ちの列に積む。先の区切りを再生し終えて待っていれば即再生する。
+        /// 紐づく再生が既に終わっている（serial不一致）場合はクリップを破棄する。
+        /// クリップの所有権は本メソッドが引き取る
+        /// </summary>
+        public void EnqueueExternalPart(int serial, AudioClip clip)
+        {
+            if (clip == null) return;
+            if (!IsExternalPartsActive(serial) || audioSource == null)
+            {
+                Destroy(clip);
+                return;
+            }
+
+            _externalPartQueue.Enqueue(clip);
+
+            if (!_isPlaying)
+            {
+                PlayNextExternalPart();
+            }
+        }
+
+        /// <summary>
+        /// 最後の区切りまで受け取ったことを知らせる。再生も終わっていればここで喋り終わりにする
+        /// </summary>
+        public void SetExternalPartsDone(int serial)
+        {
+            if (!IsExternalPartsActive(serial)) return;
+
+            _externalPartsDone = true;
+            if (!_isPlaying && _externalPartQueue.Count == 0)
+            {
+                ClearExternalParts();
+                TryResumeSTT();
+            }
+        }
+
+        /// <summary>
+        /// 指定の serial の分割再生を打ち切る（再生中の区切りも止める）。
+        /// フィード側が新しい返答を適用した・ボイス再生/フィードをOFFにした時に呼ぶ。
+        /// 新しい返答が音を鳴らさない場合でも前の返答の続きが流れ続けないようにするため
+        /// </summary>
+        public void CancelExternalParts(int serial)
+        {
+            if (!IsExternalPartsActive(serial)) return;
+            Stop();
+        }
+
+        /// <summary>
+        /// 列の次の区切りを再生する（先の区切りの再生終了時 / 待ち中に届いた時）
+        /// </summary>
+        private void PlayNextExternalPart()
+        {
+            if (_externalPartQueue.Count == 0 || audioSource == null) return;
+
+            CancelExternalPartGapWait();
+            var clip = _externalPartQueue.Dequeue();
+            DestroyExternalClipIfAny();
+            StartClipPlayback(clip, 1f, thinkingVoice: false);
+        }
+
+        /// <summary>
+        /// 分割再生を終える（列に残ったクリップは破棄）
+        /// </summary>
+        private void ClearExternalParts()
+        {
+            CancelExternalPartGapWait();
+            while (_externalPartQueue.Count > 0)
+            {
+                var c = _externalPartQueue.Dequeue();
+                if (c != null) Destroy(c);
+            }
+            _externalPartsSerial = 0;
+            _externalPartsDone = true;
+        }
+
+        private void CancelExternalPartGapWait()
+        {
+            if (_externalPartGapCoroutine != null)
+            {
+                StopCoroutine(_externalPartGapCoroutine);
+                _externalPartGapCoroutine = null;
+            }
+        }
+
+        /// <summary>
+        /// 区切りの間で次が届くのを待つ。上限を過ぎたら外部側が止まったとみなして喋り終わりにする
+        /// </summary>
+        private IEnumerator WaitForNextExternalPart(int serial)
+        {
+            yield return new WaitForSeconds(ExternalPartGapTimeout);
+            _externalPartGapCoroutine = null;
+
+            if (!IsExternalPartsActive(serial) || _isPlaying) yield break;
+
+            Debug.LogWarning("[VoiceSynthesisController] External voice parts timed out waiting for next part");
+            ClearExternalParts();
+            TryResumeSTT();
         }
 
         /// <summary>
@@ -448,7 +603,15 @@ namespace CyanNook.Voice
         {
             // 前回の外部クリップもここで破棄される。直後に再生を始めるためSTTは再開しない
             StopInternal(resumeStt: false);
+            StartClipPlayback(clip, pitch, thinkingVoice);
+        }
 
+        /// <summary>
+        /// 供給済みクリップの再生開始（停止処理は呼び出し側の責務。
+        /// 分割音声の続きは列を保ったまま再生するため StopInternal を通さない）
+        /// </summary>
+        private void StartClipPlayback(AudioClip clip, float pitch, bool thinkingVoice)
+        {
             _currentExternalClip = clip;
             _isThinkingVoice = thinkingVoice;
 
@@ -587,6 +750,16 @@ namespace CyanNook.Voice
         /// </summary>
         private async Task SynthesizeAndEnqueue(string text)
         {
+            // 外部の分割音声の途中で内部の発話が始まったら、残りの区切りは捨てる
+            // （再生中の区切りは最後まで流し、その後に内部の音声が続く）
+            if (_externalPartsSerial != 0)
+            {
+                ClearExternalParts();
+                // 区切りの合間だった場合、この後の合成が早期returnするとSTTが戻らないため判定し直す
+                // （合成が始まれば_pendingSynthesisCountで抑制は続く）
+                TryResumeSTT();
+            }
+
             int gen = _stopGeneration;
             bool counted = false;
             // 再生順の連番。awaitより前（呼び出し順が保たれる同期区間）で採番することが重要
@@ -745,6 +918,24 @@ namespace CyanNook.Voice
                 lipSyncController.StopLipSync();
             }
 
+            // 分割音声の続き: 次の区切りが届いていれば続けて再生、
+            // まだなら喋り途中のまま待つ（STTは再開しない）。最後まで再生したら終了
+            if (_externalPartsSerial != 0)
+            {
+                if (_externalPartQueue.Count > 0)
+                {
+                    PlayNextExternalPart();
+                    yield break;
+                }
+                if (!_externalPartsDone)
+                {
+                    CancelExternalPartGapWait();
+                    _externalPartGapCoroutine = StartCoroutine(WaitForNextExternalPart(_externalPartsSerial));
+                    yield break;
+                }
+                ClearExternalParts();
+            }
+
             TryResumeSTT();
         }
 
@@ -795,6 +986,11 @@ namespace CyanNook.Voice
         {
             if (ttsEngineType != TTSEngineType.WebSpeechAPI) return;
 
+            // 外部クリップ（AudioSource）の再生中に届いた通知は無視する。
+            // cancel() した発話の終了通知がブラウザから遅れて届くことがあり、ここで_isPlayingを
+            // 落とすと再生中の外部クリップ（分割音声の区切り等）が「再生していない」と誤判定される
+            if (_currentExternalClip != null) return;
+
             _isPlaying = false;
             _isThinkingVoice = false;
             TryResumeSTT();
@@ -828,6 +1024,7 @@ namespace CyanNook.Voice
             if (!echoPreventionEnabled) return;
             if (_isPlaying) return;
             if (_isStreaming) return;
+            if (_externalPartsSerial != 0) return;
             if (_pendingSynthesisCount > 0) return;
             if (_orderedClipBuffer.Count > 0) return;
 
@@ -855,7 +1052,8 @@ namespace CyanNook.Voice
             _sttResumeCoroutine = null;
 
             // クールダウン中にTTSが再開されていないか再チェック
-            if (_isPlaying || _isStreaming || _pendingSynthesisCount > 0 || _orderedClipBuffer.Count > 0)
+            if (_isPlaying || _isStreaming || _pendingSynthesisCount > 0 || _orderedClipBuffer.Count > 0 ||
+                _externalPartsSerial != 0)
             {
                 yield break;
             }

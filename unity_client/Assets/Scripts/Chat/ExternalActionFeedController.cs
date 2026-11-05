@@ -92,11 +92,46 @@ namespace CyanNook.Chat
         // thinking 終了（OnThinkingEnded）でクリア
         private string _lastSpokenThinkingStatus;
 
+        // ── 分割音声（voice_parts / voice_1..N.wav）の受信状態 ──
+        // 外部側（herald）は長い返答を区切りごとに合成し、区切りを置くたびに
+        // 同じ timestamp の action.json を置き直す。同じ timestamp は「同じ返答の続き」なので
+        // 適用し直さず、まだ取っていない区切りだけ取得して再生待ちの列に積む
+
+        // 適用済みの分割配信の返答の timestamp（null = 分割配信の返答を適用していない）
+        private string _partsTimestamp;
+
+        // 取得を試みた区切りの最大番号（失敗した区切りは飛ばす）
+        private int _partsFetched;
+
+        // 再生側（VoiceSynthesisController）の分割再生の serial（0 = 音声の列なし）
+        private int _partsSerial;
+
+        // 区切りが揃うまでの間・外部Thinking中の見回り間隔（秒）。
+        // 最初の一言の遅れと、区切りの間の途切れを縮めるため
+        private const float FastPollInterval = 1f;
+
         /// <summary>
         /// 購読（受信→適用）が稼働可能か（有効かつURL・間隔が妥当）
         /// </summary>
         public bool IsActive =>
             feedEnabled && subscribeInterval > 0f && !string.IsNullOrEmpty(actionSubscribeUrl);
+
+        /// <summary>
+        /// 今の見回り間隔。区切りが揃うまでの分割再生中と外部Thinking中（本応答待ち）は
+        /// FastPollInterval に縮める（設定値の方が短ければ設定値）
+        /// </summary>
+        private float CurrentSubscribeInterval
+        {
+            get
+            {
+                var synth = chatManager != null ? chatManager.voiceSynthesisController : null;
+                bool waitingParts = synth != null && synth.IsExternalPartsActive(_partsSerial);
+                bool waitingResponse = chatManager != null && chatManager.IsExternalThinkingActive;
+                return (waitingParts || waitingResponse)
+                    ? Mathf.Min(subscribeInterval, FastPollInterval)
+                    : subscribeInterval;
+            }
+        }
 
         /// <summary>
         /// 公開（publish）が稼働可能か（有効かついずれかのURL・間隔が妥当）
@@ -159,10 +194,14 @@ namespace CyanNook.Chat
             // 購読（受信→適用）
             if (IsActive && !_isFetching)
             {
+                // 速い見回りに切り替わった時に、長い残り待ちを引きずらない
+                float interval = CurrentSubscribeInterval;
+                if (_timer > interval) _timer = interval;
+
                 _timer -= Time.deltaTime;
                 if (_timer <= 0f)
                 {
-                    _timer = subscribeInterval;
+                    _timer = interval;
                     StartCoroutine(FetchAndApply());
                 }
             }
@@ -189,6 +228,7 @@ namespace CyanNook.Chat
         public void SetEnabled(bool enabled)
         {
             feedEnabled = enabled;
+            if (!enabled) CancelParts(); // 続きを取りに行かなくなるため、分割再生は打ち切る
             _timer = 0f;        // ON直後は即座に初回GET
             _publishTimer = 0f; // ON直後は即座に初回publish
             SaveSettings();
@@ -202,6 +242,7 @@ namespace CyanNook.Chat
         {
             actionSubscribeUrl = url != null ? url.Trim() : "";
             _lastAppliedRawJson = null; // URL変更で変更検知をリセット
+            _partsTimestamp = null;
             SaveSettings();
         }
 
@@ -239,8 +280,19 @@ namespace CyanNook.Chat
         public void SetVoiceEnabled(bool enable)
         {
             voiceEnabled = enable;
+            if (!enable) CancelParts(); // 続きを取りに行かなくなるため、分割再生は打ち切る
             SaveSettings();
             Debug.Log($"[ExternalActionFeed] Voice playback: {(enable ? "ON" : "OFF")}");
+        }
+
+        /// <summary>
+        /// 進行中の分割再生を打ち切る（OFF切替時。done が来ないまま喋り途中で待ち続けないように）
+        /// </summary>
+        private void CancelParts()
+        {
+            if (_partsSerial == 0) return;
+            chatManager?.voiceSynthesisController?.CancelExternalParts(_partsSerial);
+            _partsSerial = 0;
         }
 
         /// <summary>
@@ -319,7 +371,7 @@ namespace CyanNook.Chat
                 }
 
                 // フェッチ完了。次回まで間隔を空ける
-                _timer = subscribeInterval;
+                _timer = CurrentSubscribeInterval;
 
                 // フェッチ中にOFF/URL変更/間隔0化された場合は適用しない
                 if (!IsActive) yield break;
@@ -356,17 +408,49 @@ namespace CyanNook.Chat
 
                 if (parseFailed || response == null) yield break;
 
-                // フィード音声（voice.wav）の取得。
-                // jsonのvoice_timestamp（外部側がwav PUT成功時のみ付ける印）がある場合のみ取得し、
-                // 適用前に済ませることで応答表示と音声再生を同時に始める。
+                bool isThinking = ChatManager.IsThinkingAction(response);
+                FeedMarker marker = ExtractMarker(rawJson);
+
+                // 分割配信（voice_parts）の返答か。thinking は従来どおり voice.wav 1本の取り決め
+                bool isParts = !isThinking && marker.voice_parts > 0 && !string.IsNullOrEmpty(marker.timestamp);
+
+                // 分割配信の続き（適用済みの返答と同じ timestamp）: 適用し直さず、
+                // まだ取っていない区切りだけ取得して再生待ちの列に積む。
+                // ボイス再生OFFでも再適用はしない（置き直しのたびに動作・自前TTSが繰り返されるため）
+                if (isParts && marker.timestamp == _partsTimestamp)
+                {
+                    _lastAppliedRawJson = rawJson;
+
+                    // 続きの経路は ApplyExternalResponse のビジー判定を通らないため、
+                    // 内部リクエストが始まっていたら残りの区切りは打ち切る（新しい内部応答に前の声が重ならないように）
+                    if (chatManager.IsBusy)
+                    {
+                        chatManager.voiceSynthesisController?.CancelExternalParts(_partsSerial);
+                        yield break;
+                    }
+
+                    if (voiceEnabled)
+                    {
+                        yield return FetchRemainingParts(marker);
+                    }
+                    yield break;
+                }
+
+                // フィード音声の取得（適用前に済ませることで応答表示と音声再生を同時に始める）。
+                // - 分割配信: 先頭の区切り voice_1.wav
+                // - 従来形式: jsonのvoice_timestamp（外部側がwav PUT成功時のみ付ける印）がある場合のみ voice.wav
                 // 取得失敗時はnullのまま渡し、従来の自前TTSにフォールバックする
+                // （分割配信で先頭が取れなかった場合は返答全体を自前TTSで読み、後続の区切りは使わない）
                 AudioClip voiceClip = null;
                 if (voiceEnabled)
                 {
-                    string voiceTs = ExtractVoiceTimestamp(rawJson);
-                    if (!string.IsNullOrEmpty(voiceTs))
+                    if (isParts)
                     {
-                        yield return FetchVoiceClip(voiceTs, clip => voiceClip = clip);
+                        yield return FetchVoiceClip(ResolvePartUrl(1), marker.timestamp, 1, clip => voiceClip = clip);
+                    }
+                    else if (!string.IsNullOrEmpty(marker.voice_timestamp))
+                    {
+                        yield return FetchVoiceClip(ResolveVoiceUrl(), marker.voice_timestamp, 0, clip => voiceClip = clip);
                     }
                 }
 
@@ -382,16 +466,37 @@ namespace CyanNook.Chat
                 // _lastAppliedRawJsonを更新せず、次ポーリングで再試行する（wavも次回取得し直す）。
                 // その間に外部側がより新しい応答を出せばrawが変わり最新を適用する（最新へ収束）。
                 // thinkingの音声（状況読み上げ）は本クラスが扱うため、クリップはChatManagerに渡さない
-                bool isThinking = ChatManager.IsThinkingAction(response);
+                var synth = chatManager.voiceSynthesisController;
+                int serialBefore = synth != null ? synth.CurrentExternalClipSerial : 0;
+
                 bool applied = chatManager.ApplyExternalResponse(response, isThinking ? null : voiceClip);
                 if (applied)
                 {
                     _lastAppliedRawJson = rawJson;
                     Debug.Log("[ExternalActionFeed] Applied external response");
 
+                    // 前の返答の分割再生を打ち切る。新しい返答が音を鳴らした場合は再生側で既に
+                    // 破棄済み（no-op）。鳴らさない返答（message無し・TTS OFF・thinking 等）でも
+                    // 前の返答の続きが流れ続けたり、done 待ちで喋り途中のまま残ったりしないようにする
+                    if (_partsSerial != 0)
+                    {
+                        synth?.CancelExternalParts(_partsSerial);
+                        _partsSerial = 0;
+                    }
+
                     if (isThinking)
                     {
                         PlayThinkingVoice(response, voiceClip);
+                    }
+                    else if (isParts)
+                    {
+                        yield return StartParts(marker, voiceClip != null, synth, serialBefore);
+                    }
+                    else
+                    {
+                        // 新しい通常の返答で分割配信の続きの判定は終わり
+                        _partsTimestamp = null;
+                        _partsSerial = 0;
                     }
                 }
                 else
@@ -437,25 +542,97 @@ namespace CyanNook.Chat
             }
         }
 
-        // voice_timestamp だけを取り出す部分パース用（他フィールドは無視される）
+        // 音声関連のフィールドだけを取り出す部分パース用（他フィールドは無視される）
         [System.Serializable]
-        private struct VoiceMarker
+        private struct FeedMarker
         {
-            public string voice_timestamp;
+            public string timestamp;
+            public string voice_timestamp;   // 従来形式: voice.wav が付いている印
+            public int voice_parts;          // 分割配信: いま置いてある区切りの数（無ければ0）
+            public bool voice_done;          // 分割配信: 最後の区切りまで置き終えたか
         }
 
         /// <summary>
-        /// 生JSONから voice_timestamp を抽出。無ければ null/空
+        /// 生JSONから音声関連のフィールドを抽出。パース失敗時は全て既定値
         /// </summary>
-        private static string ExtractVoiceTimestamp(string rawJson)
+        private static FeedMarker ExtractMarker(string rawJson)
         {
             try
             {
-                return JsonUtility.FromJson<VoiceMarker>(rawJson).voice_timestamp;
+                return JsonUtility.FromJson<FeedMarker>(rawJson);
             }
             catch (System.Exception)
             {
-                return null;
+                return default;
+            }
+        }
+
+        /// <summary>
+        /// 分割配信の返答を適用した直後の処理: 先頭の区切りの再生に後続の列を紐づけ、
+        /// 届いている残りの区切りを取得する
+        /// </summary>
+        private IEnumerator StartParts(FeedMarker marker, bool firstPartFetched,
+            CyanNook.Voice.VoiceSynthesisController synth, int serialBefore)
+        {
+            _partsTimestamp = marker.timestamp;
+            _partsSerial = 0;
+
+            // 先頭が取れなかった（ボイス再生OFF・取得失敗）場合は自前TTSで全文を読んでいるため、
+            // 後続の区切りは使わない（以後の置き直しは同じ timestamp として読み飛ばされる）
+            if (!firstPartFetched || synth == null)
+            {
+                _partsFetched = marker.voice_parts;
+                yield break;
+            }
+
+            _partsFetched = 1;
+
+            // 適用で先頭の区切りの再生が始まっていれば（外出中の抑制等で再生されなかった場合は除く）
+            // そのクリップに後続の列を紐づける
+            int serial = synth.CurrentExternalClipSerial;
+            if (serial == 0 || serial == serialBefore || !synth.BeginExternalParts(serial))
+            {
+                _partsFetched = marker.voice_parts;
+                yield break;
+            }
+
+            _partsSerial = serial;
+            yield return FetchRemainingParts(marker);
+        }
+
+        /// <summary>
+        /// まだ取っていない区切り（_partsFetched+1 〜 voice_parts）を順に取得して列に積む。
+        /// 取得に失敗した区切りは飛ばす（外部側は wav を置いてから json を置くため、
+        /// 失敗は一時的な遅れではなく本当のエラーとみなし、待って後ろを詰まらせない）
+        /// </summary>
+        private IEnumerator FetchRemainingParts(FeedMarker marker)
+        {
+            var synth = chatManager.voiceSynthesisController;
+            if (synth == null || !synth.IsExternalPartsActive(_partsSerial)) yield break;
+
+            while (_partsFetched < marker.voice_parts)
+            {
+                int k = _partsFetched + 1;
+                AudioClip clip = null;
+                yield return FetchVoiceClip(ResolvePartUrl(k), marker.timestamp, k, c => clip = c);
+                _partsFetched = k;
+
+                // 取得中に停止・差し替え・OFFになっていたら以降は不要
+                if (!IsActive || !synth.IsExternalPartsActive(_partsSerial))
+                {
+                    if (clip != null) Destroy(clip);
+                    yield break;
+                }
+
+                if (clip != null)
+                {
+                    synth.EnqueueExternalPart(_partsSerial, clip);
+                }
+            }
+
+            if (marker.voice_done)
+            {
+                synth.SetExternalPartsDone(_partsSerial);
             }
         }
 
@@ -474,17 +651,34 @@ namespace CyanNook.Chat
         }
 
         /// <summary>
-        /// voice.wav を取得してAudioClip化する。失敗時はonLoadedを呼ばず警告のみ
-        /// （呼び出し側が自前TTSにフォールバックする）
+        /// 分割配信の k 番目の区切りの URL。voice.wav と同じ場所の voice_k.wav
         /// </summary>
-        private IEnumerator FetchVoiceClip(string voiceTimestamp, System.Action<AudioClip> onLoaded)
+        private string ResolvePartUrl(int k)
         {
-            string baseUrl = ResolveVoiceUrl();
-            if (string.IsNullOrEmpty(baseUrl)) yield break;
+            string voiceUrl = ResolveVoiceUrl();
+            if (string.IsNullOrEmpty(voiceUrl)) return null;
 
-            // 外部側の規約に合わせ、jsonのタイムスタンプをキャッシュバスターに使う
+            // クエリ付きURL（?以降）を除いたパスの最後の / までをディレクトリとする
+            int query = voiceUrl.IndexOf('?');
+            string path = query >= 0 ? voiceUrl.Substring(0, query) : voiceUrl;
+            int slash = path.LastIndexOf('/');
+            if (slash < 0) return null;
+            return path.Substring(0, slash + 1) + $"voice_{k}.wav";
+        }
+
+        /// <summary>
+        /// wav を取得してAudioClip化する。失敗時はonLoadedを呼ばず警告のみ
+        /// （呼び出し側が自前TTSにフォールバック / 区切りを飛ばす）。
+        /// part は分割配信の区切り番号（キャッシュバスターに含める。従来の voice.wav は 0）
+        /// </summary>
+        private IEnumerator FetchVoiceClip(string baseUrl, string timestamp, int part, System.Action<AudioClip> onLoaded)
+        {
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(timestamp)) yield break;
+
+            // 外部側の規約に合わせ、jsonのタイムスタンプ（と区切り番号）をキャッシュバスターに使う
             char separator = baseUrl.Contains("?") ? '&' : '?';
-            string url = $"{baseUrl}{separator}t={UnityWebRequest.EscapeURL(voiceTimestamp)}";
+            string url = $"{baseUrl}{separator}t={UnityWebRequest.EscapeURL(timestamp)}";
+            if (part > 0) url += $"&p={part}";
 
             AudioClip clip = null;
             using (var request = UnityWebRequestMultimedia.GetAudioClip(url, AudioType.WAV))

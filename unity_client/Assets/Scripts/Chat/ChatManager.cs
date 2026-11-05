@@ -215,6 +215,11 @@ namespace CyanNook.Chat
         // 後続の本応答がThinkingを解除して適用されるようにする
         private bool _isExternalThinkingActive;
 
+        /// <summary>
+        /// 外部フィード起点のThinking中か（フィード側が本応答待ちの間だけ見回りを速めるのに使う）
+        /// </summary>
+        public bool IsExternalThinkingActive => _isExternalThinkingActive;
+
         // 外部Thinkingのタイムアウト監視コルーチン（StartExternalThinkingで開始）
         private Coroutine _externalThinkingTimeoutCoroutine;
 

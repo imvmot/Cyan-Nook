@@ -3116,6 +3116,8 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
 
 **購読（受信→適用）:**
 - `subscribeInterval` 秒毎に `UnityWebRequest.Get(actionSubscribeUrl)`（キャッシュバスティング + no-cacheヘッダ付き）
+  - **外部 Thinking 中（本応答待ち）と分割音声の区切りが揃うまでの間は 1 秒（`FastPollInterval`）に縮める**
+    （設定値の方が短ければ設定値）。最初の一言の遅れと区切りの間の途切れを縮めるため。普段は設定値のまま
 - **変更検知**: 前回適用した生JSONと同一文字列なら何もしない（外部側が timestamp/uuid を含めれば毎回変化し再適用される）
 - `{` 始まりの軽量チェック + `JsonUtility.FromJson` 直接呼びで壊れたJSON/HTMLエラーページを確実に破棄
   （`LLMResponseData.FromJson` は失敗時にフォールバックを返してしまうため使わない）
@@ -3188,6 +3190,41 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
   （長時間運用でのメモリ蓄積防止）
 - 既知の限界: json取得とwav取得の間に外部が次の応答をPUTすると「旧テキスト+新音声」の
   窓が理論上ある（次ポーリングで自然回復するため許容）
+
+**分割音声（voice_parts / voice_1..N.wav）:**
+長い返答の合成待ちで喋り出しが遅れる問題への対応（例: herald は VOICEVOX で 80 字ごとに区切って合成する。
+771 字を 1 本で合成すると 36 秒待つ）。区切りを置くたびに json を置き直してもらい、Cyan-Nook 側で列に積んで順に再生する。
+取り決めの正本は herald 側の `notes/feed-voice-parts.md`（変更時は双方を直す）
+- **外部側の契約**: `voice_k.wav`（1 始まり、voice.wav と同じ場所）を置くたびに action.json を PUT し直す。
+  `timestamp` は最初から最後まで同じ値（**同じ timestamp = 同じ返答の続き**）。message・emotion・action 等は
+  最初の PUT から全文・確定値。変わるのは `voice_parts`（いま置いてある区切りの数）と `voice_done`
+  （最後まで置き終えたら true）だけ。分割配信の json に `voice_timestamp` は付けない。
+  `voice_parts` が無い json は従来形式。thinking は従来どおり voice.wav 1 本
+- **新しい timestamp**: voice_1 を取得して従来の voice.wav と同じく `ApplyExternalResponse` に渡す
+  （表示・動作・表情と同時に喋り出す）。適用で再生が始まったクリップの通し番号
+  （`VoiceSynthesisController.CurrentExternalClipSerial`）に `BeginExternalParts` で後続の列を紐づけ、
+  届いている残りを順に取得して `EnqueueExternalPart` で積む
+- **同じ timestamp**: 適用し直さず、まだ取っていない番号だけ取得して積む。`voice_done:true` で
+  `SetExternalPartsDone`。**ボイス再生 OFF でも再適用はしない**（置き直しのたびに動作・自前 TTS が繰り返されるため）
+- voice_1 が取れなかった場合（ボイス再生 OFF・取得失敗）は従来どおり自前 TTS で全文を読み、後続の区切りは使わない。
+  2 番目以降の取得失敗はその区切りを飛ばす（外部側は wav を置いてから json を置くため、失敗は本当のエラーとみなす）
+- **再生**: 外部の区切りは TTS の文ごとの列（`_orderedClipBuffer`、VOICEVOX/Gemini 時のみ動く）とは別の列
+  （`_externalPartQueue`）で、TTS 設定に依らず再生する。1 つ終わったら次が届いていれば続けて再生、
+  まだなら口を閉じて待つ（喋り途中の扱い = STT 抑制継続）。`voice_done` 受信 + 列が空で喋り終わり。
+  区切りの間で 30 秒（`ExternalPartGapTimeout`）次が来なければ外部側の停止とみなして終える
+- **打ち切り**: 停止・新しい外部クリップ（次の返答）・内部の発話開始（`SynthesizeAndEnqueue`）で残りの区切りを破棄し、
+  遅れて届いた区切りも serial 不一致で破棄する（前の返答の続きが混ざらない）。再生中の区切りは内部発話の時のみ最後まで流す。
+  加えてフィード側が**続き以外の返答を適用した直後**（音を鳴らさない返答・thinking 含む）、続きの受信時に内部リクエスト中だった時、
+  ボイス再生/フィードを OFF にした時は `CancelExternalParts` で再生中の区切りごと止める
+  （鳴らさない返答の裏で前の声が流れ続けたり、done 待ちで喋り途中のまま残ったりしないように）
+- Web Speech エンジン時、cancel した発話の「キュー空」通知がブラウザから遅れて届くことがあるため、
+  外部クリップ再生中は `OnWebSpeechQueueEmpty` を無視する（区切りが途中で切られるのを防ぐ）
+- 既知の限界: 外部側は次の返答の voice_1 から同じファイル名で上書きするため、前の返答の続きを取得中に
+  次の返答の区切りが置かれると、前の返答の区切りとして新しい音が鳴り得る（通常は起きない間隔のため許容）
+- 表示は従来どおり全文を一度に出す（喋っている位置には追従しない）
+- nginx の許可リストに `voice_[0-9]{1,2}\.wav` が必要（examples/feed-server は対応済み）。
+  正規表現に `{ }` を含むため location の正規表現全体を二重引用符で囲むこと（囲まないと nginx が
+  ブロックの始まりと解釈し `missing closing parenthesis` で起動しない）
 
 **公開（publish）:**
 - `publishInterval` 秒毎の heartbeat で context JSON（+カメラJPEG）を PUT
