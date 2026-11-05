@@ -634,10 +634,10 @@ namespace CyanNook.Voice
             }
 
             // 供給済みクリップはモーラ情報を持たない（ピッチ変更時はモーラ同期もズレる）ため
-            // Amplitude（波形振幅）リップシンク
+            // Amplitude（波形振幅）リップシンク。早回しは経過時間をピッチ倍率で進める
             if (lipSyncController != null)
             {
-                lipSyncController.StartLipSync(clip);
+                lipSyncController.StartLipSync(clip, effectivePitch);
             }
 
             // 再生時間はピッチ倍率で縮む

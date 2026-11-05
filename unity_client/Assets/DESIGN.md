@@ -3178,6 +3178,10 @@ Cyan-Nook ◀── GET ── action.json                 （行動指示を購
   `voice_timestamp`（timestamp と同値）を入れる（これが「音声あり」の印。
   wav 失敗時や thinking には付かない）
 - URL は `voiceSubscribeUrl`。空なら actionSubscribeUrl と同じ場所の `voice.wav` を自動導出。
+- **wav は生のバイト列で取得して自前で AudioClip を組み立てる**（`WavUtility.IsSupportedPcm` → `ToAudioClip`）。
+  組み立て時に音量の変化が記録され、WebGL でも口パクが動く。**対応形式はリニア PCM の 8bit / 16bit のみ**
+  （VOICEVOX の wav は該当）。それ以外はブラウザ側の解読に戻す（音は鳴るが WebGL では口パクしない。
+  他形式への対応は要望があれば）
   取得時は `?t=<voice_timestamp>` をキャッシュバスターに付ける
 - 適用前に wav を取得してから `ApplyExternalResponse(response, clip)` に渡すため、
   メッセージ表示・アニメ・音声再生が同時に始まる
@@ -8290,7 +8294,12 @@ void StopLipSync();
 - **Mora**: `moraTimeline`のcurrentTimeに応じた母音を正確に適用。子音時間中はスムーズ遷移。
 - **Simulated**: 母音サイクルを周期（~0.12秒）で切り替え。60%開口・40%閉口パターン。
 - **TextOnly**: Simulatedと同等のロジック。テキスト長から推定時間を算出し自動停止。音声駆動の口パク進行中は開始されない。
-- **Amplitude**: AudioSource振幅解析＋ランダム母音切り替え（従来方式）。
+- **Amplitude**: 振幅＋ランダム母音切り替え。振幅の取り方は2通り:
+  - **音量の変化の記録（`AudioEnvelope`）がクリップに紐づいていればそれを使う**: PCM から AudioClip を組み立てる時点
+    （`WavUtility.ToAudioClip` / Gemini TTS の `PcmToAudioClip`）で 1/60 秒ごとの振幅を計算し
+    `ConditionalWeakTable` でクリップに紐づける。再生開始からの経過時間 × 再生ピッチ倍率（`StartLipSync(clip, playbackRate)`）で引く
+  - 無ければ `AudioSource.GetOutputData`（従来方式）。**WebGL では GetOutputData / GetData が常にゼロで口が開かない**ため、
+    WebGL で鳴らすクリップは必ず自前組み立て（記録あり）にすること
 
 #### VoiceSettingsPanel (`Scripts/UI/`)
 

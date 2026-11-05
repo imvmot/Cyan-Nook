@@ -312,6 +312,8 @@ namespace CyanNook.Voice
 
             AudioClip clip = AudioClip.Create(clipName, sampleCount, ChannelCount, SampleRate, false);
             clip.SetData(samples, 0);
+            // 音量の変化を紐づける（WebGL では再生中の音量を読めず Amplitude リップシンクが動かないため）
+            CyanNook.Core.AudioEnvelope.Register(clip, samples, ChannelCount, SampleRate);
             return clip;
         }
 

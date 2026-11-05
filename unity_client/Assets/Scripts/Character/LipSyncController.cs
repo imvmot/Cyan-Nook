@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UniVRM10;
+using CyanNook.Core;
 
 namespace CyanNook.Character
 {
@@ -84,6 +85,12 @@ namespace CyanNook.Character
         // 母音サイクル（Amplitude/Simulated用）
         private readonly string[] _vowels = { EXPR_AA, EXPR_IH, EXPR_OU, EXPR_EE, EXPR_OH };
         private int _vowelIndex = 0;
+
+        // Amplitudeモード用: 前もって計算した音量の変化（AudioEnvelope）。
+        // WebGL では GetOutputData が使えないため、あればこちらを経過時間で引く
+        private float[] _amplitudeEnvelope;
+        private float _amplitudeTimer = 0f;
+        private float _amplitudePlaybackRate = 1f;
 
         // Moraモード用
         private List<MoraEntry> _moraTimeline;
@@ -170,9 +177,12 @@ namespace CyanNook.Character
         }
 
         /// <summary>
-        /// Amplitudeモードでリップシンク開始（従来互換）
+        /// Amplitudeモードでリップシンク開始（従来互換）。
+        /// clip に音量の変化（AudioEnvelope）が紐づいていればそれを使う（WebGL でも動く）。
+        /// 無ければ再生中の AudioSource から読む（エディタのみ有効。WebGL では常にゼロ）。
+        /// playbackRate は再生ピッチ倍率（早回しの状況読み上げで経過時間を合わせる）
         /// </summary>
-        public void StartLipSync(AudioClip clip)
+        public void StartLipSync(AudioClip clip, float playbackRate = 1f)
         {
             if (vrmInstance == null)
             {
@@ -183,7 +193,10 @@ namespace CyanNook.Character
             _mode = LipSyncMode.Amplitude;
             _isSyncing = true;
             _vowelIndex = 0;
-            Debug.Log("[LipSyncController] Lip sync started (Amplitude)");
+            _amplitudeEnvelope = AudioEnvelope.Get(clip);
+            _amplitudeTimer = 0f;
+            _amplitudePlaybackRate = Mathf.Max(0.01f, playbackRate);
+            Debug.Log($"[LipSyncController] Lip sync started (Amplitude, {(_amplitudeEnvelope != null ? "envelope" : "output data")})");
         }
 
         /// <summary>
@@ -242,6 +255,7 @@ namespace CyanNook.Character
             _isSyncing = false;
             _currentWeight = 0f;
             _moraTimeline = null;
+            _amplitudeEnvelope = null;
             ResetMouth();
             Debug.Log("[LipSyncController] Lip sync stopped");
         }
@@ -427,7 +441,11 @@ namespace CyanNook.Character
 
         private void UpdateAmplitudeLipSync()
         {
-            if (audioSource == null || !audioSource.isPlaying)
+            // 音量の変化の記録がある場合は AudioSource.isPlaying を見ない
+            // （WebGL では isPlaying が正しく返らないことがあり、口が開かないため。
+            // 記録の終わりで音量 0 になり、再生終了は VoiceSynthesisController が StopLipSync で伝える）
+            bool envelopeDriven = _amplitudeEnvelope != null;
+            if (!envelopeDriven && (audioSource == null || !audioSource.isPlaying))
             {
                 // 口を閉じる
                 if (_currentWeight > 0f)
@@ -438,8 +456,17 @@ namespace CyanNook.Character
                 return;
             }
 
-            // 音声振幅を取得
-            float amplitude = GetAudioAmplitude();
+            // 音声振幅を取得（音量の変化の記録があれば経過時間で引く）
+            float amplitude;
+            if (_amplitudeEnvelope != null)
+            {
+                _amplitudeTimer += Time.deltaTime * _amplitudePlaybackRate;
+                amplitude = AudioEnvelope.Sample(_amplitudeEnvelope, _amplitudeTimer);
+            }
+            else
+            {
+                amplitude = GetAudioAmplitude();
+            }
 
             // 振幅に応じて口の開閉
             float targetWeight = amplitude > amplitudeThreshold ? amplitude * intensity : 0f;

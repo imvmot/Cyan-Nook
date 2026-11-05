@@ -1,6 +1,7 @@
 using UnityEngine;
 using System;
 using System.IO;
+using CyanNook.Core;
 
 namespace CyanNook.Voice
 {
@@ -13,34 +14,101 @@ namespace CyanNook.Voice
         private const float PCM16_MAX_PLUS_ONE = 32768f; // 2^15 (読み込み: short → -1.0~1.0)
         private const float PCM16_MAX = 32767f;          // 2^15-1 (書き込み: float → short)
         private const float PCM8_OFFSET = 128f;          // 8bit unsigned → signed変換
+        // WAV ヘッダの解析結果
+        private struct WavHeader
+        {
+            public int audioFormat;
+            public int channels;
+            public int sampleRate;
+            public int bitsPerSample;
+            public int dataStart;   // 音声データの先頭位置
+            public int dataSize;    // 音声データのバイト数（実データ長に切り詰め済み）
+        }
+
         /// <summary>
-        /// WAVデータ（byte配列）をAudioClipに変換
+        /// RIFF/WAVE のチャンク（「4文字ID + 4バイトサイズ + 本体」の区画）を先頭から順にたどり、
+        /// fmt と data を見つける。ID が完全一致する区画だけを採用するため、LIST/INFO 等の
+        /// 注釈の中の文字列 "data" を誤検出しない。fmt が先頭以外にある wav にも対応する
+        /// </summary>
+        private static bool TryParseHeader(byte[] wavData, out WavHeader header)
+        {
+            header = default;
+            if (wavData == null || wavData.Length < 12) return false;
+            if (!MatchId(wavData, 0, "RIFF") || !MatchId(wavData, 8, "WAVE")) return false;
+
+            bool hasFmt = false;
+            int pos = 12;
+            while (pos + 8 <= wavData.Length)
+            {
+                int chunkSize = BitConverter.ToInt32(wavData, pos + 4);
+                int body = pos + 8;
+
+                if (MatchId(wavData, pos, "fmt "))
+                {
+                    if (chunkSize < 16 || body + 16 > wavData.Length) return false;
+                    header.audioFormat = BitConverter.ToInt16(wavData, body);
+                    header.channels = BitConverter.ToInt16(wavData, body + 2);
+                    header.sampleRate = BitConverter.ToInt32(wavData, body + 4);
+                    header.bitsPerSample = BitConverter.ToInt16(wavData, body + 14);
+                    hasFmt = true;
+                }
+                else if (MatchId(wavData, pos, "data"))
+                {
+                    if (!hasFmt) return false;
+
+                    // ヘッダのサイズが実データより大きい（ストリーミング書き出しの未確定値等）場合は実データに合わせる
+                    int available = wavData.Length - body;
+                    header.dataStart = body;
+                    header.dataSize = (chunkSize < 0 || chunkSize > available) ? available : chunkSize;
+                    return header.channels > 0 && header.sampleRate > 0 && header.dataSize > 0;
+                }
+
+                // 次の区画へ（サイズが奇数なら1バイトのパディングがある）
+                if (chunkSize < 0) return false;
+                long next = (long)body + chunkSize + (chunkSize & 1);
+                if (next > wavData.Length) return false;
+                pos = (int)next;
+            }
+            return false;
+        }
+
+        private static bool MatchId(byte[] data, int offset, string id)
+        {
+            if (offset + 4 > data.Length) return false;
+            return data[offset] == id[0] && data[offset + 1] == id[1] &&
+                   data[offset + 2] == id[2] && data[offset + 3] == id[3];
+        }
+
+        /// <summary>
+        /// 自前で読める WAV（RIFF/WAVE、リニアPCM、8bit または 16bit）か。
+        /// 外部から受け取る wav を自前変換するか、ブラウザ側の解読に任せるかの判定に使う
+        /// </summary>
+        public static bool IsSupportedPcm(byte[] wavData)
+        {
+            return TryParseHeader(wavData, out var h) &&
+                   h.audioFormat == 1 && (h.bitsPerSample == 16 || h.bitsPerSample == 8);
+        }
+
+        /// <summary>
+        /// WAVデータ（byte配列）をAudioClipに変換。
+        /// 音量の変化（AudioEnvelope）も計算してクリップに紐づける（WebGL の Amplitude リップシンク用）
         /// </summary>
         public static AudioClip ToAudioClip(byte[] wavData, string clipName = "VoicevoxClip")
         {
-            if (wavData == null || wavData.Length < 44)
-            {
-                Debug.LogError("[WavUtility] Invalid WAV data");
-                return null;
-            }
-
             try
             {
-                // WAVヘッダー解析
-                int channels = BitConverter.ToInt16(wavData, 22);
-                int sampleRate = BitConverter.ToInt32(wavData, 24);
-                int bitsPerSample = BitConverter.ToInt16(wavData, 34);
-
-                // データチャンク位置検索（"data"の後の4バイトがサイズ）
-                int dataStartIndex = FindDataChunk(wavData);
-                if (dataStartIndex == -1)
+                // WAVヘッダー解析（チャンクをたどって fmt / data を探す）
+                if (!TryParseHeader(wavData, out var header))
                 {
-                    Debug.LogError("[WavUtility] Could not find data chunk");
+                    Debug.LogError("[WavUtility] Invalid WAV data (fmt/data chunk not found)");
                     return null;
                 }
 
-                int dataSize = BitConverter.ToInt32(wavData, dataStartIndex + 4);
-                int dataStart = dataStartIndex + 8;
+                int channels = header.channels;
+                int sampleRate = header.sampleRate;
+                int bitsPerSample = header.bitsPerSample;
+                int dataStart = header.dataStart;
+                int dataSize = header.dataSize;
 
                 // サンプル数計算
                 int bytesPerSample = bitsPerSample / 8;
@@ -75,6 +143,7 @@ namespace CyanNook.Voice
                 // AudioClip生成
                 AudioClip clip = AudioClip.Create(clipName, sampleCount, channels, sampleRate, false);
                 clip.SetData(samples, 0);
+                AudioEnvelope.Register(clip, samples, channels, sampleRate);
 
                 Debug.Log($"[WavUtility] AudioClip created - Samples: {sampleCount}, Channels: {channels}, SampleRate: {sampleRate}");
 
@@ -85,25 +154,6 @@ namespace CyanNook.Voice
                 Debug.LogError($"[WavUtility] Exception: {e.Message}");
                 return null;
             }
-        }
-
-        /// <summary>
-        /// "data"チャンクの位置を検索
-        /// </summary>
-        private static int FindDataChunk(byte[] wavData)
-        {
-            // RIFFヘッダー後（12バイト目以降）から検索
-            for (int i = 12; i < wavData.Length - 4; i++)
-            {
-                if (wavData[i] == 'd' &&
-                    wavData[i + 1] == 'a' &&
-                    wavData[i + 2] == 't' &&
-                    wavData[i + 3] == 'a')
-                {
-                    return i;
-                }
-            }
-            return -1;
         }
 
         /// <summary>

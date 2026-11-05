@@ -692,6 +692,45 @@ namespace CyanNook.Chat
             string url = $"{baseUrl}{separator}t={UnityWebRequest.EscapeURL(timestamp)}";
             if (part > 0) url += $"&p={part}";
 
+            // まず生のバイト列で取得し、リニアPCM（8/16bit）なら自前で AudioClip を組み立てる。
+            // 組み立て時に音量の変化（AudioEnvelope）が記録され、WebGL でも口パクが動く
+            // （ブラウザに解読させたクリップは WebGL で再生中の音量を読めず、口が開かない）
+            byte[] wavBytes = null;
+            using (var request = UnityWebRequest.Get(url))
+            {
+                request.SetRequestHeader("Cache-Control", "no-cache");
+                request.SetRequestHeader("Pragma", "no-cache");
+
+                yield return request.SendWebRequest();
+
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    Debug.LogWarning($"[ExternalActionFeed] Voice fetch failed ({onFail}): {request.error}");
+                    yield break;
+                }
+
+                wavBytes = request.downloadHandler.data;
+            }
+
+            if (CyanNook.Voice.WavUtility.IsSupportedPcm(wavBytes))
+            {
+                var pcmClip = CyanNook.Voice.WavUtility.ToAudioClip(wavBytes, part > 0 ? $"FeedVoicePart{part}" : "FeedVoice");
+                if (pcmClip != null)
+                {
+                    onLoaded(pcmClip);
+                    yield break;
+                }
+                // 組み立てに失敗した（ヘッダ不整合等）場合もブラウザ側の解読を試す
+                Debug.LogWarning("[ExternalActionFeed] Voice PCM conversion failed, decoding via browser (lip sync unavailable on WebGL)");
+            }
+            else
+            {
+                // リニアPCM以外の wav はブラウザ側の解読に任せる（音は鳴るが、WebGL では口パクしない）。
+                // 対応形式を増やすのは要望があってから
+                Debug.LogWarning("[ExternalActionFeed] Voice is not 8/16bit linear PCM wav, decoding via browser (lip sync unavailable on WebGL)");
+            }
+            wavBytes = null;
+
             AudioClip clip = null;
             using (var request = UnityWebRequestMultimedia.GetAudioClip(url, AudioType.WAV))
             {
