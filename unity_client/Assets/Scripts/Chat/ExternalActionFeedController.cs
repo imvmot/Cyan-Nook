@@ -425,6 +425,10 @@ namespace CyanNook.Chat
                     // 内部リクエストが始まっていたら残りの区切りは打ち切る（新しい内部応答に前の声が重ならないように）
                     if (chatManager.IsBusy)
                     {
+                        if (_partsSerial != 0)
+                        {
+                            Debug.Log($"[ExternalActionFeed] Voice parts cancelled: internal request in progress (serial={_partsSerial})");
+                        }
                         chatManager.voiceSynthesisController?.CancelExternalParts(_partsSerial);
                         yield break;
                     }
@@ -582,6 +586,7 @@ namespace CyanNook.Chat
             if (!firstPartFetched || synth == null)
             {
                 _partsFetched = marker.voice_parts;
+                Debug.Log($"[ExternalActionFeed] Voice parts: first part unavailable, using own TTS for full message (ts={marker.timestamp})");
                 yield break;
             }
 
@@ -593,10 +598,12 @@ namespace CyanNook.Chat
             if (serial == 0 || serial == serialBefore || !synth.BeginExternalParts(serial))
             {
                 _partsFetched = marker.voice_parts;
+                Debug.Log($"[ExternalActionFeed] Voice parts: first part was not played, ignoring later parts (ts={marker.timestamp})");
                 yield break;
             }
 
             _partsSerial = serial;
+            Debug.Log($"[ExternalActionFeed] Voice parts started: part 1/{marker.voice_parts}{(marker.voice_done ? " (done)" : "")} (ts={marker.timestamp}, serial={serial})");
             yield return FetchRemainingParts(marker);
         }
 
@@ -626,12 +633,14 @@ namespace CyanNook.Chat
 
                 if (clip != null)
                 {
+                    Debug.Log($"[ExternalActionFeed] Voice part {k}/{marker.voice_parts} fetched ({clip.length:F1}s, serial={_partsSerial})");
                     synth.EnqueueExternalPart(_partsSerial, clip);
                 }
             }
 
             if (marker.voice_done)
             {
+                Debug.Log($"[ExternalActionFeed] Voice parts done: {marker.voice_parts} parts received (serial={_partsSerial})");
                 synth.SetExternalPartsDone(_partsSerial);
             }
         }
@@ -675,6 +684,9 @@ namespace CyanNook.Chat
         {
             if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(timestamp)) yield break;
 
+            // 失敗時の扱い（ログ用）: voice.wav と分割の先頭は自前TTSへフォールバック、2番目以降は飛ばす
+            string onFail = part >= 2 ? $"skip part {part}" : (part == 1 ? "part 1, fallback to TTS" : "fallback to TTS");
+
             // 外部側の規約に合わせ、jsonのタイムスタンプ（と区切り番号）をキャッシュバスターに使う
             char separator = baseUrl.Contains("?") ? '&' : '?';
             string url = $"{baseUrl}{separator}t={UnityWebRequest.EscapeURL(timestamp)}";
@@ -690,7 +702,7 @@ namespace CyanNook.Chat
 
                 if (request.result != UnityWebRequest.Result.Success)
                 {
-                    Debug.LogWarning($"[ExternalActionFeed] Voice fetch failed (fallback to TTS): {request.error}");
+                    Debug.LogWarning($"[ExternalActionFeed] Voice fetch failed ({onFail}): {request.error}");
                     yield break;
                 }
 
@@ -700,7 +712,7 @@ namespace CyanNook.Chat
                 }
                 catch (System.Exception e)
                 {
-                    Debug.LogWarning($"[ExternalActionFeed] Voice decode failed (fallback to TTS): {e.Message}");
+                    Debug.LogWarning($"[ExternalActionFeed] Voice decode failed ({onFail}): {e.Message}");
                 }
             }
 
@@ -722,7 +734,7 @@ namespace CyanNook.Chat
             if (clip.loadState == AudioDataLoadState.Failed ||
                 (clip.loadState != AudioDataLoadState.Loaded && clip.length <= 0f))
             {
-                Debug.LogWarning($"[ExternalActionFeed] Voice clip failed to load (fallback to TTS, state={clip.loadState}, length={clip.length})");
+                Debug.LogWarning($"[ExternalActionFeed] Voice clip failed to load ({onFail}, state={clip.loadState}, length={clip.length})");
                 Destroy(clip);
                 yield break;
             }

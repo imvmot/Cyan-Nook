@@ -424,6 +424,7 @@ namespace CyanNook.Voice
             }
 
             _externalPartQueue.Enqueue(clip);
+            Debug.Log($"[VoiceSynthesisController] External part queued ({clip.length:F1}s, queue={_externalPartQueue.Count}, playing={_isPlaying}, serial={serial})");
 
             if (!_isPlaying)
             {
@@ -441,6 +442,7 @@ namespace CyanNook.Voice
             _externalPartsDone = true;
             if (!_isPlaying && _externalPartQueue.Count == 0)
             {
+                Debug.Log($"[VoiceSynthesisController] External parts finished (serial={serial})");
                 ClearExternalParts();
                 TryResumeSTT();
             }
@@ -454,6 +456,7 @@ namespace CyanNook.Voice
         public void CancelExternalParts(int serial)
         {
             if (!IsExternalPartsActive(serial)) return;
+            Debug.Log($"[VoiceSynthesisController] External parts cancelled (serial={serial}, queued={_externalPartQueue.Count})");
             Stop();
         }
 
@@ -466,6 +469,7 @@ namespace CyanNook.Voice
 
             CancelExternalPartGapWait();
             var clip = _externalPartQueue.Dequeue();
+            Debug.Log($"[VoiceSynthesisController] Playing next external part (remaining queue={_externalPartQueue.Count}, serial={_externalPartsSerial})");
             DestroyExternalClipIfAny();
             StartClipPlayback(clip, 1f, thinkingVoice: false);
         }
@@ -929,10 +933,12 @@ namespace CyanNook.Voice
                 }
                 if (!_externalPartsDone)
                 {
+                    Debug.Log($"[VoiceSynthesisController] Waiting for next external part (serial={_externalPartsSerial})");
                     CancelExternalPartGapWait();
                     _externalPartGapCoroutine = StartCoroutine(WaitForNextExternalPart(_externalPartsSerial));
                     yield break;
                 }
+                Debug.Log($"[VoiceSynthesisController] External parts finished (serial={_externalPartsSerial})");
                 ClearExternalParts();
             }
 
